@@ -92,7 +92,7 @@
   <!-- /footer-inner --> 
 </div>
 
-<div id="charts" class="modal fade" tabindex="-1" style="width: 850px;height:520px;">
+<div id="charts" class="modal fade" tabindex="-1" style="width: 850px;height:550px;">
   <input type="hidden" id="pannelurl" value=""/>
   <div class="modal-dialog">
     <div class="modal-content" >
@@ -103,7 +103,19 @@
           <b>StartTime:</b>&nbsp;<input id="starttime" type='text'  onClick="WdatePicker({dateFmt:'yyyy-MM-dd HH:mm'})" style="width:120px;" >
           <b>EndTime:</b>&nbsp;<input id="endtime" type='text'  onClick="WdatePicker({dateFmt:'yyyy-MM-dd HH:mm'})"  style="width:120px;" >
           &nbsp;<input class="sgraph" type="button" value="Submit" />
+          <div style="margin-top:10px;">
+            <button class="btn btn-small time-range" data-hours="1">1小时</button>
+            <button class="btn btn-small time-range" data-hours="3">3小时</button>
+            <button class="btn btn-small time-range" data-hours="6">6小时</button>
+            <button class="btn btn-small time-range" data-hours="12">12小时</button>
+            <button class="btn btn-small time-range" data-hours="24">1天</button>
+            <button class="btn btn-small time-range" data-hours="72">3天</button>
+            <button class="btn btn-small time-range" data-hours="168">7天</button>
+            <button class="btn btn-small time-range" data-hours="360">15天</button>
+            <button class="btn btn-small time-range" data-hours="720">30天</button>
+          </div>
         </div>
+        
         <div class="modal-body" id="pannel-show" style="width: 800px;height:500px;">
       </div>
     </div><!-- /.modal-content -->
@@ -215,6 +227,27 @@
                     }]
             });
         });
+    });
+    $(".time-range").click(function(){
+        var hours = $(this).data('hours');
+        var end = new Date();
+        var start = new Date(end - hours * 60 * 60 * 1000);
+        
+        // Format dates to yyyy-MM-dd HH:mm
+        var formatDate = function(date) {
+            var pad = function(num) {
+                return (num < 10 ? '0' : '') + num;
+            };
+            return date.getFullYear() + '-' + 
+                   pad(date.getMonth() + 1) + '-' + 
+                   pad(date.getDate()) + ' ' + 
+                   pad(date.getHours()) + ':' + 
+                   pad(date.getMinutes());
+        };
+
+        $("#starttime").val(formatDate(start));
+        $("#endtime").val(formatDate(end));
+        $(".sgraph").click();
     });
     opt={
         title: {
