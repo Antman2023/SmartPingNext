@@ -1,0 +1,137 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          # Linux amd64
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            ext: ''
+          # Linux arm64
+          - os: linux
+            arch: arm64
+            runner: ubuntu-latest
+            ext: ''
+          # Windows amd64
+          - os: windows
+            arch: amd64
+            runner: windows-latest
+            ext: '.exe'
+          # macOS amd64
+          - os: darwin
+            arch: amd64
+            runner: macos-13
+            ext: ''
+          # macOS arm64
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+            ext: ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: Install cross-compile tools (Linux arm64)
+        if: matrix.os == 'linux' && matrix.arch == 'arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build backend (Linux arm64)
+        if: matrix.os == 'linux' && matrix.arch == 'arm64'
+        env:
+          CC: aarch64-linux-gnu-gcc
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: 1
+        run: |
+          go mod download
+          go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
+
+      - name: Build backend (native)
+        if: "!(matrix.os == 'linux' && matrix.arch == 'arm64')"
+        env:
+          CGO_ENABLED: 1
+        run: |
+          go mod download
+          go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
+
+      - name: Prepare release package
+        shell: bash
+        run: |
+          mkdir -p release
+          cp bin/smartping${{ matrix.ext }} release/
+          cp -r web/dist release/html
+          cp -r conf release/
+          mkdir -p release/db
+          if [ -f "control" ]; then cp control release/; fi
+          if [ -f "control.cmd" ]; then cp control.cmd release/; fi
+
+      - name: Create archive
+        shell: bash
+        run: |
+          cd release
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            7z a -tzip ../smartping-${{ matrix.os }}-${{ matrix.arch }}.zip *
+          else
+            tar -czvf ../smartping-${{ matrix.os }}-${{ matrix.arch }}.tar.gz *
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smartping-${{ matrix.os }}-${{ matrix.arch }}
+          path: smartping-${{ matrix.os }}-${{ matrix.arch }}.*
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List files
+        run: find artifacts -type f
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
