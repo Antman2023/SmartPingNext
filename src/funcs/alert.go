@@ -120,7 +120,7 @@ func AlertSendMail(t g.AlertLog) {
 		fmt.Fprintf(mtrstr, "<tr><td>%d %s</td><td>%.2f</td><td>%d</td><td>%v</td><td>%v</td><td>%v</td><td>%v</td><td>%.2f</td></tr>", i+1, hop.Host, ((float64(hop.Loss) / float64(hop.Send)) * 100), hop.Send, hop.Last, hop.Avg, hop.Best, hop.Wrst, hop.StDev)
 	}
 	fmt.Fprintf(mtrstr, "</table>")
-	title := "【" + t.Fromname + "->" + t.Targetname + "】网络异常报警（" + t.Logtime + "）- SmartPing"
+	title := "【" + t.Fromname + "->" + t.Targetname + "】网络异常报警（" + t.Logtime + "）- SmartPingNext"
 	content := "报警时间：" + t.Logtime + " <br> 来路：" + t.Fromname + "(" + t.Fromip + ") <br>  目的：" + t.Targetname + "(" + t.Targetip + ") <br> "
 	SendEmailAccount := g.Cfg.Alert["SendEmailAccount"]
 	SendEmailPassword := g.Cfg.Alert["SendEmailPassword"]

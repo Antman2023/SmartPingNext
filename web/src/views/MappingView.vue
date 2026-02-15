@@ -1,7 +1,7 @@
 <template>
   <div class="mapping-view">
     <div class="mapping-header">
-      <h2>{{ config?.Name || 'SmartPing' }} - 全国延迟地图</h2>
+      <h2>{{ config?.Name || 'SmartPingNext' }} - 全国延迟地图</h2>
       <div class="mapping-actions">
         <el-date-picker
           v-model="selectedDate"

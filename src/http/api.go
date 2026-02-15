@@ -553,7 +553,7 @@ func configApiRoutes() {
 			return
 		}
 
-		err := funcs.SendMail(r.Form["SendEmailAccount"][0], r.Form["SendEmailPassword"][0], r.Form["EmailHost"][0], r.Form["RevcEmailList"][0], "报警测试邮件 - SmartPing", "报警测试邮件")
+		err := funcs.SendMail(r.Form["SendEmailAccount"][0], r.Form["SendEmailPassword"][0], r.Form["EmailHost"][0], r.Form["RevcEmailList"][0], "报警测试邮件 - SmartPingNext", "报警测试邮件")
 		if err != nil {
 			preout["info"] = err.Error()
 			RenderJson(w, preout)

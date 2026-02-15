@@ -1,7 +1,7 @@
 <template>
   <div class="dashboard-view">
     <div class="dashboard-header">
-      <h2>{{ config?.Name || 'SmartPing' }} - 正向监控</h2>
+      <h2>{{ config?.Name || 'SmartPingNext' }} - 正向监控</h2>
     </div>
 
     <div class="dashboard-content">

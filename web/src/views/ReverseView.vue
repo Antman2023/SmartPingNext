@@ -1,7 +1,7 @@
 <template>
   <div class="reverse-view">
     <div class="reverse-header">
-      <h2>{{ config?.Name || 'SmartPing' }} - 反向监控</h2>
+      <h2>{{ config?.Name || 'SmartPingNext' }} - 反向监控</h2>
     </div>
 
     <div class="reverse-content">

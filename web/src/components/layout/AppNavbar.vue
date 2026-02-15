@@ -13,7 +13,7 @@
       </div>
       <div class="app-navbar__brand">
         <el-icon class="app-navbar__logo"><Monitor /></el-icon>
-        <span class="app-navbar__title">SmartPing</span>
+        <span class="app-navbar__title">SmartPingNext</span>
       </div>
     </div>
     <div class="app-navbar__actions">

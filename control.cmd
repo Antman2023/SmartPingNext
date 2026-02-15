@@ -1,5 +1,5 @@
 @echo off
-title SmartPing
+title SmartPingNext
 
 setlocal
 set uac=~uac_permission_tmp_%random%
@@ -15,7 +15,7 @@ endlocal
 :BG
 cls
 echo ������������������������������������������������������������������������������������������������������������������������������
-echo ��                        SmartPing                            ��
+echo ��                        SmartPingNext                       ��
 echo ������������������������������������������������������������������������������������������������������������������������������
 echo ��                                                             ��
 echo ��INS USE                                                      ��

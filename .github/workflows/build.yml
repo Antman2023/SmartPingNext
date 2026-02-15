@@ -167,7 +167,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: SmartPing ${{ steps.version.outputs.version }}
+          name: SmartPingNext ${{ steps.version.outputs.version }}
           tag_name: ${{ steps.version.outputs.version }}
           draft: ${{ github.event.inputs.create_release == 'true' }}
           prerelease: false

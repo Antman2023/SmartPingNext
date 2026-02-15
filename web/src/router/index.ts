@@ -51,7 +51,7 @@ const router = createRouter({
 })
 
 router.beforeEach((to, _from, next) => {
-  document.title = `${to.meta.title || 'SmartPing'} - SmartPing`
+  document.title = `${to.meta.title || 'SmartPingNext'} - SmartPingNext`
   next()
 })
 

@@ -1,7 +1,7 @@
 <template>
   <div class="topology-view">
     <div class="topology-header">
-      <h2>{{ config?.Name || 'SmartPing' }} - PING 拓扑</h2>
+      <h2>{{ config?.Name || 'SmartPingNext' }} - PING 拓扑</h2>
     </div>
 
     <div class="topology-content">
