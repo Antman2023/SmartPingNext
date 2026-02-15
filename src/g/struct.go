@@ -8,7 +8,6 @@ type Config struct {
 	Mode       map[string]string
 	Base       map[string]int
 	Topology   map[string]string
-	Alert      map[string]string
 	Network    map[string]NetworkMember
 	Chinamap   map[string]map[string][]string
 	Toollimit  int

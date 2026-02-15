@@ -1,14 +1,10 @@
 package funcs
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
-	"net/smtp"
 	"smartping/src/g"
 	"smartping/src/nettools"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/cihub/seelog"
@@ -53,9 +49,6 @@ func StartAlert() {
 				}
 				l.Tracert = mtrString
 				go AlertStorage(l)
-				if g.Cfg.Alert["SendEmailAccount"] != "" && g.Cfg.Alert["SendEmailPassword"] != "" && g.Cfg.Alert["EmailHost"] != "" && g.Cfg.Alert["RevcEmailList"] != "" {
-					go AlertSendMail(l)
-				}
 			}
 
 		}
@@ -104,45 +97,4 @@ func AlertStorage(t g.AlertLog) {
 	}
 	g.DLock.Unlock()
 	seelog.Info("[func:AlertStorage] ", "(", t.Logtime, ") AlertStorage on ", t.Targetname, " finish!")
-}
-
-func AlertSendMail(t g.AlertLog) {
-	hops := []nettools.Mtr{}
-	err := json.Unmarshal([]byte(t.Tracert), &hops)
-	if err != nil {
-		seelog.Error("[func:AlertSendMail] json Error ", err)
-		return
-	}
-	mtrstr := bytes.NewBufferString("")
-	fmt.Fprintf(mtrstr, "<table>")
-	fmt.Fprintf(mtrstr, "<tr><td>Host</td><td>Loss</td><td>Snt</td><td>Last</td><td>Avg</td><td>Best</td><td>Wrst</td><td>StDev</td></tr>")
-	for i, hop := range hops {
-		fmt.Fprintf(mtrstr, "<tr><td>%d %s</td><td>%.2f</td><td>%d</td><td>%v</td><td>%v</td><td>%v</td><td>%v</td><td>%.2f</td></tr>", i+1, hop.Host, ((float64(hop.Loss) / float64(hop.Send)) * 100), hop.Send, hop.Last, hop.Avg, hop.Best, hop.Wrst, hop.StDev)
-	}
-	fmt.Fprintf(mtrstr, "</table>")
-	title := "【" + t.Fromname + "->" + t.Targetname + "】网络异常报警（" + t.Logtime + "）- SmartPingNext"
-	content := "报警时间：" + t.Logtime + " <br> 来路：" + t.Fromname + "(" + t.Fromip + ") <br>  目的：" + t.Targetname + "(" + t.Targetip + ") <br> "
-	SendEmailAccount := g.Cfg.Alert["SendEmailAccount"]
-	SendEmailPassword := g.Cfg.Alert["SendEmailPassword"]
-	EmailHost := g.Cfg.Alert["EmailHost"]
-	RevcEmailList := g.Cfg.Alert["RevcEmailList"]
-	err = SendMail(SendEmailAccount, SendEmailPassword, EmailHost, RevcEmailList, title, content+mtrstr.String())
-	if err != nil {
-		seelog.Error("[func:AlertSendMail] SendMail Error ", err)
-	}
-}
-
-func SendMail(user, pwd, host, to, subject, body string) error {
-	if len(strings.Split(host, ":")) == 1 {
-		host = host + ":25"
-	}
-	auth := smtp.PlainAuth("", user, pwd, strings.Split(host, ":")[0])
-	content_type := "Content-Type: text/html" + "; charset=UTF-8"
-	msg := []byte("To: " + to + "\r\nFrom: " + user + "\r\nSubject: " + subject + "\r\n" + content_type + "\r\n\r\n" + body)
-	send_to := strings.Split(to, ";")
-	err := smtp.SendMail(host, auth, user, send_to, msg)
-	if err != nil {
-		return err
-	}
-	return nil
 }

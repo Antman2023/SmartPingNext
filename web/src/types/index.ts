@@ -24,7 +24,6 @@ export interface Config {
   Mode: Record<string, string>
   Base: Record<string, number>
   Topology: Record<string, string>
-  Alert: Record<string, string>
   Network: Record<string, NetworkMember>
   Chinamap: Record<string, Record<string, string[]>>
   Toollimit: number

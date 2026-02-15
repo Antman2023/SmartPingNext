@@ -87,26 +87,6 @@
                 </el-col>
               </el-row>
 
-              <h4>报警邮件</h4>
-              <el-form-item label="邮件服务器">
-                <el-input v-model="formConfig.Alert.EmailHost" />
-              </el-form-item>
-              <el-row :gutter="12">
-                <el-col :span="12">
-                  <el-form-item label="发件邮箱">
-                    <el-input v-model="formConfig.Alert.SendEmailAccount" />
-                  </el-form-item>
-                </el-col>
-                <el-col :span="12">
-                  <el-form-item label="发件邮箱密码">
-                    <el-input v-model="formConfig.Alert.SendEmailPassword" type="password" />
-                  </el-form-item>
-                </el-col>
-              </el-row>
-              <el-form-item label="收件邮箱列表(分号隔开)">
-                <el-input v-model="formConfig.Alert.RevcEmailList" />
-              </el-form-item>
-
               <h4>检测工具</h4>
               <el-form-item label="限定频率(秒)">
                 <el-input v-model.number="formConfig.Toollimit" />
@@ -307,7 +287,6 @@ const formConfig = reactive<Config>({
   Mode: {},
   Base: { Timeout: 3, Refresh: 5, Archive: 30 },
   Topology: { Tsound: '', Tline: '2', Tsymbolsize: '50' },
-  Alert: { EmailHost: '', SendEmailAccount: '', SendEmailPassword: '', RevcEmailList: '' },
   Network: {},
   Chinamap: {},
   Toollimit: 0,

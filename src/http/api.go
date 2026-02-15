@@ -32,12 +32,6 @@ func configApiRoutes() {
 		cfgJson, _ := json.Marshal(g.Cfg)
 		json.Unmarshal(cfgJson, &nconf)
 		nconf.Password = ""
-		if !AuthAgentIp(r.RemoteAddr, false) {
-			if nconf.Alert["SendEmailPassword"] != "" {
-				nconf.Alert["SendEmailPassword"] = "samepasswordasbefore"
-			}
-		}
-		//fmt.Print(g.Cfg.Alert["SendEmailPassword"])
 		onconf, _ := json.Marshal(nconf)
 		var out bytes.Buffer
 		json.Indent(&out, onconf, "", "\t")
@@ -526,9 +520,6 @@ func configApiRoutes() {
 		nconfig.Ver = g.Cfg.Ver
 		nconfig.Port = g.Cfg.Port
 		nconfig.Password = g.Cfg.Password
-		if nconfig.Alert["SendEmailPassword"] == "samepasswordasbefore" {
-			nconfig.Alert["SendEmailPassword"] = g.Cfg.Alert["SendEmailPassword"]
-		}
 		g.Cfg = nconfig
 		g.SelfCfg = g.Cfg.Network[g.Cfg.Addr]
 		saveerr := g.SaveConfig()
@@ -542,46 +533,6 @@ func configApiRoutes() {
 	})
 
 	//发送测试邮件
-	http.HandleFunc("/api/sendmailtest.json", func(w http.ResponseWriter, r *http.Request) {
-		if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
-			o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-			http.Error(w, o, http.StatusUnauthorized)
-			return
-		}
-		preout := make(map[string]string)
-		r.ParseForm()
-		preout["status"] = "false"
-		if len(r.Form["EmailHost"]) == 0 {
-			preout["info"] = "邮件服务器不能为空!"
-			RenderJson(w, preout)
-			return
-		}
-		if len(r.Form["SendEmailAccount"]) == 0 {
-			preout["info"] = "发件邮件不能为空!"
-			RenderJson(w, preout)
-			return
-		}
-		if len(r.Form["SendEmailPassword"]) == 0 {
-			preout["info"] = "发件邮箱密码不能为空!"
-			RenderJson(w, preout)
-			return
-		}
-		if len(r.Form["RevcEmailList"]) == 0 {
-			preout["info"] = "收件邮箱列表不能为空!"
-			RenderJson(w, preout)
-			return
-		}
-
-		err := funcs.SendMail(r.Form["SendEmailAccount"][0], r.Form["SendEmailPassword"][0], r.Form["EmailHost"][0], r.Form["RevcEmailList"][0], "报警测试邮件 - SmartPingNext", "报警测试邮件")
-		if err != nil {
-			preout["info"] = err.Error()
-			RenderJson(w, preout)
-			return
-		}
-		preout["status"] = "true"
-		RenderJson(w, preout)
-	})
-
 	//代理访问
 	http.HandleFunc("/api/proxy.json", func(w http.ResponseWriter, r *http.Request) {
 		if !AuthUserIp(r.RemoteAddr) {
