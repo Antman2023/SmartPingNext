@@ -5,6 +5,7 @@
         <Fold v-if="!sidebarStore.isCollapsed" />
         <Expand v-else />
       </el-icon>
+      <span v-if="sidebarStore.isCollapsed" class="toggle-text">展开</span>
     </div>
     <el-menu
       :default-active="currentRoute"
@@ -83,17 +84,40 @@ const sidebarStore = useSidebarStore()
 }
 
 .app-sidebar__toggle {
-  height: 40px;
+  height: 48px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   cursor: pointer;
   color: var(--sidebar-text);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  margin: 8px;
+  padding: 0 12px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
 
   &:hover {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: rgba(255, 255, 255, 0.08);
+    color: var(--sidebar-active-text);
   }
+
+  .el-icon {
+    width: 18px;
+    height: 18px;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .toggle-text {
+    font-size: 12px;
+    white-space: nowrap;
+  }
+}
+
+.is-collapsed .app-sidebar__toggle {
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
 }
 
 .app-sidebar__menu {

@@ -223,9 +223,9 @@ watch(() => themeStore.theme, async () => {
   updateChart()
 })
 
-watch(() => sidebarStore.isCollapsed, async () => {
-  await nextTick()
-  handleResize()
+watch(() => sidebarStore.isCollapsed, () => {
+  // 等待 CSS 过渡完成 (0.3s)
+  setTimeout(() => handleResize(), 350)
 })
 
 onMounted(async () => {
