@@ -2,14 +2,17 @@
   <div class="mapping-view">
     <div class="mapping-header">
       <h2>{{ config?.Name || 'SmartPing' }} - 全国延迟地图</h2>
-      <el-date-picker
-        v-model="selectedDate"
-        type="datetime"
-        placeholder="选择时间"
-        format="YYYY-MM-DD HH:mm"
-        value-format="YYYY-MM-DD HH:mm"
-        @change="loadMappingData"
-      />
+      <div class="mapping-actions">
+        <el-date-picker
+          v-model="selectedDate"
+          type="datetime"
+          placeholder="选择时间"
+          format="YYYY-MM-DD HH:mm"
+          value-format="YYYY-MM-DD HH:mm"
+          @change="loadMappingData"
+        />
+        <el-button @click="saveMapImage">保存图片</el-button>
+      </div>
     </div>
 
     <div class="mapping-content">
@@ -38,19 +41,21 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { getConfig } from '@/api/topology'
 import { getMapping, getProxyMapping } from '@/api/mapping'
 import type { Config, ChinaMapData } from '@/types'
 import type { EChartsOption } from 'echarts'
+import { useSidebarStore } from '@/stores/sidebar'
 
 const config = ref<Config | null>(null)
 const agents = ref<Array<{ name: string; addr: string; loading: boolean }>>([])
 const selectedDate = ref('')
 const currentBaseUrl = ref('')
 const chartRef = ref<HTMLDivElement>()
+const sidebarStore = useSidebarStore()
 let chart: echarts.ECharts | null = null
 
 const loadConfig = async () => {
@@ -132,13 +137,7 @@ const updateChart = (data: ChinaMapData) => {
       ]
     },
     toolbox: {
-      show: true,
-      orient: 'vertical',
-      right: 20,
-      top: 'center',
-      feature: {
-        saveAsImage: { show: true }
-      }
+      show: false
     },
     series: [
       {
@@ -184,6 +183,25 @@ const handleResize = () => {
   chart?.resize()
 }
 
+watch(() => sidebarStore.isCollapsed, () => {
+  // 等待 CSS 过渡完成 (0.3s)
+  setTimeout(() => handleResize(), 350)
+})
+
+const saveMapImage = () => {
+  if (chart) {
+    const url = chart.getDataURL({
+      type: 'png',
+      pixelRatio: 2,
+      backgroundColor: '#fff'
+    })
+    const link = document.createElement('a')
+    link.download = `smartping-map-${Date.now()}.png`
+    link.href = url
+    link.click()
+  }
+}
+
 onMounted(async () => {
   await initChart()
   await loadConfig()
@@ -199,6 +217,7 @@ onUnmounted(() => {
 <style scoped lang="scss">
 .mapping-view {
   height: 100%;
+  overflow: hidden;
 }
 
 .mapping-header {
@@ -214,14 +233,23 @@ onUnmounted(() => {
   }
 }
 
+.mapping-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .mapping-content {
   display: flex;
   gap: 20px;
+  height: calc(100vh - 160px);
+  overflow: hidden;
 }
 
 .map-container {
   flex: 1;
-  height: calc(100vh - 200px);
+  min-width: 0;
+  height: 100%;
   background-color: var(--color-bg-primary);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);

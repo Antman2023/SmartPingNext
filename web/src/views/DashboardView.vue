@@ -79,13 +79,14 @@
             value-format="YYYY-MM-DD HH:mm"
           />
           <el-button type="primary" @click="loadDetailData">查询</el-button>
+          <el-button @click="saveChartImage">保存图片</el-button>
           <el-button-group>
             <el-button v-for="range in timeRanges" :key="range.hours" @click="setTimeRange(range.hours)">
               {{ range.label }}
             </el-button>
           </el-button-group>
         </div>
-        <PingChart v-if="detailData" :data="detailData" :height="400" />
+        <PingChart ref="pingChartRef" v-if="detailData" :data="detailData" :height="400" />
       </div>
     </el-dialog>
   </div>
@@ -118,6 +119,7 @@ const detailData = ref<PingLogData | null>(null)
 const startTime = ref('')
 const endTime = ref('')
 const currentTargetIp = ref('')
+const pingChartRef = ref<{ saveAsImage: () => void } | null>(null)
 
 const timeRanges = [
   { label: '1小时', hours: 1 },
@@ -235,6 +237,11 @@ const setTimeRange = (hours: number) => {
 
   startTime.value = format(start)
   endTime.value = format(end)
+  loadDetailData()
+}
+
+const saveChartImage = () => {
+  pingChartRef.value?.saveAsImage()
 }
 
 onMounted(() => {

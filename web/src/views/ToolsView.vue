@@ -6,70 +6,71 @@
 
     <div class="tools-content">
       <div class="search-box">
-        <el-select v-model="toolType" style="width: 150px;">
+        <el-select v-model="toolType" style="width: 140px;">
           <el-option label="ICMP PING" value="ping" />
         </el-select>
         <el-input
           v-model="target"
           placeholder="输入目标地址"
-          style="width: 300px;"
+          style="width: 280px;"
           @keyup.enter="runCheck"
         />
         <el-button type="primary" @click="runCheck" :loading="checking">
-          检测一下!
+          检测
         </el-button>
       </div>
 
-      <el-table :data="results" stripe>
-        <el-table-column width="50">
-          <template #default="{ row }">
-            <el-checkbox v-model="row.checked" />
-          </template>
-        </el-table-column>
-        <el-table-column prop="name" label="节点名称" width="150" />
-        <el-table-column prop="ip" label="解析IP" width="150">
-          <template #default="{ row }">
-            {{ row.result?.ip || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="sendPk" label="发送" width="80">
-          <template #default="{ row }">
-            {{ row.result?.ping?.SendPk || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="revcPk" label="接收" width="80">
-          <template #default="{ row }">
-            {{ row.result?.ping?.RevcPk || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="lossPk" label="丢包" width="80">
-          <template #default="{ row }">
-            {{ row.result?.ping?.LossPk !== undefined ? row.result.ping.LossPk + '%' : '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="maxDelay" label="最大延迟" width="100">
-          <template #default="{ row }">
-            {{ row.result?.ping?.MaxDelay ? row.result.ping.MaxDelay.toFixed(2) + 'ms' : '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="minDelay" label="最小延迟" width="100">
-          <template #default="{ row }">
-            {{ row.result?.ping?.MinDelay ? row.result.ping.MinDelay.toFixed(2) + 'ms' : '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="avgDelay" label="平均延迟" width="100">
-          <template #default="{ row }">
-            {{ row.result?.ping?.AvgDelay ? row.result.ping.AvgDelay.toFixed(2) + 'ms' : '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="60">
-          <template #default="{ row }">
-            <el-icon v-if="row.loading" class="is-loading"><Loading /></el-icon>
-            <el-icon v-else-if="row.error" class="text-danger"><Warning /></el-icon>
-            <el-icon v-else-if="row.result?.status === 'true'" class="text-success"><SuccessFilled /></el-icon>
-          </template>
-        </el-table-column>
-      </el-table>
+      <div class="table-wrapper">
+        <el-table :data="results" stripe style="width: 100%">
+          <el-table-column width="50" align="center">
+            <template #default="{ row }">
+              <el-checkbox v-model="row.checked" />
+            </template>
+          </el-table-column>
+          <el-table-column prop="name" label="节点" min-width="100" />
+          <el-table-column label="解析IP" min-width="120">
+            <template #default="{ row }">
+              {{ row.result?.ip || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="发送" width="70" align="center">
+            <template #default="{ row }">
+              {{ row.result?.ping?.SendPk || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="接收" width="70" align="center">
+            <template #default="{ row }">
+              {{ row.result?.ping?.RevcPk || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="丢包" width="80" align="center">
+            <template #default="{ row }">
+              <span :class="{'text-danger': row.result?.ping?.LossPk > 0}">
+                {{ row.result?.ping?.LossPk !== undefined ? row.result.ping.LossPk + '%' : '-' }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="延迟" min-width="140">
+            <template #default="{ row }">
+              <template v-if="row.result?.ping">
+                <span class="delay-info">
+                  {{ row.result.ping.MinDelay?.toFixed(1) || '-' }} /
+                  {{ row.result.ping.AvgDelay?.toFixed(1) || '-' }} /
+                  {{ row.result.ping.MaxDelay?.toFixed(1) || '-' }} ms
+                </span>
+              </template>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="60" align="center">
+            <template #default="{ row }">
+              <el-icon v-if="row.loading" class="is-loading"><Loading /></el-icon>
+              <el-icon v-else-if="row.error" class="text-danger"><Warning /></el-icon>
+              <el-icon v-else-if="row.result?.status === 'true'" class="text-success"><SuccessFilled /></el-icon>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
     </div>
   </div>
 </template>
@@ -154,10 +155,14 @@ onMounted(() => {
 <style scoped lang="scss">
 .tools-view {
   height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .tools-header {
   margin-bottom: 20px;
+  flex-shrink: 0;
 
   h2 {
     margin: 0;
@@ -171,12 +176,37 @@ onMounted(() => {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
   padding: 20px;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .search-box {
   display: flex;
   gap: 12px;
   margin-bottom: 20px;
-  justify-content: center;
+  flex-shrink: 0;
+}
+
+.table-wrapper {
+  flex: 1;
+  overflow: auto;
+  min-width: 0;
+}
+
+.delay-info {
+  font-family: monospace;
+  font-size: 13px;
+  color: var(--color-text-regular);
+}
+
+.text-danger {
+  color: var(--color-danger);
+}
+
+.text-success {
+  color: var(--color-success);
 }
 </style>

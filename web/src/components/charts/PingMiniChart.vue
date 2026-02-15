@@ -26,10 +26,10 @@ const getChartOption = (): EChartsOption => {
   return {
     backgroundColor: 'transparent',
     grid: {
-      left: 5,
-      right: 5,
+      left: 12,
+      right: 12,
       top: 5,
-      bottom: 20,
+      bottom: 18,
       containLabel: false
     },
     xAxis: {
@@ -43,7 +43,9 @@ const getChartOption = (): EChartsOption => {
         fontSize: 10,
         interval: 'auto',
         formatter: (value: string) => {
-          if (value && value.length >= 16) {
+          if (!value) return ''
+          // 只显示时间 HH:mm
+          if (value.length >= 16) {
             return value.substring(11, 16)
           }
           return value

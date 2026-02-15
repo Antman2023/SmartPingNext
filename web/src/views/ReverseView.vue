@@ -79,8 +79,9 @@
             value-format="YYYY-MM-DD HH:mm"
           />
           <el-button type="primary" @click="loadDetailData">查询</el-button>
+          <el-button @click="saveChartImage">保存图片</el-button>
         </div>
-        <PingChart v-if="detailData" :data="detailData" :height="400" />
+        <PingChart ref="pingChartRef" v-if="detailData" :data="detailData" :height="400" />
       </div>
     </el-dialog>
   </div>
@@ -113,6 +114,7 @@ const detailData = ref<PingLogData | null>(null)
 const startTime = ref('')
 const endTime = ref('')
 const currentTarget = ref<ReverseTarget | null>(null)
+const pingChartRef = ref<{ saveAsImage: () => void } | null>(null)
 
 const loadConfig = async (proxyUrl?: string) => {
   try {
@@ -215,6 +217,10 @@ const loadDetailData = async () => {
   } catch (e) {
     console.error('加载数据失败', e)
   }
+}
+
+const saveChartImage = () => {
+  pingChartRef.value?.saveAsImage()
 }
 
 onMounted(() => {

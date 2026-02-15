@@ -54,13 +54,15 @@ const sidebarStore = useSidebarStore()
 
 .app-navbar__toggle {
   width: 64px;
-  height: 60px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   margin-left: -20px;
+  margin-right: 4px;
   flex-shrink: 0;
+  border-radius: 6px;
 
   &:hover {
     background-color: rgba(255, 255, 255, 0.1);

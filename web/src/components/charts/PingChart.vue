@@ -20,6 +20,25 @@ const themeStore = useThemeStore()
 const sidebarStore = useSidebarStore()
 let chart: echarts.ECharts | null = null
 
+// 暴露保存图片方法
+const saveAsImage = () => {
+  if (chart) {
+    const url = chart.getDataURL({
+      type: 'png',
+      pixelRatio: 2,
+      backgroundColor: themeStore.theme === 'dark' ? '#1a1a1a' : '#fff'
+    })
+    const link = document.createElement('a')
+    link.download = `smartping-chart-${Date.now()}.png`
+    link.href = url
+    link.click()
+  }
+}
+
+defineExpose({
+  saveAsImage
+})
+
 const getChartOption = (): EChartsOption => {
   const isDark = themeStore.theme === 'dark'
 
@@ -59,22 +78,58 @@ const getChartOption = (): EChartsOption => {
         '最大延迟': false,
         '最小延迟': false
       },
+      top: 0,
       textStyle: {
         color: isDark ? '#a3a6ad' : '#606266'
       }
     },
-    toolbox: {
-      feature: {
-        saveAsImage: { pixelRatio: 2 }
-      }
-    },
     grid: {
       left: '3%',
-      right: '4%',
-      bottom: '12%',
+      right: '3%',
+      top: 30,
+      bottom: 50,
       containLabel: true
     },
-    dataZoom: [{}],
+    dataZoom: [{
+      type: 'slider',
+      bottom: 10,
+      borderColor: isDark ? '#4c4d4f' : '#dcdfe6',
+      backgroundColor: isDark ? 'rgba(30,30,30,0.9)' : 'rgba(248,248,248,0.9)',
+      fillerColor: isDark ? 'rgba(64,158,255,0.2)' : 'rgba(64,158,255,0.15)',
+      handleStyle: {
+        color: isDark ? '#4c4d4f' : '#fff',
+        borderColor: isDark ? '#6c6e72' : '#909399'
+      },
+      moveHandleStyle: {
+        color: isDark ? '#4c4d4f' : '#ddd'
+      },
+      emphasis: {
+        handleStyle: {
+          borderColor: '#409eff',
+          color: isDark ? '#4c4d4f' : '#fff'
+        },
+        moveHandleStyle: {
+          color: '#409eff'
+        },
+        handleLabel: {
+          show: true
+        }
+      },
+      handleLabel: {
+        show: true
+      },
+      selectedDataBackground: {
+        lineStyle: { color: '#409eff' },
+        areaStyle: { color: 'rgba(64,158,255,0.2)' }
+      },
+      dataBackground: {
+        lineStyle: { color: isDark ? '#6c6e72' : '#909399' },
+        areaStyle: { color: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(64,158,255,0.1)' }
+      },
+      textStyle: {
+        color: isDark ? '#a3a6ad' : '#606266'
+      }
+    }],
     xAxis: {
       type: 'category',
       data: props.data?.lastcheck || [],
@@ -87,13 +142,16 @@ const getChartOption = (): EChartsOption => {
         interval: 'auto',
         formatter: (value: string, index: number) => {
           if (!value) return ''
-          // 显示时间 HH:mm
           const time = value.length >= 16 ? value.substring(11, 16) : value
-          // 每隔一定间隔显示日期（每小时第一个点显示日期）
-          const dataLen = props.data?.lastcheck?.length || 0
-          const interval = Math.max(Math.floor(dataLen / 8), 1)
-          if (index % interval === 0 && value.length >= 10) {
-            const date = value.substring(5, 10) // MM-DD
+          const date = value.length >= 10 ? value.substring(5, 10) : '' // MM-DD
+
+          // 检查是否是日期变化点（与前一个数据点日期不同）
+          const lastcheck = props.data?.lastcheck || []
+          const prevValue = index > 0 ? lastcheck[index - 1] : ''
+          const prevDate = prevValue && prevValue.length >= 10 ? prevValue.substring(5, 10) : ''
+
+          // 如果是第一个点或者日期变化了，显示日期
+          if (date && (index === 0 || date !== prevDate)) {
             return `{date|${date}}\n{time|${time}}`
           }
           return `{time|${time}}`

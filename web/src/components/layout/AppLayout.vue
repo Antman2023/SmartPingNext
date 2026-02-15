@@ -23,12 +23,14 @@ const sidebarStore = useSidebarStore()
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .app-layout__body {
   display: flex;
   flex: 1;
   padding-top: 60px;
+  overflow: hidden;
 }
 
 .app-main {
@@ -39,6 +41,7 @@ const sidebarStore = useSidebarStore()
   min-height: calc(100vh - 60px);
   box-sizing: border-box;
   transition: margin-left 0.3s ease;
+  overflow: hidden;
 
   &.is-collapsed {
     margin-left: 64px;

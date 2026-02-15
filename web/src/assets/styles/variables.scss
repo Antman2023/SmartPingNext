@@ -4,6 +4,8 @@
   --color-primary: #409eff;
   --color-primary-light: #66b1ff;
   --color-primary-dark: #337ecc;
+  --color-primary-light-3: #79bbff;
+  --color-primary-light-5: #a0cfff;
 
   // 背景色
   --color-bg-primary: #ffffff;
@@ -25,6 +27,7 @@
   --color-success: #67c23a;
   --color-warning: #e6a23c;
   --color-danger: #f56c6c;
+  --color-danger-light-3: #f89898;
   --color-info: #909399;
 
   // 导航栏
@@ -49,7 +52,12 @@
 
 // 深色主题
 [data-theme='dark'] {
-  // 主色调保持不变
+  // 主色调
+  --color-primary: #409eff;
+  --color-primary-light: #66b1ff;
+  --color-primary-dark: #337ecc;
+  --color-primary-light-3: #337ecc;
+  --color-primary-light-5: #2b6cb0;
 
   // 背景色
   --color-bg-primary: #1a1a1a;
@@ -66,6 +74,9 @@
   --color-border: #4c4d4f;
   --color-border-light: #414243;
   --color-border-lighter: #363637;
+
+  // 状态色
+  --color-danger-light-3: #c45656;
 
   // 导航栏
   --navbar-bg: #0d1117;

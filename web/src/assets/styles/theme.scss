@@ -55,6 +55,134 @@ body {
 
 // Element Plus 深色主题覆盖
 [data-theme='dark'] {
+  // 日期选择器弹窗
+  .el-picker-panel {
+    background-color: var(--color-bg-primary);
+    border-color: var(--color-border);
+
+    .el-date-picker__header,
+    .el-date-picker__header-label {
+      color: var(--color-text-primary);
+    }
+
+    .el-date-table th {
+      color: var(--color-text-secondary);
+    }
+
+    .el-date-table td {
+      &.available:hover {
+        color: var(--color-primary);
+      }
+
+      &.today span {
+        color: var(--color-primary);
+      }
+
+      &.current:not(.disabled) span {
+        background-color: var(--color-primary);
+        color: #fff;
+      }
+
+      span {
+        color: var(--color-text-primary);
+      }
+
+      &.disabled div,
+      &.disabled span {
+        color: var(--color-text-secondary);
+      }
+
+      &.prev-month span,
+      &.next-month span {
+        color: var(--color-text-secondary);
+      }
+    }
+
+    .el-month-table td,
+    .el-year-table td {
+      .cell {
+        color: var(--color-text-primary);
+      }
+
+      &.today .cell {
+        color: var(--color-primary);
+      }
+
+      &.current:not(.disabled) .cell {
+        background-color: var(--color-primary);
+        color: #fff;
+      }
+
+      &:hover .cell {
+        color: var(--color-primary);
+      }
+    }
+
+    .el-picker-panel__icon-btn {
+      color: var(--color-text-regular);
+
+      &:hover {
+        color: var(--color-primary);
+      }
+    }
+
+    .el-date-picker__time-header {
+      border-bottom-color: var(--color-border);
+    }
+
+    .el-input__wrapper {
+      background-color: var(--color-bg-secondary);
+      box-shadow: 0 0 0 1px var(--color-border) inset;
+    }
+
+    .el-input__inner {
+      color: var(--color-text-primary);
+    }
+
+    .el-time-panel {
+      background-color: var(--color-bg-primary);
+      border-color: var(--color-border);
+
+      .el-time-panel__content {
+        color: var(--color-text-primary);
+      }
+
+      .el-time-spinner__item {
+        color: var(--color-text-regular);
+
+        &.active:not(.disabled) {
+          color: var(--color-text-primary);
+        }
+
+        &:hover:not(.disabled) {
+          color: var(--color-primary);
+        }
+      }
+    }
+
+    .el-picker-panel__footer {
+      background-color: var(--color-bg-primary);
+      border-top-color: var(--color-border);
+
+      .el-button--text {
+        color: var(--color-text-regular);
+
+        &:hover {
+          color: var(--color-primary);
+        }
+      }
+    }
+  }
+
+  // popper 弹窗
+  .el-popper {
+    background-color: var(--color-bg-primary) !important;
+    border-color: var(--color-border) !important;
+  }
+}
+
+// Element Plus 深色主题覆盖
+[data-theme='dark'] {
   // 卡片标题颜色
   .el-card__header {
     color: var(--color-text-primary) !important;
@@ -145,5 +273,38 @@ body {
     --el-button-bg-color: var(--color-bg-tertiary);
     --el-button-border-color: var(--color-border);
     --el-button-text-color: var(--color-text-regular);
+
+    &:hover,
+    &:focus {
+      background-color: var(--color-bg-primary) !important;
+      border-color: var(--color-text-secondary) !important;
+      color: var(--color-text-primary) !important;
+    }
+
+    &--primary {
+      --el-button-bg-color: var(--color-primary);
+      --el-button-border-color: var(--color-primary);
+      --el-button-text-color: #fff;
+
+      &:hover,
+      &:focus {
+        background-color: var(--color-primary-light-3) !important;
+        border-color: var(--color-primary-light-3) !important;
+        color: #fff !important;
+      }
+    }
+
+    &--danger {
+      --el-button-bg-color: var(--color-danger);
+      --el-button-border-color: var(--color-danger);
+      --el-button-text-color: #fff;
+
+      &:hover,
+      &:focus {
+        background-color: var(--color-danger-light-3) !important;
+        border-color: var(--color-danger-light-3) !important;
+        color: #fff !important;
+      }
+    }
   }
 }

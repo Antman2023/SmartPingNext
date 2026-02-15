@@ -67,34 +67,34 @@
     <!-- MTR 弹窗 -->
     <el-dialog v-model="mtrVisible" title="MTR 结果" width="700px">
       <el-table :data="mtrData" stripe style="width: 100%">
-        <el-table-column prop="Host" label="Host" min-width="150" />
-        <el-table-column label="Loss%" width="70">
+        <el-table-column prop="Host" label="主机" min-width="150" />
+        <el-table-column label="丢包率" width="80">
           <template #default="{ row }">
             {{ ((row.Loss / row.Send) * 100).toFixed(2) }}%
           </template>
         </el-table-column>
-        <el-table-column prop="Send" label="Snt" width="60" />
-        <el-table-column label="Last" width="70">
+        <el-table-column prop="Send" label="发送" width="60" />
+        <el-table-column label="最近" width="70">
           <template #default="{ row }">
             {{ (row.Last / 1000000).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column label="Avg" width="70">
+        <el-table-column label="平均" width="70">
           <template #default="{ row }">
             {{ (row.Avg / 1000000).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column label="Best" width="70">
+        <el-table-column label="最好" width="70">
           <template #default="{ row }">
             {{ (row.Best / 1000000).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column label="Wrst" width="70">
+        <el-table-column label="最差" width="70">
           <template #default="{ row }">
             {{ (row.Wrst / 1000000).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column prop="StDev" label="StDev" width="70" />
+        <el-table-column prop="StDev" label="标准差" width="70" />
       </el-table>
     </el-dialog>
   </div>
@@ -192,10 +192,13 @@ onMounted(() => {
 .alerts-view {
   height: 100%;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .alerts-header {
   margin-bottom: 20px;
+  flex-shrink: 0;
 
   h2 {
     margin: 0;
@@ -208,6 +211,8 @@ onMounted(() => {
   display: flex;
   gap: 20px;
   overflow: hidden;
+  flex: 1;
+  min-width: 0;
 }
 
 .dates-sidebar {
@@ -220,8 +225,21 @@ onMounted(() => {
   min-width: 0;
   overflow: hidden;
 
+  :deep(.el-card) {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
   :deep(.el-card__body) {
-    overflow: hidden;
+    flex: 1;
+    overflow: auto;
+    min-width: 0;
+  }
+
+  :deep(.el-table) {
+    min-width: 0;
   }
 }
 
