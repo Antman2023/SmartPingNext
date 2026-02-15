@@ -5,12 +5,19 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create a draft release'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
   build:
     name: Build ${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           # Linux amd64
@@ -118,21 +125,81 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
     permissions:
       contents: write
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="v0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: false
 
-      - name: List files
-        run: find artifacts -type f
+      - name: Prepare release files
+        run: |
+          mkdir -p release-files
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release-files/ \;
+          ls -la release-files/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # 获取上一个 tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            echo "changelog<<EOF" >> $GITHUB_OUTPUT
+            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/*
+          name: SmartPing ${{ steps.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          draft: ${{ github.event.inputs.create_release == 'true' }}
+          prerelease: false
           generate_release_notes: true
+          body: |
+            ## 更新内容
+            ${{ steps.changelog.outputs.changelog }}
+
+            ## 下载
+            | 平台 | 架构 | 文件 |
+            |------|------|------|
+            | Linux | amd64 | smartping-linux-amd64.tar.gz |
+            | Linux | arm64 | smartping-linux-arm64.tar.gz |
+            | Windows | amd64 | smartping-windows-amd64.zip |
+            | macOS | arm64 | smartping-darwin-arm64.tar.gz |
+
+            ## 使用方法
+            ```bash
+            # Linux/macOS
+            tar -xzf smartping-*.tar.gz
+            cd smartping
+            ./control start
+
+            # Windows
+            # 解压 smartping-*.zip
+            # 运行 control.cmd
+            ```
+          files: release-files/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
