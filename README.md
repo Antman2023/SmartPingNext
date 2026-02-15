@@ -29,7 +29,7 @@
 
 ## 技术栈
 
-- **后端**: Go 1.26 + SQLite3
+- **后端**: Go 1.24 + SQLite3
 - **前端**: Vue 3 + TypeScript + Vite + Element Plus + ECharts
 
 ## 快速开始
@@ -102,8 +102,8 @@ docker run -d \
   ghcr.io/antman2023/smartping-next:latest
 
 # 或自行构建
-docker build -t smartping-next .
-docker run -d --name smartping -p 18899:18899 smartping-next
+docker build -t smartping-next:latest .
+docker run -d --name smartping -p 18899:18899 smartping-next:latest
 
 # 或使用 docker-compose
 docker-compose up -d
@@ -163,6 +163,7 @@ docker-compose up -d
 - 可收缩侧边栏
 - 完整中文界面
 - 配置导入/导出功能
+- Docker 镜像支持
 - GitHub Actions 自动构建多平台发布包
 - 优化图表渲染性能
 - 改进响应式布局适配
