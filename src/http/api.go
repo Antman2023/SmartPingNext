@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/cihub/seelog"
-	"github.com/wcharczuk/go-chart"
-	"github.com/wcharczuk/go-chart/drawing"
 )
 
 func configApiRoutes() {
@@ -107,8 +105,8 @@ func configApiRoutes() {
 			losspk = append(losspk, "0")
 			timeStart = timeStart + 60
 		}
-		querySql := "SELECT logtime,maxdelay,mindelay,avgdelay,losspk FROM `pinglog` where target='" + tableip + "' and logtime between '" + timeStartStr + "' and '" + timeEndStr + "' "
-		rows, err := g.Db.Query(querySql)
+		querySql := "SELECT logtime,maxdelay,mindelay,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"
+		rows, err := g.Db.Query(querySql, tableip, timeStartStr, timeEndStr)
 		seelog.Debug("[func:/api/ping.json] Query ", querySql)
 		if err != nil {
 			seelog.Error("[func:/api/ping.json] Query ", err)
@@ -205,8 +203,8 @@ func configApiRoutes() {
 			}
 			rows.Close()
 		}
-		querySql = "select logtime,targetname,targetip,tracert from alertlog where logtime between '" + dtb + " 00:00:00' and '" + dtb + " 23:59:59'"
-		rows, err = g.Db.Query(querySql)
+		querySql = "select logtime,targetname,targetip,tracert from alertlog where logtime between ? and ?"
+		rows, err = g.Db.Query(querySql, dtb+" 00:00:00", dtb+" 23:59:59")
 		seelog.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
 			seelog.Error("[func:/api/alert.json] Query ", err)
@@ -253,8 +251,8 @@ func configApiRoutes() {
 		chinaMp.Avgdelay["cucc"] = []g.MapVal{}
 		chinaMp.Avgdelay["cmcc"] = []g.MapVal{}
 		g.DLock.Lock()
-		querySql := "select mapjson from mappinglog where logtime = '" + dataKey + "'"
-		rows, err := g.Db.Query(querySql)
+		querySql := "select mapjson from mappinglog where logtime = ?"
+		rows, err := g.Db.Query(querySql, dataKey)
 		g.DLock.Unlock()
 		seelog.Debug("[func:/api/mapping.json] Query ", querySql)
 		if err != nil {
@@ -291,14 +289,17 @@ func configApiRoutes() {
 			return
 		}
 		nowtime := int(time.Now().Unix())
+		g.ToolLimitLock.Lock()
 		if _, ok := g.ToolLimit[r.RemoteAddr]; ok {
 			if (nowtime - g.ToolLimit[r.RemoteAddr]) <= g.Cfg.Toollimit {
+				g.ToolLimitLock.Unlock()
 				preout.Error = "Time Limit Exceeded!"
 				RenderJson(w, preout)
 				return
 			}
 		}
 		g.ToolLimit[r.RemoteAddr] = nowtime
+		g.ToolLimitLock.Unlock()
 		target := strings.Replace(strings.Replace(r.Form["t"][0], "https://", "", -1), "http://", "", -1)
 		preout.Ping = g.PingSt{}
 		preout.Ping.MinDelay = -1
@@ -350,6 +351,10 @@ func configApiRoutes() {
 			preout.Ping.MinDelay = 3000
 			preout.Ping.MaxDelay = 3000
 		}
+		// Format delay values to 2 decimal places
+		preout.Ping.AvgDelay = float64(int(preout.Ping.AvgDelay*100+0.5)) / 100
+		preout.Ping.MinDelay = float64(int(preout.Ping.MinDelay*100+0.5)) / 100
+		preout.Ping.MaxDelay = float64(int(preout.Ping.MaxDelay*100+0.5)) / 100
 		preout.Status = "true"
 		w.Header().Set("Content-Type", "application/json")
 		RenderJson(w, preout)
@@ -556,173 +561,6 @@ func configApiRoutes() {
 		}
 		preout["status"] = "true"
 		RenderJson(w, preout)
-	})
-
-	//Ping画图
-	http.HandleFunc("/api/graph.png", func(w http.ResponseWriter, r *http.Request) {
-		if !AuthUserIp(r.RemoteAddr) {
-			o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-			http.Error(w, o, http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "image/png")
-		r.ParseForm()
-		if len(r.Form["g"]) == 0 {
-			GraphText(83, 70, "GET PARAM ERROR").Save(w)
-			return
-		}
-		url := r.Form["g"][0]
-		config := g.PingStMini{}
-		timeout := time.Duration(time.Duration(g.Cfg.Base["Timeout"]) * time.Second)
-		client := http.Client{
-			Timeout: timeout,
-		}
-		resp, err := client.Get(url)
-		if err != nil {
-			GraphText(80, 70, "REQUEST API ERROR").Save(w)
-			return
-		}
-
-		defer resp.Body.Close()
-		if resp.StatusCode == 401 {
-			GraphText(80, 70, "401-UNAUTHORIZED").Save(w)
-			return
-		}
-		if resp.StatusCode != 200 {
-			GraphText(85, 70, "ERROR CODE "+strconv.Itoa(resp.StatusCode)).Save(w)
-			return
-		}
-		body, _ := io.ReadAll(resp.Body)
-		err = json.Unmarshal(body, &config)
-		if err != nil {
-			GraphText(80, 70, "PARSE DATA ERROR").Save(w)
-			return
-		}
-
-		Xals := []float64{}
-		AvgDelay := []float64{}
-		LossPk := []float64{}
-		Bkg := []float64{}
-		minLen := len(config.Lastcheck)
-		if len(config.AvgDelay) < minLen {
-			minLen = len(config.AvgDelay)
-		}
-		if len(config.LossPk) < minLen {
-			minLen = len(config.LossPk)
-		}
-		if minLen == 0 {
-			GraphText(80, 70, "NO DATA").Save(w)
-			return
-		}
-
-		MaxDelay := 0.0
-		for i := 0; i < minLen; i = i + 1 {
-			avg, _ := strconv.ParseFloat(config.AvgDelay[i], 64)
-			if MaxDelay < avg {
-				MaxDelay = avg
-			}
-			AvgDelay = append(AvgDelay, avg)
-			losspk, _ := strconv.ParseFloat(config.LossPk[i], 64)
-			LossPk = append(LossPk, losspk)
-			Xals = append(Xals, float64(i))
-			Bkg = append(Bkg, 100.0)
-		}
-		if MaxDelay == 0.0 {
-			MaxDelay = 1.0
-		}
-		graph := chart.Chart{
-			Width:  300 * 3,
-			Height: 130 * 3,
-			Background: chart.Style{
-				FillColor: drawing.Color{R: 249, G: 246, B: 241, A: 255},
-			},
-			XAxis: chart.XAxis{
-				Style: chart.Style{
-					Show:     true,
-					FontSize: 20,
-				},
-				TickPosition: chart.TickPositionBetweenTicks,
-				ValueFormatter: func(v any) string {
-					vf, ok := v.(float64)
-					if !ok {
-						return ""
-					}
-					idx := int(vf)
-					if idx < 0 || idx >= len(config.Lastcheck) {
-						return ""
-					}
-					if len(config.Lastcheck[idx]) < 16 {
-						return config.Lastcheck[idx]
-					}
-					return config.Lastcheck[idx][11:16]
-				},
-			},
-			YAxis: chart.YAxis{
-				Style: chart.Style{
-					Show:     true,
-					FontSize: 20,
-				},
-				Range: &chart.ContinuousRange{
-					Min: 0.0,
-					Max: 100.0,
-				},
-				ValueFormatter: func(v any) string {
-					if vf, isFloat := v.(float64); isFloat {
-						return fmt.Sprintf("%0.0f%%", vf)
-					}
-					return ""
-				},
-			},
-			YAxisSecondary: chart.YAxis{
-				//NameStyle: chart.StyleShow(),
-				Style: chart.Style{
-					Show:     true,
-					FontSize: 20,
-				},
-				Range: &chart.ContinuousRange{
-					Min: 0.0,
-					Max: MaxDelay + MaxDelay/10,
-				},
-				ValueFormatter: func(v any) string {
-					if vf, isFloat := v.(float64); isFloat {
-						return fmt.Sprintf("%0.0f", vf)
-					}
-					return ""
-				},
-			},
-			Series: []chart.Series{
-				chart.ContinuousSeries{
-					Style: chart.Style{
-						Show:        true,
-						StrokeColor: drawing.Color{R: 249, G: 246, B: 241, A: 255},
-						FillColor:   drawing.Color{R: 249, G: 246, B: 241, A: 255},
-					},
-					XValues: Xals,
-					YValues: Bkg,
-				},
-				chart.ContinuousSeries{
-					Style: chart.Style{
-						Show:        true,
-						StrokeColor: drawing.Color{R: 0, G: 204, B: 102, A: 200},
-						FillColor:   drawing.Color{R: 0, G: 204, B: 102, A: 200},
-					},
-					XValues: Xals,
-					YValues: AvgDelay,
-					YAxis:   chart.YAxisSecondary,
-				},
-				chart.ContinuousSeries{
-					Style: chart.Style{
-						Show:        true,
-						StrokeColor: drawing.Color{R: 255, G: 0, B: 0, A: 200},
-						FillColor:   drawing.Color{R: 255, G: 0, B: 0, A: 200},
-					},
-					XValues: Xals,
-					YValues: LossPk,
-				},
-			},
-		}
-
-		graph.Render(chart.PNG, w)
 	})
 
 	//代理访问

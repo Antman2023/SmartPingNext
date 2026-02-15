@@ -1,10 +1,10 @@
 package funcs
 
 import (
+	"fmt"
 	"net"
 	"smartping/src/g"
 	"smartping/src/nettools"
-	"strconv"
 	"sync"
 	"time"
 
@@ -76,10 +76,14 @@ func PingTask(t g.NetworkMember, wg *sync.WaitGroup) {
 func PingStorage(pingres g.PingSt, Addr string) {
 	logtime := time.Now().Format("2006-01-02 15:04")
 	seelog.Info("[func:StartPing] ", "(", logtime, ")Starting PingStorage ", Addr)
-	sql := "INSERT INTO [pinglog] (logtime, target, maxdelay, mindelay, avgdelay, sendpk, revcpk, losspk) values('" + logtime + "','" + Addr + "','" + strconv.FormatFloat(pingres.MaxDelay, 'f', 2, 64) + "','" + strconv.FormatFloat(pingres.MinDelay, 'f', 2, 64) + "','" + strconv.FormatFloat(pingres.AvgDelay, 'f', 2, 64) + "','" + strconv.Itoa(pingres.SendPk) + "','" + strconv.Itoa(pingres.RevcPk) + "','" + strconv.Itoa(pingres.LossPk) + "')"
+	sql := "INSERT INTO [pinglog] (logtime, target, maxdelay, mindelay, avgdelay, sendpk, revcpk, losspk) values(?, ?, ?, ?, ?, ?, ?, ?)"
 	seelog.Debug("[func:StartPing] ", sql)
 	g.DLock.Lock()
-	_, err := g.Db.Exec(sql)
+	_, err := g.Db.Exec(sql, logtime, Addr,
+		fmt.Sprintf("%.2f", pingres.MaxDelay),
+		fmt.Sprintf("%.2f", pingres.MinDelay),
+		fmt.Sprintf("%.2f", pingres.AvgDelay),
+		pingres.SendPk, pingres.RevcPk, pingres.LossPk)
 	if err != nil {
 		seelog.Error("[func:StartPing] Sql Error ", err)
 	}

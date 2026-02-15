@@ -1,8 +1,8 @@
-# Created by .ignore support plugin (hsz.mobi)  
-  
-.idea/  
-  
-## File-based project format:  
+# Created by .ignore support plugin (hsz.mobi)
+
+.idea/
+
+## File-based project format:
 *.exe
 *.a
 bin/*
@@ -23,3 +23,21 @@ conf/config.json
 !bin/nssm.exe*
 logs/*
 html/admin/*
+
+# Web frontend
+web/node_modules/
+web/dist/
+
+# IDE
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.claude/

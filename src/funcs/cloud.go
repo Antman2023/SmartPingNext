@@ -15,7 +15,7 @@ func StartCloudMonitor() {
 	}
 	saveerr := g.SaveConfig()
 	if saveerr != nil {
-		seelog.Error("[func:StartCloudMonitor] Save Cloud Config Error", err)
+		seelog.Error("[func:StartCloudMonitor] Save Cloud Config Error", saveerr)
 		return
 	}
 	seelog.Info("[func:StartCloudMonitor] ", "StartCloudMonitor finish ")

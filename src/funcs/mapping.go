@@ -120,10 +120,9 @@ func MapPingStorage() {
 	if err != nil {
 		seelog.Error("[func:StartPing] Json Error ", err)
 	}
-	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values('" + time.Now().Format("2006-01-02 15:04") + "','" + string(jdata) + "')"
+	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values(?, ?)"
 	g.DLock.Lock()
-	g.Db.Exec(sql)
-	_, err = g.Db.Exec(sql)
+	_, err = g.Db.Exec(sql, time.Now().Format("2006-01-02 15:04"), string(jdata))
 	seelog.Debug(sql)
 	if err != nil {
 		seelog.Error("[func:StartPing] Sql Error ", err)

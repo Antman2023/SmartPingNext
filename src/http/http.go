@@ -11,8 +11,6 @@ import (
 	"strings"
 
 	"github.com/cihub/seelog"
-	"github.com/wcharczuk/go-chart"
-	"github.com/wcharczuk/go-chart/drawing"
 )
 
 func ValidIP4(ipAddress string) bool {
@@ -32,6 +30,8 @@ func RenderJson(w http.ResponseWriter, v any) {
 }
 
 func AuthUserIp(RemoteAddr string) bool {
+	g.AuthIpLock.RLock()
+	defer g.AuthIpLock.RUnlock()
 	if len(g.AuthUserIpMap) == 0 {
 		return true
 	}
@@ -45,6 +45,8 @@ func AuthUserIp(RemoteAddr string) bool {
 }
 
 func AuthAgentIp(RemoteAddr string, drt bool) bool {
+	g.AuthIpLock.RLock()
+	defer g.AuthIpLock.RUnlock()
 	if drt {
 		if len(g.AuthUserIpMap) == 0 {
 			return true
@@ -60,17 +62,6 @@ func AuthAgentIp(RemoteAddr string, drt bool) bool {
 		}
 	}
 	return false
-}
-
-func GraphText(x int, y int, txt string) chart.Renderer {
-	f, _ := chart.GetDefaultFont()
-	rhart, _ := chart.PNG(300, 130)
-	chart.Draw.Text(rhart, txt, x, y, chart.Style{
-		FontColor: drawing.ColorBlack,
-		FontSize:  10,
-		Font:      f,
-	})
-	return rhart
 }
 
 func StartHttp() {

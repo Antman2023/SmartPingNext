@@ -4,14 +4,14 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"strings"
+
 	"github.com/cihub/seelog"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -20,13 +20,16 @@ var (
 	Root string
 	Cfg  Config
 	//CLock	       sync.Mutex
-	SelfCfg        NetworkMember
-	AlertStatus    map[string]bool
-	AuthUserIpMap  map[string]bool
-	AuthAgentIpMap map[string]bool
-	ToolLimit      map[string]int
-	Db             *sql.DB
-	DLock          sync.Mutex
+	SelfCfg         NetworkMember
+	AlertStatus     map[string]bool
+	AlertStatusLock sync.RWMutex
+	AuthUserIpMap   map[string]bool
+	AuthAgentIpMap  map[string]bool
+	AuthIpLock      sync.RWMutex
+	ToolLimit       map[string]int
+	ToolLimitLock   sync.RWMutex
+	Db              *sql.DB
+	DLock           sync.Mutex
 )
 
 func IsExist(fp string) bool {
@@ -37,14 +40,13 @@ func IsExist(fp string) bool {
 func ReadConfig(filename string) Config {
 	config := Config{}
 	file, err := os.Open(filename)
-	defer file.Close()
 	if err != nil {
 		log.Fatal("Config Not Found!")
-	} else {
-		err = json.NewDecoder(file).Decode(&config)
-		if err != nil {
-			log.Fatal(err)
-		}
+	}
+	defer file.Close()
+	err = json.NewDecoder(file).Decode(&config)
+	if err != nil {
+		log.Fatal(err)
 	}
 	return config
 }
@@ -100,7 +102,10 @@ func ParseConfig(ver string) {
 			log.Fatalln("[Fault]db-base file copy error.")
 		}
 		defer dst.Close()
-		io.Copy(dst, src)
+		_, err = io.Copy(dst, src)
+		if err != nil {
+			log.Fatalln("[Fault]db-base file copy error:", err)
+		}
 	}
 	seelog.Info("Config loaded")
 	Db, err = sql.Open("sqlite3", Root+"/db/database.db")
@@ -124,7 +129,7 @@ func SaveCloudConfig(url string) (Config, error) {
 		return config, err
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	err = json.Unmarshal(body, &config)
 	if err != nil {
 		config.Name = string(body)
@@ -160,7 +165,7 @@ func SaveConfig() error {
 		seelog.Error("[func:SaveConfig] Json Parse ", errjson)
 		return errjson
 	}
-	err := ioutil.WriteFile(Root+"/conf/"+"config.json", []byte(out.String()), 0644)
+	err := os.WriteFile(Root+"/conf/"+"config.json", []byte(out.String()), 0644)
 	if err != nil {
 		seelog.Error("[func:SaveConfig] Config File Write", err)
 		return err
@@ -169,6 +174,8 @@ func SaveConfig() error {
 }
 
 func saveAuth() {
+	AuthIpLock.Lock()
+	defer AuthIpLock.Unlock()
 	AuthUserIpMap = map[string]bool{}
 	AuthAgentIpMap = map[string]bool{}
 	for _, k := range Cfg.Network {

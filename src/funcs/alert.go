@@ -20,13 +20,19 @@ func StartAlert() {
 	for _, v := range g.SelfCfg.Topology {
 		if v["Addr"] != g.SelfCfg.Addr {
 			sFlag := CheckAlertStatus(v)
+			g.AlertStatusLock.Lock()
 			if sFlag {
 				g.AlertStatus[v["Addr"]] = true
 			}
 			_, haskey := g.AlertStatus[v["Addr"]]
-			if (!haskey && !sFlag) || (!sFlag && g.AlertStatus[v["Addr"]]) {
-				seelog.Debug("[func:StartAlert] ", v["Addr"]+" Alert!")
+			shouldAlert := (!haskey && !sFlag) || (!sFlag && g.AlertStatus[v["Addr"]])
+			if shouldAlert {
 				g.AlertStatus[v["Addr"]] = false
+			}
+			g.AlertStatusLock.Unlock()
+
+			if shouldAlert {
+				seelog.Debug("[func:StartAlert] ", v["Addr"]+" Alert!")
 				l := g.AlertLog{}
 				l.Fromname = g.SelfCfg.Name
 				l.Fromip = g.SelfCfg.Addr
@@ -64,14 +70,14 @@ func CheckAlertStatus(v map[string]string) bool {
 	}
 	Thdchecksec, _ := strconv.Atoi(v["Thdchecksec"])
 	timeStartStr := time.Unix((time.Now().Unix() - int64(Thdchecksec)), 0).Format("2006-01-02 15:04")
-	querysql := "SELECT count(1) cnt FROM  `pinglog` where logtime > '" + timeStartStr + "' and target = '" + v["Addr"] + "' and (cast(avgdelay as double) > " + v["Thdavgdelay"] + " or cast(losspk as double) > " + v["Thdloss"] + ") "
-	rows, err := g.Db.Query(querysql)
-	defer rows.Close()
+	querysql := "SELECT count(1) cnt FROM `pinglog` where logtime > ? and target = ? and (cast(avgdelay as double) > ? or cast(losspk as double) > ?)"
+	rows, err := g.Db.Query(querysql, timeStartStr, v["Addr"], v["Thdavgdelay"], v["Thdloss"])
 	seelog.Debug("[func:StartAlert] ", querysql)
 	if err != nil {
 		seelog.Error("[func:StartAlert] Query Error ", err)
 		return false
 	}
+	defer rows.Close()
 	for rows.Next() {
 		l := new(Cnt)
 		err := rows.Scan(&l.Cnt)
@@ -91,10 +97,9 @@ func CheckAlertStatus(v map[string]string) bool {
 
 func AlertStorage(t g.AlertLog) {
 	seelog.Info("[func:AlertStorage] ", "(", t.Logtime, ")Starting AlertStorage ", t.Targetname)
-	sql := "INSERT INTO [alertlog] (logtime, targetip, targetname, tracert) values('" + t.Logtime + "','" + t.Targetip + "','" + t.Targetname + "','" + t.Tracert + "')"
+	sql := "INSERT INTO [alertlog] (logtime, targetip, targetname, tracert) values(?, ?, ?, ?)"
 	g.DLock.Lock()
-	//g.Db.Exec(sql)
-	_, err := g.Db.Exec(sql)
+	_, err := g.Db.Exec(sql, t.Logtime, t.Targetip, t.Targetname, t.Tracert)
 	if err != nil {
 		seelog.Error("[func:StartPing] Sql Error ", err)
 	}
