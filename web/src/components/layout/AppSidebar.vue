@@ -1,37 +1,44 @@
 <template>
-  <aside class="app-sidebar">
+  <aside class="app-sidebar" :class="{ 'is-collapsed': sidebarStore.isCollapsed }">
+    <div class="app-sidebar__toggle" @click="sidebarStore.toggleCollapse">
+      <el-icon>
+        <Fold v-if="!sidebarStore.isCollapsed" />
+        <Expand v-else />
+      </el-icon>
+    </div>
     <el-menu
       :default-active="currentRoute"
       class="app-sidebar__menu"
       :router="true"
+      :collapse="sidebarStore.isCollapsed"
     >
       <el-menu-item index="/">
         <el-icon><DataLine /></el-icon>
-        <span>正向监控</span>
+        <template #title>正向监控</template>
       </el-menu-item>
       <el-menu-item index="/reverse">
         <el-icon><DataAnalysis /></el-icon>
-        <span>反向监控</span>
+        <template #title>反向监控</template>
       </el-menu-item>
       <el-menu-item index="/topology">
         <el-icon><Share /></el-icon>
-        <span>拓扑图</span>
+        <template #title>拓扑图</template>
       </el-menu-item>
       <el-menu-item index="/mapping">
         <el-icon><MapLocation /></el-icon>
-        <span>延迟地图</span>
+        <template #title>延迟地图</template>
       </el-menu-item>
       <el-menu-item index="/tools">
         <el-icon><Tools /></el-icon>
-        <span>检测工具</span>
+        <template #title>检测工具</template>
       </el-menu-item>
       <el-menu-item index="/alerts">
         <el-icon><Bell /></el-icon>
-        <span>报警记录</span>
+        <template #title>报警记录</template>
       </el-menu-item>
       <el-menu-item index="/config">
         <el-icon><Setting /></el-icon>
-        <span>系统配置</span>
+        <template #title>系统配置</template>
       </el-menu-item>
     </el-menu>
   </aside>
@@ -47,11 +54,15 @@ import {
   MapLocation,
   Tools,
   Bell,
-  Setting
+  Setting,
+  Fold,
+  Expand
 } from '@element-plus/icons-vue'
+import { useSidebarStore } from '@/stores/sidebar'
 
 const route = useRoute()
 const currentRoute = computed(() => route.path)
+const sidebarStore = useSidebarStore()
 </script>
 
 <style scoped lang="scss">
@@ -63,6 +74,26 @@ const currentRoute = computed(() => route.path)
   width: 200px;
   background-color: var(--sidebar-bg);
   overflow-y: auto;
+  overflow-x: hidden;
+  transition: width 0.3s ease;
+
+  &.is-collapsed {
+    width: 64px;
+  }
+}
+
+.app-sidebar__toggle {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--sidebar-text);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
 }
 
 .app-sidebar__menu {
@@ -80,6 +111,10 @@ const currentRoute = computed(() => route.path)
       color: var(--sidebar-active-text);
       background-color: rgba(64, 158, 255, 0.1);
     }
+  }
+
+  &:not(.el-menu--collapse) {
+    width: 200px;
   }
 }
 </style>

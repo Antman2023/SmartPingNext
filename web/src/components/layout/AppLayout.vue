@@ -3,7 +3,7 @@
     <AppNavbar />
     <div class="app-layout__body">
       <AppSidebar />
-      <main class="app-main">
+      <main class="app-main" :class="{ 'is-collapsed': sidebarStore.isCollapsed }">
         <slot />
       </main>
     </div>
@@ -13,6 +13,9 @@
 <script setup lang="ts">
 import AppNavbar from './AppNavbar.vue'
 import AppSidebar from './AppSidebar.vue'
+import { useSidebarStore } from '@/stores/sidebar'
+
+const sidebarStore = useSidebarStore()
 </script>
 
 <style scoped lang="scss">
@@ -35,5 +38,10 @@ import AppSidebar from './AppSidebar.vue'
   background-color: var(--color-bg-secondary);
   min-height: calc(100vh - 60px);
   box-sizing: border-box;
+  transition: margin-left 0.3s ease;
+
+  &.is-collapsed {
+    margin-left: 64px;
+  }
 }
 </style>
