@@ -16,10 +16,11 @@
 ## 功能
 
 - 正向PING，反向Ping绘图
-- 互PING间机器的状态拓扑，自定义延迟、丢包阈值报警（声��报警与邮件报警），报警时MTR检测
-- 全国PING延迟地图（各省份可分电信、联通、移动三条线路）
+- 互PING间机器的状态拓扑，自定义延迟、丢包阈值报警（声音报警与邮件报警），报警时MTR检测
+- 全国PING延迟地图（各省份可分电��、联通、移动三条线路）
 - 检测工具，支持使用SmartPing各节点进行网络相关检测
 - 支持深色/浅色主题切换
+- 可收缩侧边栏
 
 ## 技术栈
 
@@ -28,32 +29,56 @@
 
 ## 快速开始
 
-### Linux/macOS
+### 下载发布版
+
+从 [Releases](https://github.com/Antman2023/smartping-next/releases) 下载对应平台的版本：
+
+| 平台 | 架构 | 文件 |
+|------|------|------|
+| Linux | amd64 | smartping-linux-amd64.tar.gz |
+| Linux | arm64 | smartping-linux-arm64.tar.gz |
+| Windows | amd64 | smartping-windows-amd64.zip |
+| macOS | arm64 | smartping-darwin-arm64.tar.gz |
+
 ```bash
-./control build    # 编译
+# Linux/macOS
+tar -xzf smartping-*.tar.gz
+cd smartping
+./control start
+
+# Windows
+# 解压 smartping-*.zip
+# 运行 control.cmd
+```
+
+### 从源码构建
+
+#### Linux/macOS
+```bash
+./control build    # 编译（包含前端和后端）
 ./control run      # 前台运行
 ./control start    # 后台启动
 ./control stop     # 停止
 ./control restart  # 重启
 ./control status   # 查看状态
-./control pack     # 打包发布
 ```
 
-### Windows
+#### Windows
 ```cmd
 control.cmd        # 交互式菜单（build/run/install/start/stop/restart）
 ```
 
-### 手动构建
+#### 手动构建
 ```bash
-# 后端
-go get -v ./...
-go build -o bin/smartping src/smartping.go
-
 # 前端
 cd web
 npm install
 npm run build
+cp -r dist ../src/static/html
+
+# 后端
+cd ..
+go build -o bin/smartping src/smartping.go
 ```
 
 **默认端口**: 18899 | **默认密码**: smartping
@@ -70,8 +95,9 @@ npm run build
 │   ├── g/                  # 全局配置和数据结构
 │   ├── http/               # HTTP 服务层
 │   ├── funcs/              # 核心业务逻辑
-│   └── nettools/           # 底层网络工具
-├── web/                    # Vue 3 前端
+│   ├── nettools/           # 底层网络工具
+│   └── static/             # 嵌入的前端静态文件
+├── web/                    # Vue 3 前端源码
 │   ├── src/
 │   │   ├── views/          # 页面组件
 │   │   ├── components/     # 通用组件
@@ -104,6 +130,9 @@ npm run build
 本项目基于 [smartping/smartping](https://github.com/smartping/smartping) 开发，在原有功能基础上进行了以下改进：
 
 - 使用 Vue 3 + TypeScript + Element Plus 重构前端
+- 前端静态文件嵌入二进制，单文件部署
 - 新增深色/浅色主题切换支持
+- 可收缩侧边栏
+- GitHub Actions 自动构建多平台发布包
 - 优化图表渲染性能
 - 改进响应式布局适配
