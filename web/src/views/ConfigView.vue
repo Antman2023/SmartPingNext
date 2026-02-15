@@ -110,14 +110,14 @@
               <el-table-column prop="Addr" label="节点IP" min-width="140" />
               <el-table-column label="SmartPing" width="100">
                 <template #default="{ row }">
-                  <el-checkbox v-model="row.Smartping" :disabled="row.isSelf" />
+                  <el-checkbox v-model="row._original.Smartping" :disabled="row.isSelf" />
                 </template>
               </el-table-column>
               <el-table-column label="操作" min-width="180">
                 <template #default="{ row }">
                   <el-button-group>
-                    <el-button size="small" :disabled="!row.isSelf && !row.Smartping" @click="editPingConfig(row)">Ping配置</el-button>
-                    <el-button size="small" :disabled="!row.isSelf && !row.Smartping" @click="editTopoConfig(row)">拓扑配置</el-button>
+                    <el-button size="small" :disabled="!row.isSelf && !row._original.Smartping" @click="editPingConfig(row)">Ping配置</el-button>
+                    <el-button size="small" :disabled="!row.isSelf && !row._original.Smartping" @click="editTopoConfig(row)">拓扑配置</el-button>
                   </el-button-group>
                 </template>
               </el-table-column>
@@ -162,13 +162,14 @@
     <el-dialog v-model="addNodeVisible" title="新增节点" width="400px">
       <el-form label-width="80px">
         <el-form-item label="节点名称">
-          <el-input v-model="newNodeName" />
+          <el-input v-model="newNodeName" placeholder="请输入节点名称" />
         </el-form-item>
         <el-form-item label="节点IP">
-          <el-input v-model="newNodeAddr" />
+          <el-input v-model="newNodeAddr" placeholder="请输入IPv4地址，如 192.168.1.1" />
         </el-form-item>
       </el-form>
       <template #footer>
+        <el-button @click="addNodeVisible = false">取消</el-button>
         <el-button type="primary" @click="addNode">暂存</el-button>
       </template>
     </el-dialog>
@@ -293,8 +294,13 @@ const formConfig = reactive<Config>({
 const networkList = computed(() => {
   if (!formConfig.Network) return []
   return Object.entries(formConfig.Network).map(([addr, network]) => ({
-    ...network,
+    // 保留原始对象的引用
+    _original: network,
+    Name: network.Name,
     Addr: addr,
+    Smartping: network.Smartping,
+    Ping: network.Ping,
+    Topology: network.Topology,
     isSelf: addr === formConfig.Addr
   }))
 })
@@ -348,9 +354,11 @@ const handleSave = async () => {
       ElMessage.success('保存成功')
     } else {
       ElMessage.error(result.info || '保存失败')
+      console.error('保存失败:', result.info)
     }
-  } catch (e) {
-    ElMessage.error('保存失败')
+  } catch (e: any) {
+    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+    console.error('保存失败', e)
   }
 }
 
@@ -366,15 +374,29 @@ const addNode = () => {
     return
   }
 
-  formConfig.Network[newNodeAddr.value] = {
-    Name: newNodeName.value,
-    Addr: newNodeAddr.value,
+  // 验证 IP 格式
+  const ipRegex = /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/
+  if (!ipRegex.test(newNodeAddr.value.trim())) {
+    ElMessage.warning('请输入有效的IPv4地址')
+    return
+  }
+
+  const addr = newNodeAddr.value.trim()
+  if (formConfig.Network[addr]) {
+    ElMessage.warning('该IP节点已存在')
+    return
+  }
+
+  formConfig.Network[addr] = {
+    Name: newNodeName.value.trim(),
+    Addr: addr,
     Smartping: false,
     Ping: [],
     Topology: []
   }
 
   addNodeVisible.value = false
+  ElMessage.success('节点已添加，请点击保存按钮保存配置')
 }
 
 const deleteNode = (row: any) => {

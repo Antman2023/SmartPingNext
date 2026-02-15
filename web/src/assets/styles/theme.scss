@@ -281,6 +281,15 @@ body {
       color: var(--color-text-primary) !important;
     }
 
+    &.is-disabled,
+    &.is-disabled:hover,
+    &.is-disabled:focus {
+      background-color: var(--color-bg-tertiary) !important;
+      border-color: var(--color-border) !important;
+      color: var(--color-text-secondary) !important;
+      cursor: not-allowed;
+    }
+
     &--primary {
       --el-button-bg-color: var(--color-primary);
       --el-button-border-color: var(--color-primary);
@@ -291,6 +300,14 @@ body {
         background-color: var(--color-primary-light-3) !important;
         border-color: var(--color-primary-light-3) !important;
         color: #fff !important;
+      }
+
+      &.is-disabled,
+      &.is-disabled:hover,
+      &.is-disabled:focus {
+        background-color: rgba(64, 158, 255, 0.4) !important;
+        border-color: rgba(64, 158, 255, 0.4) !important;
+        color: rgba(255, 255, 255, 0.6) !important;
       }
     }
 
@@ -304,6 +321,14 @@ body {
         background-color: var(--color-danger-light-3) !important;
         border-color: var(--color-danger-light-3) !important;
         color: #fff !important;
+      }
+
+      &.is-disabled,
+      &.is-disabled:hover,
+      &.is-disabled:focus {
+        background-color: rgba(245, 108, 108, 0.4) !important;
+        border-color: rgba(245, 108, 108, 0.4) !important;
+        color: rgba(255, 255, 255, 0.6) !important;
       }
     }
   }
