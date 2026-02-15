@@ -125,6 +125,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Get version
         id: version
@@ -151,8 +153,8 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          # 获取上一个 tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          # 获取当前 tag 之前的 tag（倒数第二个 tag）
+          PREV_TAG=$(git tag --sort=-version:refname | head -2 | tail -1)
           if [ -n "$PREV_TAG" ]; then
             echo "changelog<<EOF" >> $GITHUB_OUTPUT
             git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> $GITHUB_OUTPUT
