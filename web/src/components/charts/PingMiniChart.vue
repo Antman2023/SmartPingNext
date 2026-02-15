@@ -26,9 +26,9 @@ const getChartOption = (): EChartsOption => {
   return {
     backgroundColor: 'transparent',
     grid: {
-      left: 12,
-      right: 12,
-      top: 5,
+      left: 35,
+      right: 35,
+      top: 18,
       bottom: 18,
       containLabel: false
     },
@@ -56,23 +56,45 @@ const getChartOption = (): EChartsOption => {
       {
         type: 'value',
         position: 'left',
+        name: '延迟',
+        nameTextStyle: {
+          color: isDark ? '#6c6e72' : '#909399',
+          fontSize: 10
+        },
+        nameGap: 5,
         min: 0,
         max: function(value: { max: number }) {
           return Math.max(value.max * 1.1, 10)
         },
         axisLine: { show: false },
         axisTick: { show: false },
-        axisLabel: { show: false },
+        axisLabel: {
+          show: true,
+          color: isDark ? '#6c6e72' : '#909399',
+          fontSize: 9,
+          formatter: (value: number) => Math.round(value).toString()
+        },
         splitLine: { show: false }
       },
       {
         type: 'value',
         position: 'right',
+        name: '丢包',
+        nameTextStyle: {
+          color: isDark ? '#6c6e72' : '#909399',
+          fontSize: 10
+        },
+        nameGap: 5,
         min: 0,
         max: 100,
         axisLine: { show: false },
         axisTick: { show: false },
-        axisLabel: { show: false },
+        axisLabel: {
+          show: true,
+          color: isDark ? '#6c6e72' : '#909399',
+          fontSize: 9,
+          formatter: '{value}%'
+        },
         splitLine: { show: false }
       }
     ],
