@@ -25,6 +25,27 @@
 
           <el-card class="mt-2">
             <template #header>
+              <span>导入/导出</span>
+            </template>
+            <div class="import-export">
+              <div class="import-export-row">
+                <el-input v-model="importExportPassword" type="password" placeholder="密码" style="width: 150px;" />
+                <el-button @click="handleExport">导出配置</el-button>
+                <el-upload
+                  ref="uploadRef"
+                  :auto-upload="false"
+                  :show-file-list="false"
+                  accept=".json"
+                  :on-change="handleImportFile"
+                >
+                  <el-button>导入配置</el-button>
+                </el-upload>
+              </div>
+            </div>
+          </el-card>
+
+          <el-card class="mt-2">
+            <template #header>
               <span>基础配置</span>
             </template>
             <el-form label-width="120px" label-position="top">
@@ -275,6 +296,8 @@ import type { Config } from '@/types'
 
 const config = ref<Config | null>(null)
 const password = ref('')
+const importExportPassword = ref('')
+const uploadRef = ref()
 
 const formConfig = reactive<Config>({
   Ver: '',
@@ -360,6 +383,96 @@ const handleSave = async () => {
     ElMessage.error('保存失败: ' + (e.message || '未知错误'))
     console.error('保存失败', e)
   }
+}
+
+// 验证密码
+const verifyPassword = async (pwd: string): Promise<boolean> => {
+  try {
+    const response = await fetch('/api/verify-password.json', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `password=${encodeURIComponent(pwd)}`
+    })
+    const result = await response.json()
+    return result.status === 'true'
+  } catch {
+    return false
+  }
+}
+
+// 导出配置
+const handleExport = async () => {
+  if (!importExportPassword.value) {
+    ElMessage.warning('请输入密码')
+    return
+  }
+
+  const valid = await verifyPassword(importExportPassword.value)
+  if (!valid) {
+    ElMessage.error('密码错误')
+    return
+  }
+
+  // 导出配置（移除敏感信息）
+  const exportConfig = {
+    ...formConfig,
+    Password: undefined,
+    Ver: undefined
+  }
+
+  const blob = new Blob([JSON.stringify(exportConfig, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `smartping-config-${new Date().toISOString().slice(0, 10)}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+
+  ElMessage.success('配置已导出')
+}
+
+// 导入配置文件选择
+const handleImportFile = async (file: any) => {
+  if (!importExportPassword.value) {
+    ElMessage.warning('请输入密码')
+    return
+  }
+
+  const valid = await verifyPassword(importExportPassword.value)
+  if (!valid) {
+    ElMessage.error('密码错误')
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = (e) => {
+    try {
+      const importedConfig = JSON.parse(e.target?.result as string)
+
+      // 验证配置结构
+      if (!importedConfig.Name || !importedConfig.Addr || !importedConfig.Network) {
+        ElMessage.error('配置文件格式无效')
+        return
+      }
+
+      // 保留当前节点的关键信息
+      const currentName = formConfig.Name
+      const currentAddr = formConfig.Addr
+      const currentPort = formConfig.Port
+
+      // 应用导入的配置
+      Object.assign(formConfig, importedConfig, {
+        Name: currentName,
+        Addr: currentAddr,
+        Port: currentPort
+      })
+
+      ElMessage.success('配置已导入，请点击保存按钮保存配置')
+    } catch {
+      ElMessage.error('配置文件解析失败')
+    }
+  }
+  reader.readAsText(file.raw)
 }
 
 const showAddNode = () => {
@@ -580,6 +693,18 @@ onMounted(() => {
     display: flex;
     gap: 12px;
     align-items: center;
+  }
+
+  .import-export {
+    display: flex;
+    gap: 12px;
+  }
+
+  .import-export-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   h4 {

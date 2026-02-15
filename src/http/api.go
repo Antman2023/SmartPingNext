@@ -360,6 +360,25 @@ func configApiRoutes() {
 		RenderJson(w, preout)
 	})
 
+	//验证密码
+	http.HandleFunc("/api/verify-password.json", func(w http.ResponseWriter, r *http.Request) {
+		if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
+			o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
+			http.Error(w, o, http.StatusUnauthorized)
+			return
+		}
+		preout := make(map[string]string)
+		r.ParseForm()
+		preout["status"] = "false"
+		if len(r.Form["password"]) == 0 || r.Form["password"][0] != g.Cfg.Password {
+			preout["info"] = "密码错误!"
+			RenderJson(w, preout)
+			return
+		}
+		preout["status"] = "true"
+		RenderJson(w, preout)
+	})
+
 	//保存配置文件
 	http.HandleFunc("/api/saveconfig.json", func(w http.ResponseWriter, r *http.Request) {
 		if !AuthUserIp(r.RemoteAddr) && !AuthAgentIp(r.RemoteAddr, true) {
