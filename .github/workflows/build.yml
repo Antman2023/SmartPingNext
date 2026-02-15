@@ -70,27 +70,20 @@ jobs:
           mkdir -p src/static/html
           cp -r web/dist/* src/static/html/
 
-      - name: Install cross-compile tools (Linux arm64)
-        if: matrix.os == 'linux' && matrix.arch == 'arm64'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Build backend (Linux arm64)
-        if: matrix.os == 'linux' && matrix.arch == 'arm64'
+      - name: Build backend (Linux)
+        if: matrix.os == 'linux'
         env:
-          CC: aarch64-linux-gnu-gcc
           GOOS: linux
-          GOARCH: arm64
-          CGO_ENABLED: 1
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
         run: |
           go mod download
           go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
 
-      - name: Build backend (native)
-        if: "!(matrix.os == 'linux' && matrix.arch == 'arm64')"
+      - name: Build backend (Windows/macOS)
+        if: matrix.os != 'linux'
         env:
-          CGO_ENABLED: 1
+          CGO_ENABLED: 0
         run: |
           go mod download
           go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go

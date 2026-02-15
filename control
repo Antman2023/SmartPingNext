@@ -78,14 +78,13 @@ function build() {
     mkdir -p src/static/html
     cp -r web/dist/* src/static/html/
 
-    # 构建后端
+    # 构建后端（静态编译）
     echo "Building backend..."
-    go get -v ./...
-    go build src/smartping.go
+    go mod download
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/$app src/smartping.go
     if [ $? -ne 0 ]; then
         exit $?
     fi
-    mv $module ./bin/$app
     echo "Build complete!"
 }
 

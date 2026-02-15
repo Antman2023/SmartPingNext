@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cihub/seelog"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 func StartAlert() {

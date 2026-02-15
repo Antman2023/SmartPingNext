@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/cihub/seelog"
+	_ "modernc.org/sqlite"
+
 	"io"
 	"log"
 	"net/http"
@@ -108,7 +110,7 @@ func ParseConfig(ver string) {
 		}
 	}
 	seelog.Info("Config loaded")
-	Db, err = sql.Open("sqlite3", Root+"/db/database.db")
+	Db, err = sql.Open("sqlite", Root+"/db/database.db")
 	if err != nil {
 		log.Fatalln("[Fault]db open fail .", err)
 	}

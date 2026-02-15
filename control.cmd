@@ -45,8 +45,9 @@ IF "%select%"=="build" (
     mkdir src\static\html
     xcopy /e /y web\dist\* src\static\html\
     echo Building backend...
-    go get -v ./...
-    go build -o %~dp0\bin\smartping.exe  %~dp0\src\smartping.go
+    go mod download
+    set CGO_ENABLED=0
+    go build -ldflags="-s -w" -o %~dp0\bin\smartping.exe  %~dp0\src\smartping.go
     echo Build Finish..
     pause
     GOTO BG
