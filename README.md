@@ -72,7 +72,10 @@ go build -o bin/smartping src/smartping.go
 ### Docker
 
 ```bash
-# 使用 GitHub Container Registry 镜像
+# Docker Hub
+docker pull pathletboy/smartping-next:latest
+
+# 或 GitHub Container Registry
 docker pull ghcr.io/antman2023/smartping-next:latest
 
 # 运行容器
@@ -82,7 +85,7 @@ docker run -d \
   -v smartping-conf:/app/conf \
   -v smartping-db:/app/db \
   --restart unless-stopped \
-  ghcr.io/antman2023/smartping-next:latest
+  pathletboy/smartping-next:latest
 
 # 或自行构建
 docker build -t smartping-next:latest .
