@@ -1,0 +1,149 @@
+@import './variables.scss';
+
+// 主题过渡动画
+* {
+  transition: background-color 0.3s ease,
+              border-color 0.3s ease,
+              color 0.3s ease;
+}
+
+// 全局样式
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+}
+
+// 滚动条样式
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-tertiary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+
+  &:hover {
+    background: var(--color-text-secondary);
+  }
+}
+
+// Element Plus 通用样式覆盖
+.el-dialog {
+  .el-dialog__header {
+    .el-dialog__title {
+      color: var(--color-text-primary);
+      font-weight: 500;
+    }
+  }
+}
+
+// ECharts 图表容器确保撑满父容器
+.ping-chart,
+.ping-mini-chart {
+  canvas {
+    width: 100% !important;
+  }
+}
+
+// Element Plus 深色主题覆盖
+[data-theme='dark'] {
+  // 卡片标题颜色
+  .el-card__header {
+    color: var(--color-text-primary) !important;
+
+    & > span {
+      color: var(--color-text-primary) !important;
+    }
+  }
+
+  .el-card {
+    --el-card-bg-color: var(--color-bg-secondary);
+    --el-card-border-color: var(--color-border);
+
+    .el-card__header {
+      color: var(--color-text-primary) !important;
+      border-bottom-color: var(--color-border);
+
+      span {
+        color: var(--color-text-primary) !important;
+      }
+    }
+  }
+
+  .el-table {
+    --el-bg-color: var(--color-bg-primary);
+    --el-table-bg-color: var(--color-bg-primary);
+    --el-table-tr-bg-color: var(--color-bg-primary);
+    --el-table-header-bg-color: var(--color-bg-secondary);
+    --el-table-header-text-color: var(--color-text-regular);
+    --el-table-text-color: var(--color-text-primary);
+    --el-table-row-hover-bg-color: var(--color-bg-tertiary);
+    --el-table-current-row-bg-color: var(--color-bg-tertiary);
+    --el-table-border-color: var(--color-border);
+    background-color: var(--color-bg-primary);
+
+    // 斑马纹样式
+    .el-table__row--striped,
+    .el-table__body tr.el-table__row--striped td.el-table__cell,
+    &.el-table--striped .el-table__body tr.el-table__row--level-1 td.el-table__cell {
+      background-color: var(--color-bg-secondary) !important;
+    }
+
+    th.el-table__cell {
+      background-color: var(--color-bg-secondary);
+    }
+
+    td.el-table__cell,
+    th.el-table__cell {
+      border-color: var(--color-border);
+    }
+  }
+
+  .el-input__wrapper {
+    background-color: var(--color-bg-secondary);
+    box-shadow: 0 0 0 1px var(--color-border) inset;
+  }
+
+  .el-input__inner {
+    color: var(--color-text-primary);
+  }
+
+  .el-select__wrapper {
+    background-color: var(--color-bg-secondary);
+  }
+
+  .el-dialog {
+    --el-dialog-bg-color: var(--color-bg-primary);
+    --el-dialog-title-font-size: 16px;
+
+    .el-dialog__header {
+      color: var(--color-text-primary);
+
+      .el-dialog__title {
+        color: var(--color-text-primary);
+      }
+    }
+
+    .el-dialog__body {
+      color: var(--color-text-regular);
+    }
+  }
+
+  .el-form-item__label {
+    color: var(--color-text-regular);
+  }
+
+  .el-button {
+    --el-button-bg-color: var(--color-bg-tertiary);
+    --el-button-border-color: var(--color-border);
+    --el-button-text-color: var(--color-text-regular);
+  }
+}
