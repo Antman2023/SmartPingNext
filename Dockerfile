@@ -35,10 +35,10 @@ WORKDIR /app
 # Copy binary and default config
 COPY --from=builder /app/smartping ./
 COPY --from=builder /app/conf ./conf
-COPY --from=builder /app/db/database-base.db ./db/
 
-# Create directories
+# Create directories and copy database
 RUN mkdir -p /app/db /app/var
+COPY --from=builder /app/db/database-base.db ./db/
 
 # Set permissions
 RUN chmod +x ./smartping
