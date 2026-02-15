@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+*.md
+LICENSE
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Build artifacts
+bin/
+dist/
+node_modules/
+
+# Development files
+.claude/
+*.log
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+*_test.go

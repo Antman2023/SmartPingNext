@@ -10,6 +10,9 @@
         <a href="https://github.com/Antman2023/smartping-next/blob/master/LICENSE">
             <img src="https://img.shields.io/hexpm/l/plug.svg" >
         </a>
+        <a href="https://github.com/Antman2023/smartping-next/pkgs/container/smartping-next">
+            <img src="https://img.shields.io/badge/ghcr.io-available-blue" >
+        </a>
     </p>
 </p>
 
@@ -81,6 +84,29 @@ cp -r dist ../src/static/html
 # 后端
 cd ..
 go build -o bin/smartping src/smartping.go
+```
+
+### Docker
+
+```bash
+# 使用 GitHub Container Registry 镜像
+docker pull ghcr.io/antman2023/smartping-next:latest
+
+# 运行容器
+docker run -d \
+  --name smartping \
+  -p 18899:18899 \
+  -v smartping-conf:/app/conf \
+  -v smartping-db:/app/db \
+  --restart unless-stopped \
+  ghcr.io/antman2023/smartping-next:latest
+
+# 或自行构建
+docker build -t smartping-next .
+docker run -d --name smartping -p 18899:18899 smartping-next
+
+# 或使用 docker-compose
+docker-compose up -d
 ```
 
 **默认端口**: 18899 | **默认密码**: smartping

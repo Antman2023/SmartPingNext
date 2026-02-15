@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  smartping:
+    build: .
+    image: smartping-next:latest
+    container_name: smartping
+    restart: unless-stopped
+    ports:
+      - "18899:18899"
+    volumes:
+      - smartping-conf:/app/conf
+      - smartping-db:/app/db
+    environment:
+      - TZ=Asia/Shanghai
+
+volumes:
+  smartping-conf:
+  smartping-db:
