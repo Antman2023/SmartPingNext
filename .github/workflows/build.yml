@@ -31,7 +31,7 @@ jobs:
           # macOS amd64
           - os: darwin
             arch: amd64
-            runner: macos-13
+            runner: macos-latest
             ext: ''
           # macOS arm64
           - os: darwin
@@ -78,8 +78,17 @@ jobs:
           go mod download
           go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
 
+      - name: Build backend (macOS amd64 on arm64 runner)
+        if: matrix.os == 'darwin' && matrix.arch == 'amd64'
+        env:
+          CGO_ENABLED: 1
+          GOARCH: amd64
+        run: |
+          go mod download
+          go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
+
       - name: Build backend (native)
-        if: "!(matrix.os == 'linux' && matrix.arch == 'arm64')"
+        if: "!(matrix.os == 'linux' && matrix.arch == 'arm64') && !(matrix.os == 'darwin' && matrix.arch == 'amd64')"
         env:
           CGO_ENABLED: 1
         run: |
