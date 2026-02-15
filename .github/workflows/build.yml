@@ -95,8 +95,7 @@ jobs:
           cp bin/smartping${{ matrix.ext }} release/
           cp -r conf release/
           mkdir -p release/db
-          if [ -f "control" ]; then cp control release/; fi
-          if [ -f "control.cmd" ]; then cp control.cmd release/; fi
+          cp db/database-base.db release/db/
 
       - name: Create archive
         shell: bash
@@ -232,11 +231,11 @@ jobs:
             # Linux/macOS
             tar -xzf smartping-*.tar.gz
             cd smartping
-            ./control start
+            ./smartping
 
             # Windows
             # 解压 smartping-*.zip
-            # 运行 control.cmd
+            # 运行 smartping.exe
             ```
           files: release-files/*
         env:

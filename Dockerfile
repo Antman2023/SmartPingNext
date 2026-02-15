@@ -35,16 +35,16 @@ WORKDIR /app
 # Copy binary and default config
 COPY --from=builder /app/smartping ./
 COPY --from=builder /app/conf ./conf
-COPY --from=builder /app/control ./
+COPY --from=builder /app/db/database-base.db ./db/
 
 # Create directories
 RUN mkdir -p /app/db /app/var
 
 # Set permissions
-RUN chmod +x ./smartping ./control
+RUN chmod +x ./smartping
 
 # Expose port
-EXPOSE 18899
+EXPOSE 8899
 
 # Set environment variables
 ENV TZ=Asia/Shanghai

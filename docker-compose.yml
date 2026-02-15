@@ -7,7 +7,7 @@ services:
     container_name: smartping
     restart: unless-stopped
     ports:
-      - "18899:18899"
+      - "8899:8899"
     volumes:
       - smartping-conf:/app/conf
       - smartping-db:/app/db

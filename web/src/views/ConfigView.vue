@@ -281,7 +281,7 @@ const uploadRef = ref()
 
 const formConfig = reactive<Config>({
   Ver: '',
-  Port: 18899,
+  Port: 8899,
   Name: '',
   Addr: '',
   Mode: {},

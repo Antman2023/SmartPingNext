@@ -49,31 +49,14 @@
 # Linux/macOS
 tar -xzf smartping-*.tar.gz
 cd smartping
-./control start
+./smartping
 
 # Windows
 # 解压 smartping-*.zip
-# 运行 control.cmd
+# 运行 smartping.exe
 ```
 
 ### 从源码构建
-
-#### Linux/macOS
-```bash
-./control build    # 编译（包含前端和后端）
-./control run      # 前台运行
-./control start    # 后台启动
-./control stop     # 停止
-./control restart  # 重启
-./control status   # 查看状态
-```
-
-#### Windows
-```cmd
-control.cmd        # 交互式菜单（build/run/install/start/stop/restart）
-```
-
-#### 手动构建
 ```bash
 # 前端
 cd web
@@ -95,7 +78,7 @@ docker pull ghcr.io/antman2023/smartping-next:latest
 # 运行容器
 docker run -d \
   --name smartping \
-  -p 18899:18899 \
+  -p 8899:8899 \
   -v smartping-conf:/app/conf \
   -v smartping-db:/app/db \
   --restart unless-stopped \
@@ -103,13 +86,13 @@ docker run -d \
 
 # 或自行构建
 docker build -t smartping-next:latest .
-docker run -d --name smartping -p 18899:18899 smartping-next:latest
+docker run -d --name smartping -p 8899:8899 smartping-next:latest
 
 # 或使用 docker-compose
 docker-compose up -d
 ```
 
-**默认端口**: 18899 | **默认密码**: smartping
+**默认端口**: 8899 | **默认密码**: smartping
 
 ## 设计思路
 

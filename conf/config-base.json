@@ -19,12 +19,6 @@
 		"Tsound": "/alert.mp3",
 		"Tsymbolsize": "70"
 	},
-	"Alert": {
-		"EmailHost": "",
-		"RevcEmailList": "",
-		"SendEmailAccount": "",
-		"SendEmailPassword": ""
-	},
 	"Network": {
 		"1.2.3.4": {
 			"Name": "OtherSP",
