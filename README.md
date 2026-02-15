@@ -10,9 +10,6 @@
         <a href="https://github.com/Antman2023/smartping-next/blob/master/LICENSE">
             <img src="https://img.shields.io/hexpm/l/plug.svg" >
         </a>
-        <a href="https://github.com/Antman2023/smartping-next/pkgs/container/smartping-next">
-            <img src="https://img.shields.io/badge/ghcr.io-available-blue" >
-        </a>
     </p>
 </p>
 
@@ -66,17 +63,13 @@ cp -r dist ../src/static/html
 
 # 后端
 cd ..
-go build -o bin/smartping src/smartping.go
+go build -o smartping src/smartping.go
 ```
 
 ### Docker
 
 ```bash
-# Docker Hub
 docker pull pathletboy/smartping-next:latest
-
-# 或 GitHub Container Registry
-docker pull ghcr.io/antman2023/smartping-next:latest
 
 # 运行容器
 docker run -d \

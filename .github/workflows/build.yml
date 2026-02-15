@@ -78,7 +78,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go mod download
-          go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
+          go build -ldflags="-s -w" -o smartping${{ matrix.ext }} src/smartping.go
 
       - name: Build backend (Windows/macOS)
         if: matrix.os != 'linux'
@@ -86,13 +86,13 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go mod download
-          go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
+          go build -ldflags="-s -w" -o smartping${{ matrix.ext }} src/smartping.go
 
       - name: Prepare release package
         shell: bash
         run: |
           mkdir -p release
-          cp bin/smartping${{ matrix.ext }} release/
+          cp smartping${{ matrix.ext }} release/
           cp -r conf release/
           mkdir -p release/db
           cp db/database-base.db release/db/
@@ -120,7 +120,6 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
-      packages: write
 
     steps:
       - name: Checkout code
@@ -138,19 +137,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Get version
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "repo_lower=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -161,8 +152,6 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/smartping-next:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/smartping-next:${{ steps.version.outputs.version }}
-            ghcr.io/${{ steps.version.outputs.repo_lower }}:latest
-            ghcr.io/${{ steps.version.outputs.repo_lower }}:${{ steps.version.outputs.version }}
 
   release:
     name: Create Release
