@@ -8,6 +8,13 @@ export default defineConfig({
             '@': resolve(__dirname, 'src')
         }
     },
+    css: {
+        preprocessorOptions: {
+            scss: {
+                api: 'modern-compiler'
+            }
+        }
+    },
     server: {
         port: 3000,
         proxy: {
@@ -19,6 +26,16 @@ export default defineConfig({
     },
     build: {
         outDir: 'dist',
-        assetsDir: 'assets'
+        assetsDir: 'assets',
+        chunkSizeWarningLimit: 1500,
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    'vue-vendor': ['vue', 'vue-router', 'pinia'],
+                    'element-plus': ['element-plus', '@element-plus/icons-vue'],
+                    'echarts': ['echarts']
+                }
+            }
+        }
     }
 });

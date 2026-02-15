@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
 import type { PingLogData } from '@/types'

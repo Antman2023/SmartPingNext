@@ -1,5 +1,5 @@
-@import './variables.scss';
-@import './theme.scss';
+@use './variables.scss' as *;
+@use './theme.scss' as *;
 
 // 布局相关
 .app-container {
