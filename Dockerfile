@@ -32,16 +32,19 @@ RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-# Copy binary and default config
+# Copy binary
 COPY --from=builder /app/smartping ./
-COPY --from=builder /app/conf ./conf
 
-# Create directories and copy database
-RUN mkdir -p /app/db /app/var
-COPY --from=builder /app/db/database-base.db ./db/
+# Copy default config and database to separate locations
+COPY --from=builder /app/conf ./conf-default
+COPY --from=builder /app/db/database-base.db ./db-default/
 
-# Set permissions
-RUN chmod +x ./smartping
+# Create directories for persistent data
+RUN mkdir -p /app/conf /app/db /app/var
+
+# Copy entrypoint script
+COPY docker-entrypoint.sh ./
+RUN chmod +x ./docker-entrypoint.sh ./smartping
 
 # Expose port
 EXPOSE 8899
@@ -53,4 +56,4 @@ ENV TZ=Asia/Shanghai
 VOLUME ["/app/conf", "/app/db"]
 
 # Start the application
-CMD ["./smartping"]
+CMD ["./docker-entrypoint.sh"]
