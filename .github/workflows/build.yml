@@ -28,11 +28,6 @@ jobs:
             arch: amd64
             runner: windows-latest
             ext: '.exe'
-          # macOS amd64
-          - os: darwin
-            arch: amd64
-            runner: macos-latest
-            ext: ''
           # macOS arm64
           - os: darwin
             arch: arm64
@@ -61,6 +56,13 @@ jobs:
           npm ci
           npm run build
 
+      - name: Copy frontend to embed directory
+        shell: bash
+        run: |
+          rm -rf src/static/html
+          mkdir -p src/static/html
+          cp -r web/dist/* src/static/html/
+
       - name: Install cross-compile tools (Linux arm64)
         if: matrix.os == 'linux' && matrix.arch == 'arm64'
         run: |
@@ -78,17 +80,8 @@ jobs:
           go mod download
           go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
 
-      - name: Build backend (macOS amd64 on arm64 runner)
-        if: matrix.os == 'darwin' && matrix.arch == 'amd64'
-        env:
-          CGO_ENABLED: 1
-          GOARCH: amd64
-        run: |
-          go mod download
-          go build -ldflags="-s -w" -o bin/smartping${{ matrix.ext }} src/smartping.go
-
       - name: Build backend (native)
-        if: "!(matrix.os == 'linux' && matrix.arch == 'arm64') && !(matrix.os == 'darwin' && matrix.arch == 'amd64')"
+        if: "!(matrix.os == 'linux' && matrix.arch == 'arm64')"
         env:
           CGO_ENABLED: 1
         run: |
@@ -100,7 +93,6 @@ jobs:
         run: |
           mkdir -p release
           cp bin/smartping${{ matrix.ext }} release/
-          cp -r web/dist release/html
           cp -r conf release/
           mkdir -p release/db
           if [ -f "control" ]; then cp control release/; fi

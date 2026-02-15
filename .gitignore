@@ -28,6 +28,9 @@ html/admin/*
 web/node_modules/
 web/dist/
 
+# Embedded static (generated from web/dist)
+src/static/html/
+
 # IDE
 .vscode/
 *.swp
