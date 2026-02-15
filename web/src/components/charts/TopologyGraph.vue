@@ -3,10 +3,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
 import { useThemeStore } from '@/stores/theme'
+import { useSidebarStore } from '@/stores/sidebar'
 
 interface Node {
   name: string
@@ -30,6 +31,7 @@ const props = defineProps<{
 
 const chartRef = ref<HTMLDivElement>()
 const themeStore = useThemeStore()
+const sidebarStore = useSidebarStore()
 let chart: echarts.ECharts | null = null
 
 const getChartOption = (): EChartsOption => {
@@ -99,6 +101,10 @@ const handleResize = () => {
 
 watch(() => [props.nodes, props.links], updateChart, { deep: true })
 watch(() => themeStore.theme, updateChart)
+watch(() => sidebarStore.isCollapsed, async () => {
+  await nextTick()
+  handleResize()
+})
 
 onMounted(() => {
   initChart()
