@@ -2,8 +2,8 @@ version: '3.8'
 
 services:
   smartping:
-    build: .
-    image: smartping-next:latest
+    image: pathletboy/smartping-next:latest
+    # 或本地构建: build: .
     container_name: smartping
     restart: unless-stopped
     ports:
@@ -11,9 +11,11 @@ services:
     volumes:
       - smartping-conf:/app/conf
       - smartping-db:/app/db
+      - smartping-logs:/app/logs
     environment:
       - TZ=Asia/Shanghai
 
 volumes:
   smartping-conf:
   smartping-db:
+  smartping-logs:
