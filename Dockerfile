@@ -21,8 +21,14 @@ RUN npm install && npm run build
 WORKDIR /app
 RUN rm -rf src/static/html && mkdir -p src/static/html && cp -r web/dist/* src/static/html/
 
+# Build arguments for cross-compilation
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+
 # Build backend with static linking
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o smartping src/smartping.go
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} \
+    go build -ldflags="-s -w" -o smartping src/smartping.go
 
 # Runtime stage
 FROM alpine:3.19
