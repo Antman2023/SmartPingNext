@@ -93,9 +93,6 @@ jobs:
         run: |
           mkdir -p release
           cp smartping${{ matrix.ext }} release/
-          cp -r conf release/
-          mkdir -p release/db
-          cp db/database-base.db release/db/
 
       - name: Create archive
         shell: bash
@@ -227,13 +224,14 @@ jobs:
             ```bash
             # Linux/macOS
             tar -xzf smartping-*.tar.gz
-            cd smartping
             ./smartping
 
             # Windows
             # 解压 smartping-*.zip
-            # 运行 smartping.exe
+            # 双击运行 smartping.exe
             ```
+
+            首次运行会自动创建 conf/、db/、logs/ 目录。
           files: release-files/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
