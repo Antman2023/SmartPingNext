@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cihub/seelog"
+	"smartping/src/static"
 	_ "modernc.org/sqlite"
 
 	"io"
@@ -68,8 +69,57 @@ func GetRoot() string {
 	return string(runes[0:l])
 }
 
+func releaseDefaultFiles() {
+	// Create directories if not exist
+	os.MkdirAll(Root+"/conf", 0755)
+	os.MkdirAll(Root+"/db", 0755)
+
+	// Release config-base.json
+	configBase := Root + "/conf/config-base.json"
+	if !IsExist(configBase) {
+		data, err := static.Conf.ReadFile("conf/config-base.json")
+		if err != nil {
+			log.Fatalln("[Fault]read embedded config-base.json fail:", err)
+		}
+		if err := os.WriteFile(configBase, data, 0644); err != nil {
+			log.Fatalln("[Fault]write config-base.json fail:", err)
+		}
+		log.Println("[Info]released config-base.json")
+	}
+
+	// Release seelog.xml
+	seelogFile := Root + "/conf/seelog.xml"
+	if !IsExist(seelogFile) {
+		data, err := static.Conf.ReadFile("conf/seelog.xml")
+		if err != nil {
+			log.Fatalln("[Fault]read embedded seelog.xml fail:", err)
+		}
+		if err := os.WriteFile(seelogFile, data, 0644); err != nil {
+			log.Fatalln("[Fault]write seelog.xml fail:", err)
+		}
+		log.Println("[Info]released seelog.xml")
+	}
+
+	// Release database-base.db
+	dbBase := Root + "/db/database-base.db"
+	if !IsExist(dbBase) {
+		data, err := static.DB.ReadFile("db/database-base.db")
+		if err != nil {
+			log.Fatalln("[Fault]read embedded database-base.db fail:", err)
+		}
+		if err := os.WriteFile(dbBase, data, 0644); err != nil {
+			log.Fatalln("[Fault]write database-base.db fail:", err)
+		}
+		log.Println("[Info]released database-base.db")
+	}
+}
+
 func ParseConfig(ver string) {
 	Root = GetRoot()
+
+	// Release default files if not exist
+	releaseDefaultFiles()
+
 	cfile := "config.json"
 	if !IsExist(Root + "/conf/" + "config.json") {
 		if !IsExist(Root + "/conf/" + "config-base.json") {

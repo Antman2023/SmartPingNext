@@ -35,16 +35,11 @@ WORKDIR /app
 # Copy binary
 COPY --from=builder /app/smartping ./
 
-# Copy default config and database to separate locations
-COPY --from=builder /app/conf ./conf-default
-COPY --from=builder /app/db/database-base.db ./db-default/
-
 # Create directories for persistent data
-RUN mkdir -p /app/conf /app/db /app/var
+RUN mkdir -p /app/conf /app/db /app/var /app/logs
 
-# Copy entrypoint script
-COPY docker-entrypoint.sh ./
-RUN chmod +x ./docker-entrypoint.sh ./smartping
+# Set permissions
+RUN chmod +x ./smartping
 
 # Expose port
 EXPOSE 8899
@@ -53,7 +48,7 @@ EXPOSE 8899
 ENV TZ=Asia/Shanghai
 
 # Create volume for persistent data
-VOLUME ["/app/conf", "/app/db"]
+VOLUME ["/app/conf", "/app/db", "/app/logs"]
 
 # Start the application
-CMD ["./docker-entrypoint.sh"]
+CMD ["./smartping"]
