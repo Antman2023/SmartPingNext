@@ -1,7 +1,7 @@
 <template>
   <div class="topology-view">
     <div class="topology-header">
-      <h2>{{ config?.Name || 'SmartPingNext' }} - PING 拓扑</h2>
+      <h2>{{ config?.Name || 'SmartPingNext' }} - {{ $t('topology.title') }}</h2>
     </div>
 
     <div class="topology-content">
@@ -19,13 +19,13 @@
         <el-card class="alert-card" @click="$router.push('/alerts')">
           <div class="alert-card__content">
             <el-icon><Bell /></el-icon>
-            <span>查看报警记录</span>
+            <span>{{ $t('topology.viewAlerts') }}</span>
           </div>
         </el-card>
 
         <el-card>
           <template #header>
-            <span>拓扑列表</span>
+            <span>{{ $t('topology.topologyList') }}</span>
           </template>
           <div class="topology-list">
             <div

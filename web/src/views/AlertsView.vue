@@ -1,14 +1,14 @@
 <template>
   <div class="alerts-view">
     <div class="alerts-header">
-      <h2>报警记录</h2>
+      <h2>{{ $t('alerts.title') }}</h2>
     </div>
 
     <div class="alerts-content">
       <div class="dates-sidebar">
         <el-card>
           <template #header>
-            <span>报警存档</span>
+            <span>{{ $t('alerts.alertArchive') }}</span>
           </template>
           <div class="date-list">
             <div
@@ -27,15 +27,15 @@
       <div class="alerts-main">
         <el-card>
           <template #header>
-            <span>报警历史</span>
+            <span>{{ $t('alerts.alertHistory') }}</span>
           </template>
           <el-table :data="alerts" stripe style="width: 100%">
-            <el-table-column prop="Logtime" label="报警日期" min-width="160" />
-            <el-table-column prop="Fromname" label="源节点" min-width="100" />
-            <el-table-column prop="Fromip" label="源IP" min-width="120" />
-            <el-table-column prop="Targetname" label="目标节点" min-width="100" />
-            <el-table-column prop="Targetip" label="目标IP" min-width="120" />
-            <el-table-column label="工具" width="80">
+            <el-table-column prop="Logtime" :label="$t('alerts.alertDate')" min-width="160" />
+            <el-table-column prop="Fromname" :label="$t('alerts.sourceNode')" min-width="100" />
+            <el-table-column prop="Fromip" :label="$t('alerts.sourceIP')" min-width="120" />
+            <el-table-column prop="Targetname" :label="$t('alerts.targetNode')" min-width="100" />
+            <el-table-column prop="Targetip" :label="$t('alerts.targetIP')" min-width="120" />
+            <el-table-column :label="$t('common.operation')" width="80">
               <template #default="{ row }">
                 <el-button size="small" @click="showMtr(row)">MTR</el-button>
               </template>
@@ -47,12 +47,12 @@
       <div class="nodes-sidebar">
         <el-button @click="$router.push('/topology')" style="width: 100%; margin-bottom: 20px;">
           <el-icon><ArrowLeft /></el-icon>
-          返回拓扑图
+          {{ $t('alerts.backToTopology') }}
         </el-button>
 
         <el-card>
           <template #header>
-            <span>节点列表</span>
+            <span>{{ $t('common.nodeList') }}</span>
           </template>
           <div class="node-list">
             <div v-for="node in nodes" :key="node.name" class="node-item">
@@ -65,36 +65,36 @@
     </div>
 
     <!-- MTR 弹窗 -->
-    <el-dialog v-model="mtrVisible" title="MTR 结果" width="700px">
+    <el-dialog v-model="mtrVisible" :title="$t('alerts.mtrResult')" width="700px">
       <el-table :data="mtrData" stripe style="width: 100%">
-        <el-table-column prop="Host" label="主机" min-width="150" />
-        <el-table-column label="丢包率" width="80">
+        <el-table-column prop="Host" :label="$t('alerts.host')" min-width="150" />
+        <el-table-column :label="$t('alerts.packetLossRate')" width="80">
           <template #default="{ row }">
             {{ ((row.Loss / row.Send) * 100).toFixed(2) }}%
           </template>
         </el-table-column>
-        <el-table-column prop="Send" label="发送" width="60" />
-        <el-table-column label="最近" width="70">
+        <el-table-column prop="Send" :label="$t('tools.sent')" width="60" />
+        <el-table-column :label="$t('alerts.latest')" width="70">
           <template #default="{ row }">
             {{ (row.Last / 1000000).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column label="平均" width="70">
+        <el-table-column :label="$t('alerts.average')" width="70">
           <template #default="{ row }">
             {{ (row.Avg / 1000000).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column label="最好" width="70">
+        <el-table-column :label="$t('alerts.best')" width="70">
           <template #default="{ row }">
             {{ (row.Best / 1000000).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column label="最差" width="70">
+        <el-table-column :label="$t('alerts.worst')" width="70">
           <template #default="{ row }">
             {{ (row.Wrst / 1000000).toFixed(2) }}
           </template>
         </el-table-column>
-        <el-table-column prop="StDev" label="标准差" width="70" />
+        <el-table-column prop="StDev" :label="$t('alerts.standardDeviation')" width="70" />
       </el-table>
     </el-dialog>
   </div>

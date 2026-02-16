@@ -1,5 +1,6 @@
 // 主题色变量 - 支持深色/浅色切换
-:root {
+:root,
+html {
   // 主色调
   --color-primary: #409eff;
   --color-primary-light: #66b1ff;
@@ -50,8 +51,9 @@
   --radius-lg: 12px;
 }
 
-// 深色主题
-[data-theme='dark'] {
+// 深色主题 - 同时支持 data-theme 和 class="dark"
+[data-theme='dark'],
+html.dark {
   // 主色调
   --color-primary: #409eff;
   --color-primary-light: #66b1ff;

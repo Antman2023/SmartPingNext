@@ -31,6 +31,10 @@ web/dist/
 # Embedded static (generated from web/dist)
 src/static/html/
 
+# Local runtime data
+conf/
+db/
+
 # IDE
 .vscode/
 *.swp

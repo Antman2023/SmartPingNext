@@ -1,7 +1,7 @@
 <template>
   <div class="dashboard-view">
     <div class="dashboard-header">
-      <h2>{{ config?.Name || 'SmartPingNext' }} - 正向监控</h2>
+      <h2>{{ config?.Name || 'SmartPingNext' }} - {{ $t('dashboard.title') }}</h2>
     </div>
 
     <div class="dashboard-content">
@@ -14,7 +14,7 @@
         >
           <div class="chart-card__header">
             <span class="chart-card__title">{{ config?.Name }} -> {{ target.name }}</span>
-            <span v-if="target.loading" class="chart-card__loading-text">加载中...</span>
+            <span v-if="target.loading" class="chart-card__loading-text">{{ $t('common.loading') }}</span>
           </div>
           <div class="chart-card__body">
             <PingMiniChart
@@ -27,7 +27,7 @@
             </div>
             <div v-else class="chart-card__error">
               <el-icon><Warning /></el-icon>
-              <span>加载失败</span>
+              <span>{{ $t('common.loadFailed') }}</span>
             </div>
           </div>
         </div>
@@ -37,7 +37,7 @@
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>节点列表</span>
+              <span>{{ $t('common.nodeList') }}</span>
             </div>
           </template>
           <div class="agent-list">
@@ -67,19 +67,19 @@
           <el-date-picker
             v-model="startTime"
             type="datetime"
-            placeholder="开始时间"
+            :placeholder="$t('dashboard.startTime')"
             format="YYYY-MM-DD HH:mm"
             value-format="YYYY-MM-DD HH:mm"
           />
           <el-date-picker
             v-model="endTime"
             type="datetime"
-            placeholder="结束时间"
+            :placeholder="$t('dashboard.endTime')"
             format="YYYY-MM-DD HH:mm"
             value-format="YYYY-MM-DD HH:mm"
           />
-          <el-button type="primary" @click="loadDetailData">查询</el-button>
-          <el-button @click="saveChartImage">保存图片</el-button>
+          <el-button type="primary" @click="loadDetailData">{{ $t('common.query') }}</el-button>
+          <el-button @click="saveChartImage">{{ $t('common.saveImage') }}</el-button>
           <el-button-group>
             <el-button v-for="range in timeRanges" :key="range.hours" @click="setTimeRange(range.hours)">
               {{ range.label }}
@@ -93,7 +93,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
@@ -108,6 +109,7 @@ interface PingTarget {
   targetIp: string
 }
 
+const { t } = useI18n()
 const config = ref<Config | null>(null)
 const agents = ref<Array<{ name: string; addr: string; loading: boolean }>>([])
 const currentAgent = ref<string>('')
@@ -121,15 +123,15 @@ const endTime = ref('')
 const currentTargetIp = ref('')
 const pingChartRef = ref<{ saveAsImage: () => void } | null>(null)
 
-const timeRanges = [
-  { label: '1小时', hours: 1 },
-  { label: '3小时', hours: 3 },
-  { label: '6小时', hours: 6 },
-  { label: '12小时', hours: 12 },
-  { label: '1天', hours: 24 },
-  { label: '3天', hours: 72 },
-  { label: '7天', hours: 168 }
-]
+const timeRanges = computed(() => [
+  { label: t('dashboard.timeRanges.hour1'), hours: 1 },
+  { label: t('dashboard.timeRanges.hour3'), hours: 3 },
+  { label: t('dashboard.timeRanges.hour6'), hours: 6 },
+  { label: t('dashboard.timeRanges.hour12'), hours: 12 },
+  { label: t('dashboard.timeRanges.day1'), hours: 24 },
+  { label: t('dashboard.timeRanges.day3'), hours: 72 },
+  { label: t('dashboard.timeRanges.day7'), hours: 168 }
+])
 
 const loadConfig = async (proxyUrl?: string) => {
   try {

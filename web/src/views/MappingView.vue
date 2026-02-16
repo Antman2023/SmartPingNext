@@ -1,17 +1,17 @@
 <template>
   <div class="mapping-view">
     <div class="mapping-header">
-      <h2>{{ config?.Name || 'SmartPingNext' }} - 全国延迟地图</h2>
+      <h2>{{ config?.Name || 'SmartPingNext' }} - {{ $t('mapping.title') }}</h2>
       <div class="mapping-actions">
         <el-date-picker
           v-model="selectedDate"
           type="datetime"
-          placeholder="选择时间"
+          :placeholder="$t('mapping.selectTime')"
           format="YYYY-MM-DD HH:mm"
           value-format="YYYY-MM-DD HH:mm"
           @change="loadMappingData"
         />
-        <el-button @click="saveMapImage">保存图片</el-button>
+        <el-button @click="saveMapImage">{{ $t('common.saveImage') }}</el-button>
       </div>
     </div>
 
@@ -21,7 +21,7 @@
       <div class="mapping-sidebar">
         <el-card>
           <template #header>
-            <span>节点列表</span>
+            <span>{{ $t('common.nodeList') }}</span>
           </template>
           <div class="agent-list">
             <div
@@ -42,6 +42,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { getConfig } from '@/api/topology'
@@ -50,6 +51,7 @@ import type { Config, ChinaMapData } from '@/types'
 import type { EChartsOption } from 'echarts'
 import { useSidebarStore } from '@/stores/sidebar'
 
+const { t } = useI18n()
 const config = ref<Config | null>(null)
 const agents = ref<Array<{ name: string; addr: string; loading: boolean }>>([])
 const selectedDate = ref('')
@@ -117,7 +119,7 @@ const updateChart = (data: ChinaMapData) => {
     legend: {
       orient: 'vertical',
       left: 'left',
-      data: ['电信', '联通', '移动'],
+      data: [t('mapping.telecom'), t('mapping.unicom'), t('mapping.mobile')],
       textStyle: {
         color: 'var(--color-text-secondary)'
       }
@@ -127,7 +129,7 @@ const updateChart = (data: ChinaMapData) => {
       max: 200,
       left: 'left',
       bottom: 20,
-      text: ['高', '低'],
+      text: [t('common.high'), t('common.low')],
       pieces: [
         { gt: 200, color: '#E0022B' },
         { gt: 150, lte: 200, color: '#E09107' },
@@ -141,19 +143,19 @@ const updateChart = (data: ChinaMapData) => {
     },
     series: [
       {
-        name: '电信',
+        name: t('mapping.telecom'),
         type: 'map',
         map: 'china',
         data: data.avgdelay.ctcc
       },
       {
-        name: '联通',
+        name: t('mapping.unicom'),
         type: 'map',
         map: 'china',
         data: data.avgdelay.cucc
       },
       {
-        name: '移动',
+        name: t('mapping.mobile'),
         type: 'map',
         map: 'china',
         data: data.avgdelay.cmcc

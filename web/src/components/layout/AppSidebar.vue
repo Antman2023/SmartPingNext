@@ -8,31 +8,31 @@
     >
       <el-menu-item index="/">
         <el-icon><DataLine /></el-icon>
-        <template #title>正向监控</template>
+        <template #title>{{ $t('nav.dashboard') }}</template>
       </el-menu-item>
       <el-menu-item index="/reverse">
         <el-icon><DataAnalysis /></el-icon>
-        <template #title>反向监控</template>
+        <template #title>{{ $t('nav.reverse') }}</template>
       </el-menu-item>
       <el-menu-item index="/topology">
         <el-icon><Share /></el-icon>
-        <template #title>拓扑图</template>
+        <template #title>{{ $t('nav.topology') }}</template>
       </el-menu-item>
       <el-menu-item index="/mapping">
         <el-icon><MapLocation /></el-icon>
-        <template #title>延迟地图</template>
+        <template #title>{{ $t('nav.mapping') }}</template>
       </el-menu-item>
       <el-menu-item index="/tools">
         <el-icon><Tools /></el-icon>
-        <template #title>检测工具</template>
+        <template #title>{{ $t('nav.tools') }}</template>
       </el-menu-item>
       <el-menu-item index="/alerts">
         <el-icon><Bell /></el-icon>
-        <template #title>报警记录</template>
+        <template #title>{{ $t('nav.alerts') }}</template>
       </el-menu-item>
       <el-menu-item index="/config">
         <el-icon><Setting /></el-icon>
-        <template #title>系统配置</template>
+        <template #title>{{ $t('nav.config') }}</template>
       </el-menu-item>
     </el-menu>
   </aside>

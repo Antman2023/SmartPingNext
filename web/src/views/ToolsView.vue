@@ -1,7 +1,7 @@
 <template>
   <div class="tools-view">
     <div class="tools-header">
-      <h2>检测工具</h2>
+      <h2>{{ $t('tools.title') }}</h2>
     </div>
 
     <div class="tools-content">
@@ -11,12 +11,12 @@
         </el-select>
         <el-input
           v-model="target"
-          placeholder="输入目标地址"
+          :placeholder="$t('tools.enterTarget')"
           style="width: 280px;"
           @keyup.enter="runCheck"
         />
         <el-button type="primary" @click="runCheck" :loading="checking">
-          检测
+          {{ $t('tools.check') }}
         </el-button>
       </div>
 
@@ -27,30 +27,30 @@
               <el-checkbox v-model="row.checked" />
             </template>
           </el-table-column>
-          <el-table-column prop="name" label="节点" min-width="100" />
-          <el-table-column label="解析IP" min-width="120">
+          <el-table-column prop="name" :label="$t('common.node')" min-width="100" />
+          <el-table-column :label="$t('tools.resolvedIP')" min-width="120">
             <template #default="{ row }">
               {{ row.result?.ip || '-' }}
             </template>
           </el-table-column>
-          <el-table-column label="发送" width="70" align="center">
+          <el-table-column :label="$t('tools.sent')" width="70" align="center">
             <template #default="{ row }">
               {{ row.result?.ping?.SendPk || '-' }}
             </template>
           </el-table-column>
-          <el-table-column label="接收" width="70" align="center">
+          <el-table-column :label="$t('tools.received')" width="70" align="center">
             <template #default="{ row }">
               {{ row.result?.ping?.RevcPk || '-' }}
             </template>
           </el-table-column>
-          <el-table-column label="丢包" width="80" align="center">
+          <el-table-column :label="$t('tools.packetLoss')" width="80" align="center">
             <template #default="{ row }">
               <span :class="{'text-danger': row.result?.ping?.LossPk > 0}">
                 {{ row.result?.ping?.LossPk !== undefined ? row.result.ping.LossPk + '%' : '-' }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="延迟" min-width="140">
+          <el-table-column :label="$t('tools.latency')" min-width="140">
             <template #default="{ row }">
               <template v-if="row.result?.ping">
                 <span class="delay-info">
@@ -62,7 +62,7 @@
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="60" align="center">
+          <el-table-column :label="$t('common.status')" width="60" align="center">
             <template #default="{ row }">
               <el-icon v-if="row.loading" class="is-loading"><Loading /></el-icon>
               <el-icon v-else-if="row.error" class="text-danger"><Warning /></el-icon>
@@ -77,6 +77,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Loading, Warning, SuccessFilled } from '@element-plus/icons-vue'
 import { getConfig } from '@/api/topology'
 import { runTools } from '@/api/tools'
@@ -92,6 +93,7 @@ interface ResultRow {
   error: string | null
 }
 
+const { t } = useI18n()
 const config = ref<Config | null>(null)
 const toolType = ref('ping')
 const target = ref('')
@@ -138,7 +140,7 @@ const runCheck = async () => {
       const result = await runTools(`${row.addr}:${row.port}`, target.value)
       row.result = result
     } catch (e: any) {
-      row.error = e.message || '请求失败'
+      row.error = e.message || t('tools.requestFailed')
     } finally {
       row.loading = false
     }

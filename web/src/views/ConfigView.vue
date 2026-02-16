@@ -1,7 +1,7 @@
 <template>
   <div class="config-view">
     <div class="config-header">
-      <h2>系统配置</h2>
+      <h2>{{ $t('config.title') }}</h2>
     </div>
 
     <div class="config-content">
@@ -11,26 +11,26 @@
           <el-card>
             <template #header>
               <div class="card-header">
-                <span>保存配置</span>
+                <span>{{ $t('config.saveConfig') }}</span>
                 <el-link type="primary" href="/api/config.json" target="_blank">
                   <el-icon><Document /></el-icon>
                 </el-link>
               </div>
             </template>
             <div class="save-config">
-              <el-input v-model="password" type="password" placeholder="密码" style="width: 200px;" />
-              <el-button type="primary" @click="handleSave">保存</el-button>
+              <el-input v-model="password" type="password" :placeholder="$t('common.password')" style="width: 200px;" />
+              <el-button type="primary" @click="handleSave">{{ $t('common.save') }}</el-button>
             </div>
           </el-card>
 
           <el-card class="mt-2">
             <template #header>
-              <span>导入/导出</span>
+              <span>{{ $t('config.importExport') }}</span>
             </template>
             <div class="import-export">
               <div class="import-export-row">
-                <el-input v-model="importExportPassword" type="password" placeholder="密码" style="width: 150px;" />
-                <el-button @click="handleExport">导出配置</el-button>
+                <el-input v-model="importExportPassword" type="password" :placeholder="$t('common.password')" style="width: 150px;" />
+                <el-button @click="handleExport">{{ $t('config.exportConfig') }}</el-button>
                 <el-upload
                   ref="uploadRef"
                   :auto-upload="false"
@@ -38,7 +38,7 @@
                   accept=".json"
                   :on-change="handleImportFile"
                 >
-                  <el-button>导入配置</el-button>
+                  <el-button>{{ $t('config.importConfig') }}</el-button>
                 </el-upload>
               </div>
             </div>
@@ -46,54 +46,54 @@
 
           <el-card class="mt-2">
             <template #header>
-              <span>基础配置</span>
+              <span>{{ $t('config.baseConfig') }}</span>
             </template>
             <el-form label-width="120px" label-position="top">
-              <h4>基础</h4>
+              <h4>{{ $t('config.base') }}</h4>
               <el-row :gutter="12">
                 <el-col :span="8">
-                  <el-form-item label="接口超时(秒)">
+                  <el-form-item :label="$t('config.timeout')">
                     <el-input v-model.number="formConfig.Base.Timeout" />
                   </el-form-item>
                 </el-col>
                 <el-col :span="8">
-                  <el-form-item label="页面刷新(分钟)">
+                  <el-form-item :label="$t('config.pageRefresh')">
                     <el-input v-model.number="formConfig.Base.Refresh" />
                   </el-form-item>
                 </el-col>
                 <el-col :span="8">
-                  <el-form-item label="数据存档(天)">
+                  <el-form-item :label="$t('config.dataArchive')">
                     <el-input v-model.number="formConfig.Base.Archive" />
                   </el-form-item>
                 </el-col>
               </el-row>
 
-              <h4>Ping拓扑</h4>
+              <h4>{{ $t('config.pingTopology') }}</h4>
               <el-row :gutter="12">
                 <el-col :span="8">
-                  <el-form-item label="报警声音">
+                  <el-form-item :label="$t('config.alertSound')">
                     <el-input v-model="formConfig.Topology.Tsound" />
                   </el-form-item>
                 </el-col>
                 <el-col :span="8">
-                  <el-form-item label="连线粗细">
+                  <el-form-item :label="$t('config.lineWidth')">
                     <el-input v-model="formConfig.Topology.Tline" />
                   </el-form-item>
                 </el-col>
                 <el-col :span="8">
-                  <el-form-item label="形状大小">
+                  <el-form-item :label="$t('config.symbolSize')">
                     <el-input v-model="formConfig.Topology.Tsymbolsize" />
                   </el-form-item>
                 </el-col>
               </el-row>
 
-              <h4>检测工具</h4>
-              <el-form-item label="限定频率(秒)">
+              <h4>{{ $t('config.checkTools') }}</h4>
+              <el-form-item :label="$t('config.rateLimit')">
                 <el-input v-model.number="formConfig.Toollimit" />
               </el-form-item>
 
-              <h4>授权管理</h4>
-              <el-form-item label="用户IP列表(逗号隔开)">
+              <h4>{{ $t('config.authManagement') }}</h4>
+              <el-form-item :label="$t('config.ipWhitelist')">
                 <el-input v-model="formConfig.Authiplist" />
               </el-form-item>
             </el-form>
@@ -104,21 +104,21 @@
         <el-col :span="16">
           <el-card>
             <template #header>
-              <span>Ping节点测试网络</span>
+              <span>{{ $t('config.pingNetwork') }}</span>
             </template>
             <el-table :data="networkList" stripe style="width: 100%">
-              <el-table-column prop="Name" label="节点名称" min-width="120" />
-              <el-table-column prop="Addr" label="节点IP" min-width="140" />
+              <el-table-column prop="Name" :label="$t('config.nodeName')" min-width="120" />
+              <el-table-column prop="Addr" :label="$t('config.nodeIP')" min-width="140" />
               <el-table-column label="SmartPing" width="100">
                 <template #default="{ row }">
                   <el-checkbox v-model="row._original.Smartping" :disabled="row.isSelf" />
                 </template>
               </el-table-column>
-              <el-table-column label="操作" min-width="180">
+              <el-table-column :label="$t('common.operation')" min-width="180">
                 <template #default="{ row }">
                   <el-button-group>
-                    <el-button size="small" :disabled="!row.isSelf && !row._original.Smartping" @click="editPingConfig(row)">Ping配置</el-button>
-                    <el-button size="small" :disabled="!row.isSelf && !row._original.Smartping" @click="editTopoConfig(row)">拓扑配置</el-button>
+                    <el-button size="small" :disabled="!row.isSelf && !row._original.Smartping" @click="editPingConfig(row)">{{ $t('config.pingConfig') }}</el-button>
+                    <el-button size="small" :disabled="!row.isSelf && !row._original.Smartping" @click="editTopoConfig(row)">{{ $t('config.topoConfig') }}</el-button>
                   </el-button-group>
                 </template>
               </el-table-column>
@@ -136,13 +136,13 @@
               </el-table-column>
             </el-table>
             <div style="margin-top: 12px; text-align: center;">
-              <el-button @click="showAddNode">添加节点</el-button>
+              <el-button @click="showAddNode">{{ $t('config.addNode') }}</el-button>
             </div>
           </el-card>
 
           <el-card class="mt-2">
             <template #header>
-              <span>全国延迟测试网络</span>
+              <span>{{ $t('config.chinaMapNetwork') }}</span>
             </template>
             <div class="chinamap-list">
               <el-button
@@ -150,7 +150,7 @@
                 :key="prov"
                 @click="editChinaMap(prov as string)"
               >
-                {{ prov }} (电信{{ provData.ctcc?.length || 0 }}, 联通{{ provData.cucc?.length || 0 }}, 移动{{ provData.cmcc?.length || 0 }})
+                {{ prov }} ({{ $t('mapping.telecom') }}{{ provData.ctcc?.length || 0 }}, {{ $t('mapping.unicom') }}{{ provData.cucc?.length || 0 }}, {{ $t('mapping.mobile') }}{{ provData.cmcc?.length || 0 }})
               </el-button>
               <el-button @click="showAddChinaMap">+</el-button>
             </div>
@@ -160,59 +160,59 @@
     </div>
 
     <!-- 添加节点弹窗 -->
-    <el-dialog v-model="addNodeVisible" title="新增节点" width="400px">
+    <el-dialog v-model="addNodeVisible" :title="$t('config.newNode')" width="400px">
       <el-form label-width="80px">
-        <el-form-item label="节点名称">
-          <el-input v-model="newNodeName" placeholder="请输入节点名称" />
+        <el-form-item :label="$t('config.nodeName')">
+          <el-input v-model="newNodeName" :placeholder="$t('config.pleaseEnterNodeName')" />
         </el-form-item>
-        <el-form-item label="节点IP">
-          <el-input v-model="newNodeAddr" placeholder="请输入IPv4地址，如 192.168.1.1" />
+        <el-form-item :label="$t('config.nodeIP')">
+          <el-input v-model="newNodeAddr" :placeholder="$t('config.pleaseEnterIPv4')" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="addNodeVisible = false">取消</el-button>
-        <el-button type="primary" @click="addNode">暂存</el-button>
+        <el-button @click="addNodeVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="addNode">{{ $t('config.tempSave') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- Ping配置弹窗 -->
-    <el-dialog v-model="pingConfigVisible" title="Ping配置" width="500px">
-      <p class="dialog-tip">选择要从 <strong>{{ currentEditNode?.Name }}</strong> 发起 Ping 检测的目标节点：</p>
+    <el-dialog v-model="pingConfigVisible" :title="$t('config.pingConfig')" width="500px">
+      <p class="dialog-tip">{{ $t('config.selectPingTargets', { name: currentEditNode?.Name }) }}</p>
       <el-table :data="pingTargetList" stripe max-height="400">
-        <el-table-column prop="Name" label="节点名称" width="150" />
-        <el-table-column prop="Addr" label="节点IP" width="150" />
-        <el-table-column label="启用" width="80" align="center">
+        <el-table-column prop="Name" :label="$t('config.nodeName')" width="150" />
+        <el-table-column prop="Addr" :label="$t('config.nodeIP')" width="150" />
+        <el-table-column :label="$t('common.enable')" width="80" align="center">
           <template #default="{ row }">
             <el-checkbox v-model="row.enabled" />
           </template>
         </el-table-column>
       </el-table>
       <template #footer>
-        <el-button @click="pingConfigVisible = false">取消</el-button>
-        <el-button type="primary" @click="savePingConfig">确定</el-button>
+        <el-button @click="pingConfigVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="savePingConfig">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 拓扑配置弹窗 -->
-    <el-dialog v-model="topoConfigVisible" title="拓扑配置" width="500px">
-      <p class="dialog-tip">选择 <strong>{{ currentEditNode?.Name }}</strong> 在拓扑图中需要监控的目标节点：</p>
+    <el-dialog v-model="topoConfigVisible" :title="$t('config.topoConfig')" width="500px">
+      <p class="dialog-tip">{{ $t('config.selectTopoTargets', { name: currentEditNode?.Name }) }}</p>
       <el-table :data="topoTargetList" stripe max-height="400">
-        <el-table-column prop="Name" label="节点名称" width="150" />
-        <el-table-column prop="Addr" label="节点IP" width="150" />
-        <el-table-column label="启用" width="80" align="center">
+        <el-table-column prop="Name" :label="$t('config.nodeName')" width="150" />
+        <el-table-column prop="Addr" :label="$t('config.nodeIP')" width="150" />
+        <el-table-column :label="$t('common.enable')" width="80" align="center">
           <template #default="{ row }">
             <el-checkbox v-model="row.enabled" />
           </template>
         </el-table-column>
       </el-table>
       <template #footer>
-        <el-button @click="topoConfigVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveTopoConfig">确定</el-button>
+        <el-button @click="topoConfigVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="saveTopoConfig">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 全国延迟配置弹窗 -->
-    <el-dialog v-model="chinaMapVisible" :title="currentProvince ? `${currentProvince} 延迟配置` : '全国延迟配置'" width="600px">
+    <el-dialog v-model="chinaMapVisible" :title="currentProvince ? $t('config.chinaMapConfig', { province: currentProvince }) : $t('config.chinaMapConfig', { province: '' })" width="600px">
       <el-tabs v-model="chinaMapTab">
         <el-tab-pane label="电信(CTCC)" name="ctcc">
           <div class="ip-list-editor">
@@ -220,7 +220,7 @@
               v-model="chinaMapIps.ctcc"
               type="textarea"
               :rows="6"
-              placeholder="每行一个IP地址"
+              :placeholder="$t('config.eachLineOneIP')"
             />
           </div>
         </el-tab-pane>
@@ -230,7 +230,7 @@
               v-model="chinaMapIps.cucc"
               type="textarea"
               :rows="6"
-              placeholder="每行一个IP地址"
+              :placeholder="$t('config.eachLineOneIP')"
             />
           </div>
         </el-tab-pane>
@@ -240,28 +240,28 @@
               v-model="chinaMapIps.cmcc"
               type="textarea"
               :rows="6"
-              placeholder="每行一个IP地址"
+              :placeholder="$t('config.eachLineOneIP')"
             />
           </div>
         </el-tab-pane>
       </el-tabs>
       <template #footer>
-        <el-button @click="chinaMapVisible = false">取消</el-button>
-        <el-button type="danger" @click="deleteChinaMap" v-if="currentProvince">删除省份</el-button>
-        <el-button type="primary" @click="saveChinaMap">确定</el-button>
+        <el-button @click="chinaMapVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="danger" @click="deleteChinaMap" v-if="currentProvince">{{ $t('config.deleteProvince') }}</el-button>
+        <el-button type="primary" @click="saveChinaMap">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 添加省份弹窗 -->
-    <el-dialog v-model="addProvinceVisible" title="添加省份" width="400px">
+    <el-dialog v-model="addProvinceVisible" :title="$t('config.addProvince')" width="400px">
       <el-form label-width="80px">
-        <el-form-item label="省份名称">
-          <el-input v-model="newProvinceName" placeholder="如：北京、上海、广东" />
+        <el-form-item :label="$t('config.nodeName')">
+          <el-input v-model="newProvinceName" :placeholder="$t('config.provinceExample')" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="addProvinceVisible = false">取消</el-button>
-        <el-button type="primary" @click="addProvince">确定</el-button>
+        <el-button @click="addProvinceVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="addProvince">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -269,11 +269,13 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Document, Delete } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { getConfig, saveConfig } from '@/api/topology'
 import type { Config } from '@/types'
 
+const { t } = useI18n()
 const config = ref<Config | null>(null)
 const password = ref('')
 const importExportPassword = ref('')
@@ -346,20 +348,20 @@ const loadConfig = async () => {
 
 const handleSave = async () => {
   if (!password.value) {
-    ElMessage.warning('请输入密码')
+    ElMessage.warning(t('common.pleaseEnterPassword'))
     return
   }
 
   try {
     const result = await saveConfig(formConfig, password.value)
     if (result.status === 'true') {
-      ElMessage.success('保存成功')
+      ElMessage.success(t('common.saveSuccess'))
     } else {
-      ElMessage.error(result.info || '保存失败')
+      ElMessage.error(result.info || t('common.saveFailed'))
       console.error('保存失败:', result.info)
     }
   } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e.message || '未知错误'))
+    ElMessage.error(t('common.saveFailed') + ': ' + (e.message || ''))
     console.error('保存失败', e)
   }
 }
@@ -382,13 +384,13 @@ const verifyPassword = async (pwd: string): Promise<boolean> => {
 // 导出配置
 const handleExport = async () => {
   if (!importExportPassword.value) {
-    ElMessage.warning('请输入密码')
+    ElMessage.warning(t('common.pleaseEnterPassword'))
     return
   }
 
   const valid = await verifyPassword(importExportPassword.value)
   if (!valid) {
-    ElMessage.error('密码错误')
+    ElMessage.error(t('common.passwordError'))
     return
   }
 
@@ -407,19 +409,19 @@ const handleExport = async () => {
   link.click()
   URL.revokeObjectURL(url)
 
-  ElMessage.success('配置已导出')
+  ElMessage.success(t('config.configExported'))
 }
 
 // 导入配置文件选择
 const handleImportFile = async (file: any) => {
   if (!importExportPassword.value) {
-    ElMessage.warning('请输入密码')
+    ElMessage.warning(t('common.pleaseEnterPassword'))
     return
   }
 
   const valid = await verifyPassword(importExportPassword.value)
   if (!valid) {
-    ElMessage.error('密码错误')
+    ElMessage.error(t('common.passwordError'))
     return
   }
 
@@ -430,7 +432,7 @@ const handleImportFile = async (file: any) => {
 
       // 验证配置结构
       if (!importedConfig.Name || !importedConfig.Addr || !importedConfig.Network) {
-        ElMessage.error('配置文件格式无效')
+        ElMessage.error(t('config.configInvalid'))
         return
       }
 
@@ -446,9 +448,9 @@ const handleImportFile = async (file: any) => {
         Port: currentPort
       })
 
-      ElMessage.success('配置已导入，请点击保存按钮保存配置')
+      ElMessage.success(t('config.configImported'))
     } catch {
-      ElMessage.error('配置文件解析失败')
+      ElMessage.error(t('config.configParseFailed'))
     }
   }
   reader.readAsText(file.raw)
@@ -462,20 +464,20 @@ const showAddNode = () => {
 
 const addNode = () => {
   if (!newNodeName.value || !newNodeAddr.value) {
-    ElMessage.warning('请填写节点名称和IP')
+    ElMessage.warning(t('config.pleaseEnterNodeAndIP'))
     return
   }
 
   // 验证 IP 格式
   const ipRegex = /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/
   if (!ipRegex.test(newNodeAddr.value.trim())) {
-    ElMessage.warning('请输入有效的IPv4地址')
+    ElMessage.warning(t('config.pleaseEnterValidIPv4'))
     return
   }
 
   const addr = newNodeAddr.value.trim()
   if (formConfig.Network[addr]) {
-    ElMessage.warning('该IP节点已存在')
+    ElMessage.warning(t('config.nodeIPExists'))
     return
   }
 
@@ -488,7 +490,7 @@ const addNode = () => {
   }
 
   addNodeVisible.value = false
-  ElMessage.success('节点已添加，请点击保存按钮保存配置')
+  ElMessage.success(t('config.nodeAdded'))
 }
 
 const deleteNode = (row: any) => {
@@ -527,7 +529,7 @@ const savePingConfig = () => {
   }
 
   pingConfigVisible.value = false
-  ElMessage.success('Ping配置已更新')
+  ElMessage.success(t('config.pingConfigUpdated'))
 }
 
 const editTopoConfig = (row: any) => {
@@ -569,7 +571,7 @@ const saveTopoConfig = () => {
   }
 
   topoConfigVisible.value = false
-  ElMessage.success('拓扑配置已更新')
+  ElMessage.success(t('config.topoConfigUpdated'))
 }
 
 const editChinaMap = (prov: string) => {
@@ -602,7 +604,7 @@ const saveChinaMap = () => {
   }
 
   chinaMapVisible.value = false
-  ElMessage.success('延迟配置已更新')
+  ElMessage.success(t('config.delayConfigUpdated'))
 }
 
 const deleteChinaMap = () => {
@@ -610,7 +612,7 @@ const deleteChinaMap = () => {
 
   delete formConfig.Chinamap[currentProvince.value]
   chinaMapVisible.value = false
-  ElMessage.success('省份已删除')
+  ElMessage.success(t('config.provinceDeleted'))
 }
 
 const showAddChinaMap = () => {
@@ -620,14 +622,14 @@ const showAddChinaMap = () => {
 
 const addProvince = () => {
   if (!newProvinceName.value.trim()) {
-    ElMessage.warning('请输入省份名称')
+    ElMessage.warning(t('config.pleaseEnterProvinceName'))
     return
   }
 
   const provName = newProvinceName.value.trim()
 
   if (formConfig.Chinamap[provName]) {
-    ElMessage.warning('该省份已存在')
+    ElMessage.warning(t('config.provinceExists'))
     return
   }
 
@@ -638,7 +640,7 @@ const addProvince = () => {
   }
 
   addProvinceVisible.value = false
-  ElMessage.success('省份已添加')
+  ElMessage.success(t('config.provinceAdded'))
 }
 
 onMounted(() => {
