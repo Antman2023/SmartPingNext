@@ -53,8 +53,84 @@ body {
   }
 }
 
+// 设置下拉菜单（主题自适应）
+.settings-dropdown {
+  background-color: var(--color-bg-primary) !important;
+  border-color: var(--color-border) !important;
+
+  .el-dropdown-menu {
+    background-color: var(--color-bg-primary) !important;
+    padding: 8px 0;
+
+    .el-dropdown-menu__item {
+      color: var(--color-text-primary);
+      padding: 10px 16px;
+
+      &:hover,
+      &:focus {
+        background-color: var(--color-bg-secondary);
+        color: var(--color-text-primary);
+      }
+    }
+  }
+
+  .el-popper__arrow::before {
+    background-color: var(--color-bg-primary) !important;
+    border-color: var(--color-border) !important;
+  }
+
+  // 下拉菜单项样式
+  .dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .lang-item {
+    width: 180px;
+
+    .lang-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .el-radio-group {
+      display: flex;
+      width: 100%;
+    }
+
+    .el-radio-button {
+      flex: 1 1 0;
+    }
+
+    .el-radio-button .el-radio-button__inner {
+      width: 100%;
+      padding: 6px 0;
+      text-align: center;
+      background-color: var(--color-bg-secondary);
+      border-color: var(--color-border);
+      color: var(--color-text-regular);
+      box-sizing: border-box;
+    }
+
+    .el-radio-button:first-child .el-radio-button__inner {
+      border-left: 1px solid var(--color-border);
+    }
+
+    .el-radio-button.is-active .el-radio-button__inner {
+      background-color: var(--color-primary);
+      border-color: var(--color-primary);
+      color: #ffffff;
+      box-shadow: none;
+    }
+  }
+}
+
 // Element Plus 深色主题覆盖
-[data-theme='dark'] {
+[data-theme='dark'],
+html.dark {
   // 日期选择器弹窗
   .el-picker-panel {
     background-color: var(--color-bg-primary);
@@ -179,10 +255,7 @@ body {
     background-color: var(--color-bg-primary) !important;
     border-color: var(--color-border) !important;
   }
-}
 
-// Element Plus 深色主题覆盖
-[data-theme='dark'] {
   // 卡片标题颜色
   .el-card__header {
     color: var(--color-text-primary) !important;
