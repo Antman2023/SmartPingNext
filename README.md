@@ -72,6 +72,8 @@ go build -o smartping src/smartping.go
 
 ### Docker
 
+支持多架构镜像：`linux/amd64`、`linux/arm64`、`linux/arm/v7`
+
 ```bash
 docker pull pathletboy/smartping-next:latest
 
