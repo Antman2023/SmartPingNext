@@ -10,7 +10,7 @@ import (
 func configIndexRoutes() {
 
 	// 使用嵌入的前端文件系统
-	htmlFS, err := fs.Sub(static.HTML, "html")
+	htmlFS, err := fs.Sub(static.Files, "html")
 	if err != nil {
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to load embedded files: "+err.Error(), http.StatusInternalServerError)

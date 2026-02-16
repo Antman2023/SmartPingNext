@@ -60,13 +60,7 @@ func GetRoot() string {
 	if err != nil {
 		log.Fatal("Get Root Path Error:", err)
 	}
-	dirctory := strings.Replace(dir, "\\", "/", -1)
-	runes := []rune(dirctory)
-	l := 0 + strings.LastIndex(dirctory, "/")
-	if l > len(runes) {
-		l = len(runes)
-	}
-	return string(runes[0:l])
+	return strings.Replace(dir, "\\", "/", -1)
 }
 
 func releaseDefaultFiles() {
@@ -77,7 +71,7 @@ func releaseDefaultFiles() {
 	// Release config-base.json
 	configBase := Root + "/conf/config-base.json"
 	if !IsExist(configBase) {
-		data, err := static.Conf.ReadFile("conf/config-base.json")
+		data, err := static.Files.ReadFile("conf/config-base.json")
 		if err != nil {
 			log.Fatalln("[Fault]read embedded config-base.json fail:", err)
 		}
@@ -90,7 +84,7 @@ func releaseDefaultFiles() {
 	// Release seelog.xml
 	seelogFile := Root + "/conf/seelog.xml"
 	if !IsExist(seelogFile) {
-		data, err := static.Conf.ReadFile("conf/seelog.xml")
+		data, err := static.Files.ReadFile("conf/seelog.xml")
 		if err != nil {
 			log.Fatalln("[Fault]read embedded seelog.xml fail:", err)
 		}
@@ -103,7 +97,7 @@ func releaseDefaultFiles() {
 	// Release database-base.db
 	dbBase := Root + "/db/database-base.db"
 	if !IsExist(dbBase) {
-		data, err := static.DB.ReadFile("db/database-base.db")
+		data, err := static.Files.ReadFile("db/database-base.db")
 		if err != nil {
 			log.Fatalln("[Fault]read embedded database-base.db fail:", err)
 		}
