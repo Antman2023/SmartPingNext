@@ -3,6 +3,8 @@
     <p align="center">
        一个综合性网络质量(PING)检测工具，支持正/反向PING绘图、互PING拓扑绘图与报警、全国PING延迟地图与在线检测工具等功能
         <br>
+        <a href="./README_EN.md">English README</a>
+        <br>
         <br>
         <a href="https://github.com/Antman2023/smartping-next/releases">
             <img src="https://img.shields.io/github/release/Antman2023/smartping-next.svg" >
@@ -21,8 +23,9 @@
 - 检测工具，支持使用SmartPingNext各节点进行网络相关检测
 - 配置导入/导出
 - 支持深色/浅色主题切换
+- 设置面板统一管理主题与语言
+- 中英双语界面，支持运行时切换（无需刷新）
 - 可收缩侧边栏
-- 完整中文界面
 - 单文件部署，无需额外配置文件
 
 ## 技术栈
@@ -152,7 +155,7 @@ docker-compose up -d
 - 纯 Go SQLite 驱动，无 CGO 依赖，跨平台编译
 - 新增深色/浅色主题切换支持
 - 可收缩侧边栏
-- 完整中文界面
+- 中英双语界面，支持运行时切换
 - 配置导入/导出功能
 - Docker 镜像支持
 - GitHub Actions 自动构建多平台发布包
