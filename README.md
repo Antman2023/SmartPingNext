@@ -23,10 +23,11 @@
 - 支持深色/浅色主题切换
 - 可收缩侧边栏
 - 完整中文界面
+- 单文件部署，无需额外配置文件
 
 ## 技术栈
 
-- **后端**: Go 1.24 + SQLite3
+- **后端**: Go 1.24 + SQLite3（纯 Go 实现，无 CGO 依赖）
 - **前端**: Vue 3 + TypeScript + Vite + Element Plus + ECharts
 
 ## 快速开始
@@ -45,15 +46,17 @@
 ```bash
 # Linux/macOS
 tar -xzf smartping-*.tar.gz
-cd smartping
 ./smartping
 
 # Windows
 # 解压 smartping-*.zip
-# 运行 smartping.exe
+# 双击运行 smartping.exe
 ```
 
+首次运行会自动创建 `conf/`、`db/`、`logs/` 目录并释放默认配置文件。
+
 ### 从源码构建
+
 ```bash
 # 前端
 cd web
@@ -77,6 +80,7 @@ docker run -d \
   -p 8899:8899 \
   -v smartping-conf:/app/conf \
   -v smartping-db:/app/db \
+  -v smartping-logs:/app/logs \
   --restart unless-stopped \
   pathletboy/smartping-next:latest
 
@@ -103,7 +107,10 @@ docker-compose up -d
 │   ├── http/               # HTTP 服务层
 │   ├── funcs/              # 核心业务逻辑
 │   ├── nettools/           # 底层网络工具
-│   └── static/             # 嵌入的前端静态文件
+│   └── static/             # 嵌入的静态文件
+│       ├── html/           # 前端页面
+│       ├── conf/           # 默认配置
+│       └── db/             # 默认数据库
 ├── web/                    # Vue 3 前端源码
 │   ├── src/
 │   │   ├── views/          # 页面组件
@@ -111,8 +118,9 @@ docker-compose up -d
 │   │   ├── api/            # API 接口
 │   │   └── assets/         # 静态资源
 │   └── package.json
-├── conf/                   # 配置文件
-└── db/                     # SQLite 数据库
+├── conf/                   # 配置文件（运行时生成）
+├── db/                     # SQLite 数据库（运行时生成）
+└── logs/                   # 日志文件（运行时生成）
 ```
 
 ## API 端点
@@ -137,7 +145,8 @@ docker-compose up -d
 本项目基于 [smartping/smartping](https://github.com/smartping/smartping) 开发，在原有功能基础上进行了以下改进：
 
 - 使用 Vue 3 + TypeScript + Element Plus 重构前端
-- 前端静态文件嵌入二进制，单文件部署
+- 单文件部署，前端和默认配置嵌入二进制
+- 纯 Go SQLite 驱动，无 CGO 依赖，跨平台编译
 - 新增深色/浅色主题切换支持
 - 可收缩侧边栏
 - 完整中文界面
