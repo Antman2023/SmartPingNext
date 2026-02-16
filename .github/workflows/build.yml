@@ -30,6 +30,13 @@ jobs:
             arch: arm64
             runner: ubuntu-latest
             ext: ''
+          # Linux armv7
+          - os: linux
+            arch: armv7
+            runner: ubuntu-latest
+            ext: ''
+            goarch: arm
+            goarm: '7'
           # Windows amd64
           - os: windows
             arch: amd64
@@ -74,7 +81,8 @@ jobs:
         if: matrix.os == 'linux'
         env:
           GOOS: linux
-          GOARCH: ${{ matrix.arch }}
+          GOARCH: ${{ matrix.goarch || matrix.arch }}
+          GOARM: ${{ matrix.goarm || '' }}
           CGO_ENABLED: 0
         run: |
           go mod download
@@ -217,6 +225,7 @@ jobs:
             |------|------|------|
             | Linux | amd64 | smartping-linux-amd64.tar.gz |
             | Linux | arm64 | smartping-linux-arm64.tar.gz |
+            | Linux | armv7 | smartping-linux-armv7.tar.gz |
             | Windows | amd64 | smartping-windows-amd64.zip |
             | macOS | arm64 | smartping-darwin-arm64.tar.gz |
 

@@ -40,6 +40,7 @@
 |------|------|------|
 | Linux | amd64 | smartping-linux-amd64.tar.gz |
 | Linux | arm64 | smartping-linux-arm64.tar.gz |
+| Linux | armv7 | smartping-linux-armv7.tar.gz |
 | Windows | amd64 | smartping-windows-amd64.zip |
 | macOS | arm64 | smartping-darwin-arm64.tar.gz |
 
