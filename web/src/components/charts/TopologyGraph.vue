@@ -33,6 +33,23 @@ const chartRef = ref<HTMLDivElement>()
 const themeStore = useThemeStore()
 const sidebarStore = useSidebarStore()
 let chart: echarts.ECharts | null = null
+let isUnmounted = false
+const resizeTimers: number[] = []
+
+const safeSetTimeout = (callback: () => void, delay: number) => {
+  const timer = window.setTimeout(() => {
+    if (!isUnmounted) {
+      callback()
+    }
+  }, delay)
+  resizeTimers.push(timer)
+  return timer
+}
+
+const clearAllTimers = () => {
+  resizeTimers.forEach(timer => window.clearTimeout(timer))
+  resizeTimers.length = 0
+}
 
 const getChartOption = (): EChartsOption => {
   const isDark = themeStore.theme === 'dark'
@@ -102,7 +119,7 @@ const handleResize = () => {
 watch(() => [props.nodes, props.links], updateChart, { deep: true })
 watch(() => themeStore.theme, updateChart)
 watch(() => sidebarStore.isCollapsed, () => {
-  setTimeout(() => handleResize(), 500)
+  safeSetTimeout(() => handleResize(), 500)
 })
 
 onMounted(() => {
@@ -111,7 +128,10 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  isUnmounted = true
+  clearAllTimers()
   chart?.dispose()
+  chart = null
   window.removeEventListener('resize', handleResize)
 })
 </script>
