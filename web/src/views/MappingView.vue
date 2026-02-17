@@ -59,6 +59,7 @@ const selectedDate = ref('')
 const currentBaseUrl = ref('')
 const chartRef = ref<HTMLDivElement>()
 const sidebarStore = useSidebarStore()
+const isMapReady = ref(false)
 let chart: echarts.ECharts | null = null
 
 const loadConfig = async () => {
@@ -86,6 +87,9 @@ const loadMappingData = async () => {
       data = await getMapping(selectedDate.value)
     }
 
+    if (!isMapReady.value) {
+      return
+    }
     updateChart(data)
   } catch (e) {
     console.error('加载地图数据失败', e)
@@ -101,7 +105,7 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
 }
 
 const updateChart = (data: ChinaMapData) => {
-  if (!chart) return
+  if (!chart || !isMapReady.value) return
 
   const option: EChartsOption = {
     backgroundColor: 'transparent',
@@ -116,7 +120,9 @@ const updateChart = (data: ChinaMapData) => {
     tooltip: {
       trigger: 'item',
       formatter: (params: any) => {
-        return `${params.name}<br/>${params.seriesName}: ${parseFloat(params.value).toFixed(2)}ms`
+        const delay = Number(params.value)
+        const delayText = Number.isFinite(delay) ? `${delay.toFixed(2)}ms` : '--'
+        return `${params.name}<br/>${params.seriesName}: ${delayText}`
       }
     },
     legend: {
@@ -169,20 +175,37 @@ const updateChart = (data: ChinaMapData) => {
   chart.setOption(option)
 }
 
-const MAP_URL = import.meta.env.VITE_MAP_URL || 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json'
+const mapUrlCandidates = [
+  import.meta.env.VITE_MAP_URL?.trim(),
+  'https://cdn.jsdelivr.net/npm/echarts-map@3.0.1/json/china.json',
+  'https://fastly.jsdelivr.net/npm/echarts-map@3.0.1/json/china.json',
+  'https://unpkg.com/echarts-map@3.0.1/json/china.json',
+  'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json'
+].filter((url, index, arr): url is string => !!url && arr.indexOf(url) === index)
 
 const initChart = async () => {
   if (!chartRef.value) return
 
   chart = echarts.init(chartRef.value)
 
-  try {
-    const chinaJson = await fetch(MAP_URL).then(res => res.json())
-    echarts.registerMap('china', chinaJson)
-  } catch (e) {
-    console.error('加载地图失败', e)
-    ElMessage.error('加载地图资源失败，请检查网络连接')
+  const loadErrors: string[] = []
+  for (const mapUrl of mapUrlCandidates) {
+    try {
+      const res = await fetch(mapUrl)
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`)
+      }
+      const chinaJson = await res.json()
+      echarts.registerMap('china', chinaJson)
+      isMapReady.value = true
+      return
+    } catch (e) {
+      loadErrors.push(`${mapUrl} -> ${String(e)}`)
+    }
   }
+
+  console.error('加载地图失败', loadErrors)
+  ElMessage.error('加载地图资源失败，请配置可访问的 VITE_MAP_URL')
 }
 
 const handleResize = () => {
