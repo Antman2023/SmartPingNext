@@ -33,6 +33,7 @@ var (
 	ToolLimitLock   sync.RWMutex
 	Db              *sql.DB
 	DLock           sync.Mutex
+	LocalTimezone   *time.Location
 )
 
 func IsExist(fp string) bool {
@@ -142,6 +143,7 @@ func ParseConfig(ver string) {
 	if err != nil {
 		log.Fatalln("[Fault]db open fail .", err)
 	}
+	LocalTimezone = time.Local
 	SelfCfg = Cfg.Network[Cfg.Addr]
 	AlertStatus = map[string]bool{}
 	ToolLimit = map[string]int{}

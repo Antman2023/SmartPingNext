@@ -62,16 +62,16 @@ func configApiRoutes() {
 		if len(r.Form["starttime"]) > 0 && len(r.Form["endtime"]) > 0 {
 			timeStartStr = r.Form["starttime"][0]
 			if timeStartStr != "" {
-				tms, _ := time.Parse("2006-01-02 15:04", timeStartStr)
-				timeStart = tms.Unix() - 8*60*60
+				tms, _ := time.ParseInLocation("2006-01-02 15:04", timeStartStr, g.LocalTimezone)
+				timeStart = tms.Unix()
 			} else {
 				timeStart = time.Now().Unix() - 6*60*60
 				timeStartStr = time.Unix(timeStart, 0).Format("2006-01-02 15:04")
 			}
 			timeEndStr = r.Form["endtime"][0]
 			if timeEndStr != "" {
-				tmn, _ := time.Parse("2006-01-02 15:04", timeEndStr)
-				timeEnd = tmn.Unix() - 8*60*60
+				tmn, _ := time.ParseInLocation("2006-01-02 15:04", timeEndStr, g.LocalTimezone)
+				timeEnd = tmn.Unix()
 			} else {
 				timeEnd = time.Now().Unix()
 				timeEndStr = time.Unix(timeEnd, 0).Format("2006-01-02 15:04")
