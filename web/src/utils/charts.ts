@@ -140,12 +140,23 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
           const date = value.length >= 10 ? value.substring(5, 10) : ''
 
           const lastcheck = data?.lastcheck || []
-          const prevValue = index > 0 ? lastcheck[index - 1] : ''
-          const prevDate = prevValue && prevValue.length >= 10 ? prevValue.substring(5, 10) : ''
 
-          if (date && (index === 0 || date !== prevDate)) {
-            return `{date|${date}}\n{time|${time}}`
+          // 第一个点始终显示日期
+          if (index === 0) {
+            return date ? `{date|${date}}\n{time|${time}}` : `{time|${time}}`
           }
+
+          // 向前遍历所有之前的数据点，检查是否存在不同日期
+          for (let i = index - 1; i >= 0; i--) {
+            const prevVal = lastcheck[i]
+            if (!prevVal || prevVal.length < 10) continue
+            const prevDate = prevVal.substring(5, 10)
+            // 发现不同日期，说明当前点是新的一天的开始
+            if (prevDate !== date) {
+              return `{date|${date}}\n{time|${time}}`
+            }
+          }
+
           return `{time|${time}}`
         },
         rich: {
