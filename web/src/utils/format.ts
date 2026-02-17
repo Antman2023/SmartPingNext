@@ -1,15 +1,14 @@
+const pad = (n: number) => (n < 10 ? '0' + n : n)
+
 export function formatDateTime(date: Date): string {
-  const pad = (n: number) => (n < 10 ? '0' + n : n)
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 export function formatTime(date: Date): string {
-  const pad = (n: number) => (n < 10 ? '0' + n : n)
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 export function formatDate(date: Date): string {
-  const pad = (n: number) => (n < 10 ? '0' + n : n)
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
