@@ -1,8 +1,9 @@
 import axios from 'axios'
+import { handleNetworkError } from '@/utils/error'
 
 const instance = axios.create({
-  baseURL: '/api',
-  timeout: 30000
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  timeout: Number(import.meta.env.VITE_API_TIMEOUT) || 15000
 })
 
 // 请求拦截器
@@ -18,10 +19,14 @@ instance.interceptors.request.use(
 // 响应拦截器
 instance.interceptors.response.use(
   (response) => {
-    return response.data
+    const res = response.data
+    if (res.status && res.status !== 'true' && res.status !== 200) {
+      throw handleNetworkError({ response: { status: res.status, data: res } })
+    }
+    return res
   },
   (error) => {
-    return Promise.reject(error)
+    return Promise.reject(handleNetworkError(error))
   }
 )
 

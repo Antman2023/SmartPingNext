@@ -9,6 +9,7 @@ import type { EChartsOption } from 'echarts'
 import type { PingLogData } from '@/types'
 import { useThemeStore } from '@/stores/theme'
 import { useSidebarStore } from '@/stores/sidebar'
+import { getPingMiniChartOption } from '@/utils/charts'
 
 const props = defineProps<{
   data: PingLogData | null
@@ -22,133 +23,7 @@ let chart: echarts.ECharts | null = null
 
 const getChartOption = (): EChartsOption => {
   const isDark = themeStore.theme === 'dark'
-
-  return {
-    backgroundColor: 'transparent',
-    grid: {
-      left: 35,
-      right: 35,
-      top: 18,
-      bottom: 18,
-      containLabel: false
-    },
-    xAxis: {
-      type: 'category',
-      data: props.data?.lastcheck || [],
-      axisLine: { show: false },
-      axisTick: { show: false },
-      axisLabel: {
-        show: true,
-        color: isDark ? '#6c6e72' : '#909399',
-        fontSize: 10,
-        interval: 'auto',
-        formatter: (value: string) => {
-          if (!value) return ''
-          // 只显示时间 HH:mm
-          if (value.length >= 16) {
-            return value.substring(11, 16)
-          }
-          return value
-        }
-      }
-    },
-    yAxis: [
-      {
-        type: 'value',
-        position: 'left',
-        name: '延迟',
-        nameTextStyle: {
-          color: isDark ? '#6c6e72' : '#909399',
-          fontSize: 10
-        },
-        nameGap: 5,
-        min: 0,
-        max: function(value: { max: number }) {
-          return Math.max(value.max * 1.1, 10)
-        },
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: {
-          show: true,
-          color: isDark ? '#6c6e72' : '#909399',
-          fontSize: 9,
-          formatter: (value: number) => Math.round(value).toString()
-        },
-        splitLine: { show: false }
-      },
-      {
-        type: 'value',
-        position: 'right',
-        name: '丢包',
-        nameTextStyle: {
-          color: isDark ? '#6c6e72' : '#909399',
-          fontSize: 10
-        },
-        nameGap: 5,
-        min: 0,
-        max: 100,
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: {
-          show: true,
-          color: isDark ? '#6c6e72' : '#909399',
-          fontSize: 9,
-          formatter: '{value}%'
-        },
-        splitLine: { show: false }
-      }
-    ],
-    series: [
-      {
-        type: 'line',
-        data: props.data?.avgdelay || [],
-        yAxisIndex: 0,
-        smooth: false,
-        symbol: 'none',
-        lineStyle: {
-          color: '#00CC66',
-          width: 1.5
-        },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(0, 204, 102, 0.3)' },
-              { offset: 1, color: 'rgba(0, 204, 102, 0.05)' }
-            ]
-          }
-        }
-      },
-      {
-        type: 'line',
-        data: props.data?.losspk || [],
-        yAxisIndex: 1,
-        smooth: false,
-        symbol: 'none',
-        lineStyle: {
-          color: '#f56c6c',
-          width: 1.5
-        },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(245, 108, 108, 0.3)' },
-              { offset: 1, color: 'rgba(245, 108, 108, 0.05)' }
-            ]
-          }
-        }
-      }
-    ]
-  }
+  return getPingMiniChartOption(props.data, isDark)
 }
 
 const initChart = () => {
@@ -166,11 +41,10 @@ const handleResize = () => {
   chart?.resize()
 }
 
-watch(() => props.data, updateChart, { deep: true })
+watch(() => props.data?.lastcheck, updateChart)
 watch(() => themeStore.theme, updateChart)
 watch(() => sidebarStore.isCollapsed, () => {
-  // 等待 CSS 过渡完成 (0.3s)
-  setTimeout(() => handleResize(), 350)
+  setTimeout(() => handleResize(), 500)
 })
 
 onMounted(() => {

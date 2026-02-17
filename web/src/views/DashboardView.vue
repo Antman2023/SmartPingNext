@@ -95,10 +95,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ElMessage } from 'element-plus'
 import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
 import { getConfig, getProxyConfig } from '@/api/topology'
+import { formatDateTime } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
 
 interface PingTarget {
@@ -167,11 +169,17 @@ const loadConfig = async (proxyUrl?: string) => {
     }
   } catch (e) {
     console.error('加载配置失败', e)
+    ElMessage.error('加载配置失败，请检查网络连接')
   }
 }
 
 const loadAllCharts = async () => {
-  await Promise.all(pingTargets.value.map(target => loadChartData(target)))
+  // 限制并发请求数量为 3
+  const batchSize = 3
+  for (let i = 0; i < pingTargets.value.length; i += batchSize) {
+    const batch = pingTargets.value.slice(i, i + batchSize)
+    await Promise.all(batch.map(target => loadChartData(target)))
+  }
 }
 
 const loadChartData = async (target: PingTarget) => {
@@ -198,12 +206,13 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
   agent.loading = false
 }
 
+const DEFAULT_TIME_RANGE_HOURS = Number(import.meta.env.VITE_DEFAULT_TIME_RANGE) || 6
+
 const showDetail = async (target: PingTarget) => {
   detailTitle.value = `${config.value?.Name} -> ${target.name}`
   currentTargetIp.value = target.targetIp
 
-  // 设置默认时间范围
-  setTimeRange(6)
+  setTimeRange(DEFAULT_TIME_RANGE_HOURS)
 
   detailVisible.value = true
   await loadDetailData()
@@ -222,9 +231,13 @@ const loadDetailData = async () => {
 
   try {
     const response = await fetch(url)
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
     detailData.value = await response.json()
   } catch (e) {
     console.error('加载数据失败', e)
+    ElMessage.error('加载数据失败')
   }
 }
 
@@ -232,13 +245,8 @@ const setTimeRange = (hours: number) => {
   const end = new Date()
   const start = new Date(end.getTime() - hours * 60 * 60 * 1000)
 
-  const format = (d: Date) => {
-    const pad = (n: number) => (n < 10 ? '0' + n : n)
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-  }
-
-  startTime.value = format(start)
-  endTime.value = format(end)
+  startTime.value = formatDateTime(start)
+  endTime.value = formatDateTime(end)
   loadDetailData()
 }
 

@@ -32,10 +32,12 @@ import { useI18n } from 'vue-i18n'
 import { Setting, Moon, Sunny, Promotion } from '@element-plus/icons-vue'
 import { useThemeStore } from '@/stores/theme'
 import { useLocaleStore, type LocaleCode } from '@/stores/locale'
+import { useLocale } from '@/composables/useLocale'
 
-const { t, locale: i18nLocale } = useI18n({ useScope: 'global' })
+const { t } = useI18n({ useScope: 'global' })
 const themeStore = useThemeStore()
 const localeStore = useLocaleStore()
+const { setLocale } = useLocale()
 
 const themeText = computed(() => {
   return themeStore.theme === 'light' ? t('theme.darkMode') : t('theme.lightMode')
@@ -44,8 +46,7 @@ const themeText = computed(() => {
 const currentLocale = computed({
   get: () => localeStore.locale,
   set: (locale: LocaleCode) => {
-    localeStore.setLocale(locale)
-    i18nLocale.value = locale
+    setLocale(locale)
   }
 })
 

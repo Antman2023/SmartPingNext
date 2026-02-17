@@ -93,6 +93,7 @@ import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
 import { getConfig, getProxyConfig } from '@/api/topology'
+import { formatDateTime } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
 
 interface ReverseTarget {
@@ -186,15 +187,10 @@ const showDetail = async (target: ReverseTarget) => {
   detailTitle.value = `${target.fromName} -> ${config.value?.Name}`
   currentTarget.value = target
 
-  // 设置默认时间范围
   const end = new Date()
   const start = new Date(end.getTime() - 6 * 60 * 60 * 1000)
-  const format = (d: Date) => {
-    const pad = (n: number) => (n < 10 ? '0' + n : n)
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-  }
-  startTime.value = format(start)
-  endTime.value = format(end)
+  startTime.value = formatDateTime(start)
+  endTime.value = formatDateTime(end)
 
   detailVisible.value = true
   await loadDetailData()

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
 export const useSidebarStore = defineStore('sidebar', () => {
   const isCollapsed = ref(
@@ -8,11 +8,8 @@ export const useSidebarStore = defineStore('sidebar', () => {
 
   const toggleCollapse = () => {
     isCollapsed.value = !isCollapsed.value
+    localStorage.setItem('sidebar-collapsed', String(isCollapsed.value))
   }
-
-  watch(isCollapsed, (val) => {
-    localStorage.setItem('sidebar-collapsed', String(val))
-  })
 
   return {
     isCollapsed,

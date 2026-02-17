@@ -16,16 +16,34 @@ export interface TopologyConfig {
   Thdloss: string
 }
 
+export interface BaseConfig {
+  Timeout: number
+  Refresh: number
+  Archive: number
+}
+
+export interface TopologySettings {
+  Tsound: string
+  Tline: string
+  Tsymbolsize: string
+}
+
+export interface ChinaMapProvider {
+  ctcc: string[]
+  cucc: string[]
+  cmcc: string[]
+}
+
 export interface Config {
   Ver: string
   Port: number
   Name: string
   Addr: string
   Mode: Record<string, string>
-  Base: Record<string, number>
-  Topology: Record<string, string>
+  Base: BaseConfig
+  Topology: TopologySettings
   Network: Record<string, NetworkMember>
-  Chinamap: Record<string, Record<string, string[]>>
+  Chinamap: Record<string, ChinaMapProvider>
   Toollimit: number
   Authiplist: string
 }

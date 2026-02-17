@@ -43,6 +43,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { getConfig } from '@/api/topology'
@@ -72,6 +73,7 @@ const loadConfig = async () => {
     await loadMappingData()
   } catch (e) {
     console.error('加载配置失败', e)
+    ElMessage.error('加载配置失败，请检查网络连接')
   }
 }
 
@@ -87,6 +89,7 @@ const loadMappingData = async () => {
     updateChart(data)
   } catch (e) {
     console.error('加载地图数据失败', e)
+    ElMessage.error('加载地图数据失败')
   }
 }
 
@@ -166,18 +169,19 @@ const updateChart = (data: ChinaMapData) => {
   chart.setOption(option)
 }
 
+const MAP_URL = import.meta.env.VITE_MAP_URL || 'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json'
+
 const initChart = async () => {
   if (!chartRef.value) return
 
   chart = echarts.init(chartRef.value)
 
-  // 加载中国地图
   try {
-    const chinaJson = await fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json')
-      .then(res => res.json())
+    const chinaJson = await fetch(MAP_URL).then(res => res.json())
     echarts.registerMap('china', chinaJson)
   } catch (e) {
     console.error('加载地图失败', e)
+    ElMessage.error('加载地图资源失败，请检查网络连接')
   }
 }
 
@@ -186,8 +190,7 @@ const handleResize = () => {
 }
 
 watch(() => sidebarStore.isCollapsed, () => {
-  // 等待 CSS 过渡完成 (0.3s)
-  setTimeout(() => handleResize(), 350)
+  setTimeout(() => handleResize(), 500)
 })
 
 const saveMapImage = () => {

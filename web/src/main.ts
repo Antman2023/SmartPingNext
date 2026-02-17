@@ -25,16 +25,9 @@ app.use(createPinia())
 app.use(router)
 app.use(i18n)
 
-// Element Plus 语言映射
-const elementLocales: Record<string, any> = {
-  'zh-CN': zhCn,
-  'en-US': en
-}
-
 // 初始化语言
 const localeStore = useLocaleStore()
-const elementLocale = elementLocales[localeStore.locale] || zhCn
-app.use(ElementPlus, { locale: elementLocale })
+app.use(ElementPlus, { locale: localeStore.locale === 'en-US' ? en : zhCn })
 
 // 初始化主题
 const themeStore = useThemeStore()
