@@ -7,7 +7,7 @@
         <br>
         <br>
         <a href="https://github.com/Antman2023/SmartPingNext/releases">
-            <img src="https://img.shields.io/github/release/Antman2023/smartping-next.svg" >
+            <img src="https://img.shields.io/github/release/Antman2023/SmartPingNext.svg" >
         </a>
         <a href="https://github.com/Antman2023/SmartPingNext/blob/master/LICENSE">
             <img src="https://img.shields.io/hexpm/l/plug.svg" >
