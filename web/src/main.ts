@@ -21,13 +21,24 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
 
-app.use(createPinia())
+const pinia = createPinia()
+app.use(pinia)
 app.use(router)
-app.use(i18n)
 
 // 初始化语言
 const localeStore = useLocaleStore()
-app.use(ElementPlus, { locale: localeStore.locale === 'en-US' ? en : zhCn })
+const initialLocale = localeStore.locale
+
+// 设置 i18n 初始语言
+i18n.global.locale.value = initialLocale
+
+app.use(i18n)
+app.use(ElementPlus, { locale: initialLocale === 'en-US' ? en : zhCn })
+
+// 监听语言变化，同步更新 vue-i18n
+localeStore.$subscribe((_mutation, state) => {
+  i18n.global.locale.value = state.locale
+})
 
 // 初始化主题
 const themeStore = useThemeStore()

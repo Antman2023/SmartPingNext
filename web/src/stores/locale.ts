@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
 export type LocaleCode = 'zh-CN' | 'en-US'
 
@@ -12,11 +12,6 @@ export const useLocaleStore = defineStore('locale', () => {
     locale.value = newLocale
     localStorage.setItem('locale', newLocale)
   }
-
-  // 监听语言变化
-  watch(locale, (newLocale) => {
-    localStorage.setItem('locale', newLocale)
-  })
 
   return {
     locale,

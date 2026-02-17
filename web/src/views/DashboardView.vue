@@ -99,7 +99,8 @@ import { ElMessage } from 'element-plus'
 import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
-import { getConfig, getProxyConfig } from '@/api/topology'
+import { fetchConfig, fetchProxyConfig } from '@/api/config'
+import { getPingData } from '@/api/ping'
 import { formatDateTime } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
 
@@ -139,9 +140,9 @@ const loadConfig = async (proxyUrl?: string) => {
   try {
     let cfg: Config
     if (proxyUrl) {
-      cfg = await getProxyConfig(proxyUrl)
+      cfg = await fetchProxyConfig(proxyUrl)
     } else {
-      cfg = await getConfig()
+      cfg = await fetchConfig()
     }
     config.value = cfg
 
@@ -169,7 +170,7 @@ const loadConfig = async (proxyUrl?: string) => {
     }
   } catch (e) {
     console.error('加载配置失败', e)
-    ElMessage.error('加载配置失败，请检查网络连接')
+    ElMessage.error(t('common.configLoadFailedNetwork'))
   }
 }
 
@@ -185,13 +186,9 @@ const loadAllCharts = async () => {
 const loadChartData = async (target: PingTarget) => {
   target.loading = true
   try {
-    const response = await fetch(`/api/ping.json?ip=${encodeURIComponent(target.targetIp)}`)
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-    target.chartData = await response.json()
+    target.chartData = await getPingData(target.targetIp)
   } catch (e) {
-    console.error('加载图表数据失败', e)
+    console.error(t('common.chartLoadFailed'), e)
     target.chartData = null
   } finally {
     target.loading = false
@@ -221,23 +218,11 @@ const showDetail = async (target: PingTarget) => {
 const loadDetailData = async () => {
   if (!currentTargetIp.value) return
 
-  let url = `/api/ping.json?ip=${encodeURIComponent(currentTargetIp.value)}`
-  if (startTime.value) {
-    url += `&starttime=${encodeURIComponent(startTime.value)}`
-  }
-  if (endTime.value) {
-    url += `&endtime=${encodeURIComponent(endTime.value)}`
-  }
-
   try {
-    const response = await fetch(url)
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-    detailData.value = await response.json()
+    detailData.value = await getPingData(currentTargetIp.value, startTime.value, endTime.value)
   } catch (e) {
     console.error('加载数据失败', e)
-    ElMessage.error('加载数据失败')
+    ElMessage.error(t('common.loadFailed'))
   }
 }
 

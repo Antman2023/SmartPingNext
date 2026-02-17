@@ -79,7 +79,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Loading, Warning, SuccessFilled } from '@element-plus/icons-vue'
-import { getConfig } from '@/api/topology'
+import { fetchConfig } from '@/api/config'
 import { runTools } from '@/api/tools'
 import type { Config, ToolsResult } from '@/types'
 
@@ -102,7 +102,7 @@ const results = ref<ResultRow[]>([])
 
 const loadConfig = async () => {
   try {
-    const cfg = await getConfig()
+    const cfg = await fetchConfig()
     config.value = cfg
     target.value = cfg.Addr
 

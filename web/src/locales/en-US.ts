@@ -33,7 +33,12 @@ export default {
     pleaseEnterPassword: 'Please enter password',
     passwordError: 'Password error',
     high: 'High',
-    low: 'Low'
+    low: 'Low',
+    configLoadFailed: 'Failed to load config',
+    configSaveFailed: 'Failed to save config',
+    configLoadFailedNetwork: 'Failed to load config, please check network connection',
+    chartLoadFailed: 'Failed to load chart data',
+    dataLoadFailed: 'Failed to load data'
   },
   // Navigation menu
   nav: {

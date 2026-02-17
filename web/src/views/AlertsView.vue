@@ -103,7 +103,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ArrowLeft, Loading } from '@element-plus/icons-vue'
-import { getConfig } from '@/api/topology'
+import { fetchConfig } from '@/api/config'
 import { getAlerts } from '@/api/alert'
 import type { Config, AlertLog } from '@/types'
 
@@ -118,7 +118,7 @@ const mtrData = ref<any[]>([])
 
 const loadConfig = async () => {
   try {
-    const cfg = await getConfig()
+    const cfg = await fetchConfig()
     config.value = cfg
 
     // 获取有拓扑配置的节点

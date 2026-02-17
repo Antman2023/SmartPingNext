@@ -1,5 +1,15 @@
 import type { EChartsOption } from 'echarts'
+import type { TooltipComponentFormatterCallbackParams } from 'echarts'
 import type { PingLogData } from '@/types'
+
+// ECharts tooltip formatter 参数类型 (trigger: 'axis' 时为数组)
+interface TooltipFormatterParam {
+  name: string
+  value: number | string
+  seriesName: string
+  marker: string
+  dataIndex: number
+}
 
 interface ChartTheme {
   isDark: boolean
@@ -40,14 +50,16 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
       textStyle: {
         color: theme.textColor
       },
-      formatter: (params: any) => {
-        let result = params[0].name + '<br/>'
-        params.forEach((item: any) => {
+      formatter: (params: TooltipComponentFormatterCallbackParams) => {
+        const items = params as TooltipFormatterParam[]
+        if (!items || items.length === 0) return ''
+        let result = items[0].name + '<br/>'
+        items.forEach((item) => {
           let value = item.value
           if (item.seriesName === '丢包率') {
-            value = parseFloat(value).toFixed(0) + '%'
+            value = parseFloat(String(value)).toFixed(0) + '%'
           } else {
-            value = parseFloat(value).toFixed(2) + 'ms'
+            value = parseFloat(String(value)).toFixed(2) + 'ms'
           }
           result += item.marker + item.seriesName + ': ' + value + '<br/>'
         })

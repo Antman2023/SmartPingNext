@@ -272,7 +272,7 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Document, Delete } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { getConfig, saveConfig } from '@/api/topology'
+import { fetchConfig, saveConfig } from '@/api/config'
 import type { Config } from '@/types'
 
 const { t } = useI18n()
@@ -336,7 +336,7 @@ const newProvinceName = ref('')
 
 const loadConfig = async () => {
   try {
-    const cfg = await getConfig()
+    const cfg = await fetchConfig()
     config.value = cfg
 
     // 复制配置到表单

@@ -27,6 +27,9 @@ html/admin/*
 # Web frontend
 web/node_modules/
 web/dist/
+web/*.d.ts
+web/vite.config.js
+web/tsconfig.node.tsbuildinfo
 
 # Embedded static (generated from web/dist)
 src/static/html/

@@ -11,6 +11,7 @@ const elementLocales: Record<string, any> = {
 export function useLocale() {
   const localeStore = useLocaleStore()
 
+  const locale = computed(() => localeStore.locale)
   const elementLocale = computed(() => elementLocales[localeStore.locale] || zhCn)
 
   const setLocale = (locale: typeof localeStore.locale) => {
@@ -18,7 +19,7 @@ export function useLocale() {
   }
 
   return {
-    locale: localeStore.locale,
+    locale,
     elementLocale,
     setLocale
   }

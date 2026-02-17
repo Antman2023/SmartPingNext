@@ -46,7 +46,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { getConfig } from '@/api/topology'
+import { fetchConfig } from '@/api/config'
 import { getMapping, getProxyMapping } from '@/api/mapping'
 import type { Config, ChinaMapData } from '@/types'
 import type { EChartsOption } from 'echarts'
@@ -63,7 +63,7 @@ let chart: echarts.ECharts | null = null
 
 const loadConfig = async () => {
   try {
-    const cfg = await getConfig()
+    const cfg = await fetchConfig()
     config.value = cfg
 
     agents.value = Object.values(cfg.Network)

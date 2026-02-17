@@ -92,7 +92,7 @@ import { ref, onMounted } from 'vue'
 import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
-import { getConfig, getProxyConfig } from '@/api/topology'
+import { fetchConfig, fetchProxyConfig } from '@/api/config'
 import { formatDateTime } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
 
@@ -121,9 +121,9 @@ const loadConfig = async (proxyUrl?: string) => {
   try {
     let cfg: Config
     if (proxyUrl) {
-      cfg = await getProxyConfig(proxyUrl)
+      cfg = await fetchProxyConfig(proxyUrl)
     } else {
-      cfg = await getConfig()
+      cfg = await fetchConfig()
     }
     config.value = cfg
 

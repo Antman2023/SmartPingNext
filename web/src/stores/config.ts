@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Config } from '@/types'
-import { getConfig as fetchConfig, saveConfig as saveConfigApi } from '@/api/config'
+import { fetchConfig, saveConfig as saveConfigApi } from '@/api/config'
+import i18n from '@/locales'
 
 export const useConfigStore = defineStore('config', () => {
   const config = ref<Config | null>(null)
@@ -14,7 +15,7 @@ export const useConfigStore = defineStore('config', () => {
     try {
       config.value = await fetchConfig()
     } catch (e) {
-      error.value = '加载配置失败'
+      error.value = i18n.global.t('common.configLoadFailed')
       console.error(e)
     } finally {
       loading.value = false
@@ -28,7 +29,7 @@ export const useConfigStore = defineStore('config', () => {
       await saveConfigApi(newConfig, password)
       config.value = newConfig
     } catch (e) {
-      error.value = '保存配置失败'
+      error.value = i18n.global.t('common.configSaveFailed')
       console.error(e)
       throw e
     } finally {

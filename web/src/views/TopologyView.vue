@@ -48,7 +48,8 @@
 import { ref, onMounted, computed } from 'vue'
 import { Bell, Loading, Warning } from '@element-plus/icons-vue'
 import TopologyGraph from '@/components/charts/TopologyGraph.vue'
-import { getConfig, getTopology } from '@/api/topology'
+import { getTopology } from '@/api/topology'
+import { fetchConfig } from '@/api/config'
 import type { Config } from '@/types'
 
 const config = ref<Config | null>(null)
@@ -106,7 +107,7 @@ const topologyLinks = computed<TopoLink[]>(() => {
 
 const loadConfig = async () => {
   try {
-    const cfg = await getConfig()
+    const cfg = await fetchConfig()
     config.value = cfg
 
     // 加载拓扑状态
