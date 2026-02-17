@@ -119,6 +119,7 @@ const updateChart = (data: ChinaMapData) => {
     },
     tooltip: {
       trigger: 'item',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       formatter: (params: any) => {
         const delay = Number(params.value)
         const delayText = Number.isFinite(delay) ? `${delay.toFixed(2)}ms` : '--'

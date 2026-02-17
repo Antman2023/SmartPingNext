@@ -25,13 +25,13 @@ export default [
     plugins: {
       '@typescript-eslint': pluginTypeScript
     },
-    rules: {
+rules: {
       'vue/multi-word-component-names': 'off',
       'vue/no-v-html': 'off',
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
-      'no-console': process.env.NODE_ENV === 'production' ? 'warn' : 'off',
-      'no-debugger': process.env.NODE_ENV === 'production' ? 'warn' : 'off'
+      'no-console': 'off',
+      'no-debugger': 'off'
     }
   },
   {
@@ -48,7 +48,7 @@ export default [
     },
     rules: {
       ...pluginTypeScript.configs.recommended.rules,
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn'
     }
   },

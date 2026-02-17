@@ -86,7 +86,7 @@
             </el-button>
           </el-button-group>
         </div>
-        <PingChart ref="pingChartRef" v-if="detailData" :data="detailData" :height="400" />
+        <PingChart v-if="detailData" ref="pingChartRef" :data="detailData" :height="400" />
       </div>
     </el-dialog>
   </div>

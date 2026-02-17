@@ -81,7 +81,7 @@
           <el-button type="primary" @click="loadDetailData">{{ $t('common.query') }}</el-button>
           <el-button @click="saveChartImage">{{ $t('common.saveImage') }}</el-button>
         </div>
-        <PingChart ref="pingChartRef" v-if="detailData" :data="detailData" :height="400" />
+        <PingChart v-if="detailData" ref="pingChartRef" :data="detailData" :height="400" />
       </div>
     </el-dialog>
   </div>

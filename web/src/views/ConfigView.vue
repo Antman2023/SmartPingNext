@@ -247,7 +247,7 @@
       </el-tabs>
       <template #footer>
         <el-button @click="chinaMapVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="danger" @click="deleteChinaMap" v-if="currentProvince">{{ $t('config.deleteProvince') }}</el-button>
+        <el-button v-if="currentProvince" type="danger" @click="deleteChinaMap">{{ $t('config.deleteProvince') }}</el-button>
         <el-button type="primary" @click="saveChinaMap">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
@@ -273,7 +273,7 @@ import { useI18n } from 'vue-i18n'
 import { Document, Delete } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { fetchConfig, saveConfig } from '@/api/config'
-import type { Config } from '@/types'
+import type { Config, NetworkMember, TopologyConfig } from '@/types'
 
 const { t } = useI18n()
 const config = ref<Config | null>(null)
@@ -295,10 +295,19 @@ const formConfig = reactive<Config>({
   Authiplist: ''
 })
 
+type NetworkListItem = {
+  _original: NetworkMember
+  Name: string
+  Addr: string
+  Smartping: boolean
+  Ping: string[]
+  Topology: TopologyConfig[]
+  isSelf: boolean
+}
+
 const networkList = computed(() => {
   if (!formConfig.Network) return []
   return Object.entries(formConfig.Network).map(([addr, network]) => ({
-    // 保留原始对象的引用
     _original: network,
     Name: network.Name,
     Addr: addr,
@@ -360,8 +369,8 @@ const handleSave = async () => {
       ElMessage.error(result.info || t('common.saveFailed'))
       console.error('保存失败:', result.info)
     }
-  } catch (e: any) {
-    ElMessage.error(t('common.saveFailed') + ': ' + (e.message || ''))
+} catch (e: unknown) {
+    ElMessage.error(t('common.saveFailed') + ': ' + (e instanceof Error ? e.message : ''))
     console.error('保存失败', e)
   }
 }
@@ -413,7 +422,7 @@ const handleExport = async () => {
 }
 
 // 导入配置文件选择
-const handleImportFile = async (file: any) => {
+const handleImportFile = async (file: { raw: File }) => {
   if (!importExportPassword.value) {
     ElMessage.warning(t('common.pleaseEnterPassword'))
     return
@@ -493,11 +502,11 @@ const addNode = () => {
   ElMessage.success(t('config.nodeAdded'))
 }
 
-const deleteNode = (row: any) => {
+const deleteNode = (row: NetworkListItem) => {
   delete formConfig.Network[row.Addr]
 }
 
-const editPingConfig = (row: any) => {
+const editPingConfig = (row: NetworkListItem) => {
   currentEditNode.value = { Name: row.Name, Addr: row.Addr }
 
   // 获取当前节点的 Ping 配置
@@ -532,11 +541,11 @@ const savePingConfig = () => {
   ElMessage.success(t('config.pingConfigUpdated'))
 }
 
-const editTopoConfig = (row: any) => {
+const editTopoConfig = (row: NetworkListItem) => {
   currentEditNode.value = { Name: row.Name, Addr: row.Addr }
 
   // 获取当前节点的拓扑配置
-  const currentTopoList = formConfig.Network[row.Addr]?.Topology?.map((t: any) => t.Addr) || []
+  const currentTopoList = formConfig.Network[row.Addr]?.Topology?.map(t => t.Addr) || []
 
   // 构建可选目标列表（排除自己）
   topoTargetList.value = Object.entries(formConfig.Network)

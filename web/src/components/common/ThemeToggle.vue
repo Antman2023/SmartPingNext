@@ -1,5 +1,5 @@
 <template>
-  <el-dropdown trigger="click" @command="handleCommand" popper-class="settings-dropdown">
+  <el-dropdown trigger="click" popper-class="settings-dropdown" @command="handleCommand">
     <el-button circle :icon="Setting" />
     <template #dropdown>
       <el-dropdown-menu>

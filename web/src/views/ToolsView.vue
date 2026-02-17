@@ -15,7 +15,7 @@
           style="width: 280px;"
           @keyup.enter="runCheck"
         />
-        <el-button type="primary" @click="runCheck" :loading="checking">
+        <el-button type="primary" :loading="checking" @click="runCheck">
           {{ $t('tools.check') }}
         </el-button>
       </div>
@@ -139,8 +139,8 @@ const runCheck = async () => {
     try {
       const result = await runTools(`${row.addr}:${row.port}`, target.value)
       row.result = result
-    } catch (e: any) {
-      row.error = e.message || t('tools.requestFailed')
+} catch (e: unknown) {
+      row.error = e instanceof Error ? e.message : t('tools.requestFailed')
     } finally {
       row.loading = false
     }

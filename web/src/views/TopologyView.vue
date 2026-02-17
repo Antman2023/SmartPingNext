@@ -120,8 +120,8 @@ const loadConfig = async () => {
 const loadTopologyStatus = async () => {
   if (!config.value) return
 
-  const networkWithTopology = Object.entries(config.value.Network)
-    .filter(([_, network]) => network.Topology && network.Topology.length > 0)
+const networkWithTopology = Object.entries(config.value.Network)
+    .filter(([, network]) => network.Topology && network.Topology.length > 0)
 
   const promises = networkWithTopology.map(async ([addr, network]) => {
     loadingNodes.value.add(network.Name)

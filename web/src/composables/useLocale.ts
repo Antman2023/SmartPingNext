@@ -3,7 +3,9 @@ import { useLocaleStore } from '@/stores/locale'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import en from 'element-plus/es/locale/lang/en'
 
-const elementLocales: Record<string, any> = {
+import type { Language } from 'element-plus/es/locale'
+
+const elementLocales: Record<string, Language> = {
   'zh-CN': zhCn,
   'en-US': en
 }

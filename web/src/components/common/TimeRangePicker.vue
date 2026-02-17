@@ -39,7 +39,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:modelValue', value: { start: string; end: string }): void
+  'update:modelValue': [{ start: string; end: string }]
 }>()
 
 const format = props.format || 'YYYY-MM-DD HH:mm'

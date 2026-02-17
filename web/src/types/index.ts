@@ -103,3 +103,14 @@ export interface AlertData {
   dates: string[]
   logs: AlertLog[]
 }
+
+export interface MtrResult {
+  Host: string
+  Send: number
+  Loss: number
+  Last: number
+  Avg: number
+  Best: number
+  Wrst: number
+  StDev: number
+}

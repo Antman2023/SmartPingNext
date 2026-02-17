@@ -45,7 +45,7 @@
       </div>
 
       <div class="nodes-sidebar">
-        <el-button @click="$router.push('/topology')" style="width: 100%; margin-bottom: 20px;">
+        <el-button style="width: 100%; margin-bottom: 20px;" @click="$router.push('/topology')">
           <el-icon><ArrowLeft /></el-icon>
           {{ $t('alerts.backToTopology') }}
         </el-button>
@@ -105,7 +105,7 @@ import { ref, onMounted } from 'vue'
 import { ArrowLeft, Loading } from '@element-plus/icons-vue'
 import { fetchConfig } from '@/api/config'
 import { getAlerts } from '@/api/alert'
-import type { Config, AlertLog } from '@/types'
+import type { Config, AlertLog, MtrResult } from '@/types'
 
 const config = ref<Config | null>(null)
 const dates = ref<string[]>([])
@@ -114,7 +114,7 @@ const alerts = ref<AlertLog[]>([])
 const nodes = ref<Array<{ name: string; addr: string; loading: boolean }>>([])
 
 const mtrVisible = ref(false)
-const mtrData = ref<any[]>([])
+const mtrData = ref<MtrResult[]>([])
 
 const loadConfig = async () => {
   try {
