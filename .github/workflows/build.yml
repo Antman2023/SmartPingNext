@@ -9,7 +9,7 @@ on:
       create_release:
         description: 'Create a draft release'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 jobs:
@@ -174,7 +174,14 @@ jobs:
     name: Create Release
     needs: [build, docker]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.create_release == 'true'
+    if: |
+      always() &&
+      needs.build.result == 'success' &&
+      (needs.docker.result == 'success' || needs.docker.result == 'skipped') &&
+      (
+        startsWith(github.ref, 'refs/tags/') ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+      )
     permissions:
       contents: write
 
@@ -225,7 +232,7 @@ jobs:
         with:
           name: SmartPingNext ${{ steps.version.outputs.version }}
           tag_name: ${{ steps.version.outputs.version }}
-          draft: ${{ github.event.inputs.create_release == 'true' }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' }}
           prerelease: false
           generate_release_notes: true
           body: |
