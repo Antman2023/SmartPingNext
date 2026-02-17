@@ -15,6 +15,10 @@
     </p>
 </p>
 
+## Screenshot
+
+![Screenshot](./assets/界面展示.png)
+
 ## Features
 
 - Forward PING and reverse PING charting
