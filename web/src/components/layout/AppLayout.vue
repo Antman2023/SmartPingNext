@@ -11,11 +11,20 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted } from 'vue'
 import AppNavbar from './AppNavbar.vue'
 import AppSidebar from './AppSidebar.vue'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useConfigStore } from '@/stores/config'
 
 const sidebarStore = useSidebarStore()
+const configStore = useConfigStore()
+
+onMounted(() => {
+  if (!configStore.config) {
+    configStore.loadConfig()
+  }
+})
 </script>
 
 <style scoped lang="scss">

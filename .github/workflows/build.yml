@@ -77,6 +77,17 @@ jobs:
           mkdir -p src/static/html
           cp -r web/dist/* src/static/html/
 
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="v0.0.0-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Build backend (Linux)
         if: matrix.os == 'linux'
         env:
@@ -86,7 +97,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go mod download
-          go build -ldflags="-s -w" -o smartping${{ matrix.ext }} src/smartping.go
+          go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }}" -o smartping${{ matrix.ext }} src/smartping.go
 
       - name: Build backend (Windows/macOS)
         if: matrix.os != 'linux'
@@ -94,7 +105,7 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go mod download
-          go build -ldflags="-s -w" -o smartping${{ matrix.ext }} src/smartping.go
+          go build -ldflags="-s -w -X main.Version=${{ steps.version.outputs.version }}" -o smartping${{ matrix.ext }} src/smartping.go
 
       - name: Prepare release package
         shell: bash
@@ -154,6 +165,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/smartping-next:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/smartping-next:${{ steps.version.outputs.version }}

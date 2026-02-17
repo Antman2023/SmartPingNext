@@ -14,6 +14,7 @@
       <div class="app-navbar__brand">
         <el-icon class="app-navbar__logo"><Monitor /></el-icon>
         <span class="app-navbar__title">SmartPingNext</span>
+        <span v-if="version" class="app-navbar__version">{{ version }}</span>
       </div>
     </div>
     <div class="app-navbar__actions">
@@ -23,11 +24,16 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Monitor, DArrowLeft, DArrowRight } from '@element-plus/icons-vue'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useConfigStore } from '@/stores/config'
 
 const sidebarStore = useSidebarStore()
+const configStore = useConfigStore()
+
+const version = computed(() => configStore.config?.Ver)
 </script>
 
 <style scoped lang="scss">
@@ -88,6 +94,15 @@ const sidebarStore = useSidebarStore()
 .app-navbar__title {
   font-size: 18px;
   font-weight: 600;
+}
+
+.app-navbar__version {
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.7;
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
 }
 
 .app-navbar__actions {
