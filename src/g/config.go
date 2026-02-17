@@ -34,6 +34,7 @@ var (
 	Db              *sql.DB
 	DLock           sync.Mutex
 	LocalTimezone   *time.Location
+	HttpClient      *http.Client
 )
 
 func IsExist(fp string) bool {
@@ -144,6 +145,7 @@ func ParseConfig(ver string) {
 		log.Fatalln("[Fault]db open fail .", err)
 	}
 	LocalTimezone = time.Local
+	HttpClient = &http.Client{Timeout: 10 * time.Second}
 	SelfCfg = Cfg.Network[Cfg.Addr]
 	AlertStatus = map[string]bool{}
 	ToolLimit = map[string]int{}
@@ -152,11 +154,7 @@ func ParseConfig(ver string) {
 
 func SaveCloudConfig(url string) (Config, error) {
 	config := Config{}
-	timeout := time.Duration(5 * time.Second)
-	client := http.Client{
-		Timeout: timeout,
-	}
-	resp, err := client.Get(url)
+	resp, err := HttpClient.Get(url)
 	if err != nil {
 		return config, err
 	}

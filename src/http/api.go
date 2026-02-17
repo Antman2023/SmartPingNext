@@ -309,15 +309,15 @@ func configApiRoutes() {
 		var wg sync.WaitGroup
 		for i := range 5 {
 			wg.Add(1)
-			go func() {
-				delay, err := nettools.RunPing(ipaddr, 3*time.Second, 64, i)
+			go func(seq int) {
+				delay, err := nettools.RunPing(ipaddr, 3*time.Second, 64, seq)
 				if err != nil {
 					channel <- -1.00
 				} else {
 					channel <- delay
 				}
 				wg.Done()
-			}()
+			}(i)
 			time.Sleep(time.Duration(100 * time.Millisecond))
 		}
 		wg.Wait()
@@ -558,9 +558,8 @@ func configApiRoutes() {
 			http.Error(w, o, http.StatusNotAcceptable)
 			return
 		}
-		timeout := time.Duration(time.Duration(defaultto) * time.Second)
-		client := http.Client{
-			Timeout: timeout,
+		client := &http.Client{
+			Timeout: time.Duration(defaultto) * time.Second,
 		}
 		resp, err := client.Get(url)
 		if err != nil {
