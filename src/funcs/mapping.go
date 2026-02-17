@@ -21,7 +21,9 @@ var (
 
 func Mapping() {
 	var wg sync.WaitGroup
+	MapLock.Lock()
 	MapStatus = map[string][]g.MapVal{}
+	MapLock.Unlock()
 	logrus.Debug("[func:Mapping]", g.Cfg.Chinamap)
 	for tel, provDetail := range g.Cfg.Chinamap {
 		for prov, _ := range provDetail {
@@ -117,14 +119,14 @@ func MapPingStorage() {
 	logrus.Debug(MapStatus)
 	jdata, err := json.Marshal(MapStatus)
 	if err != nil {
-		logrus.Error("[func:StartPing] Json Error ", err)
+		logrus.Error("[func:MapPingStorage] Json Error ", err)
 	}
 	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values(?, ?)"
 	g.DLock.Lock()
 	_, err = g.Db.Exec(sql, time.Now().Format("2006-01-02 15:04"), string(jdata))
 	logrus.Debug(sql)
 	if err != nil {
-		logrus.Error("[func:StartPing] Sql Error ", err)
+		logrus.Error("[func:MapPingStorage] Sql Error ", err)
 	}
 	g.DLock.Unlock()
 	logrus.Debug("[func:MapPingStorage] ", sql)

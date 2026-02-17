@@ -93,7 +93,7 @@ func AlertStorage(t g.AlertLog) {
 	g.DLock.Lock()
 	_, err := g.Db.Exec(sql, t.Logtime, t.Targetip, t.Targetname, t.Tracert)
 	if err != nil {
-		logrus.Error("[func:StartPing] Sql Error ", err)
+		logrus.Error("[func:AlertStorage] Sql Error ", err)
 	}
 	g.DLock.Unlock()
 	logrus.Info("[func:AlertStorage] ", "(", t.Logtime, ") AlertStorage on ", t.Targetname, " finish!")

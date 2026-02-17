@@ -8,16 +8,13 @@ import (
 
 func StartCloudMonitor() {
 	logrus.Info("[func:StartCloudMonitor] ", "starting run StartCloudMonitor ")
-	_, err := g.SaveCloudConfig(g.Cfg.Mode["Endpoint"])
-	if err != nil {
+	if _, err := g.SaveCloudConfig(g.Cfg.Mode["Endpoint"]); err != nil {
 		logrus.Error("[func:StartCloudMonitor] Cloud Monitor Error", err)
 		return
 	}
-	saveerr := g.SaveConfig()
-	if saveerr != nil {
-		logrus.Error("[func:StartCloudMonitor] Save Cloud Config Error", saveerr)
+	if err := g.SaveConfig(); err != nil {
+		logrus.Error("[func:StartCloudMonitor] Save Cloud Config Error", err)
 		return
 	}
 	logrus.Info("[func:StartCloudMonitor] ", "StartCloudMonitor finish ")
-
 }

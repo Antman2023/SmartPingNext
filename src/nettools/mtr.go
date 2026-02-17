@@ -83,7 +83,7 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 				Lock.Lock()
 				mtr[ittl] = append(mtr[ittl], next)
 				Lock.Unlock()
-				time.Sleep(time.Second - time.Now().Sub(nowTime))
+				time.Sleep(time.Second - time.Since(nowTime))
 			}
 		}(ttl)
 		if next.Final {
