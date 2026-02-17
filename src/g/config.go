@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/cihub/seelog"
-	"smartping/src/static"
+	"github.com/sirupsen/logrus"
 	_ "modernc.org/sqlite"
+	"smartping/src/static"
 
 	"io"
 	"log"
@@ -81,19 +81,6 @@ func releaseDefaultFiles() {
 		log.Println("[Info]released config-base.json")
 	}
 
-	// Release seelog.xml
-	seelogFile := Root + "/conf/seelog.xml"
-	if !IsExist(seelogFile) {
-		data, err := static.Files.ReadFile("conf/seelog.xml")
-		if err != nil {
-			log.Fatalln("[Fault]read embedded seelog.xml fail:", err)
-		}
-		if err := os.WriteFile(seelogFile, data, 0644); err != nil {
-			log.Fatalln("[Fault]write seelog.xml fail:", err)
-		}
-		log.Println("[Info]released seelog.xml")
-	}
-
 	// Release database-base.db
 	dbBase := Root + "/db/database-base.db"
 	if !IsExist(dbBase) {
@@ -121,11 +108,7 @@ func ParseConfig(ver string) {
 		}
 		cfile = "config-base.json"
 	}
-	logger, err := seelog.LoggerFromConfigAsFile(Root + "/conf/" + "seelog.xml")
-	if err != nil {
-		log.Fatalln("[Fault]log config open fail .", err)
-	}
-	seelog.ReplaceLogger(logger)
+	InitLogger(Root)
 	Cfg = ReadConfig(Root + "/conf/" + cfile)
 	if Cfg.Name == "" {
 		Cfg.Name, _ = os.Hostname()
@@ -153,7 +136,8 @@ func ParseConfig(ver string) {
 			log.Fatalln("[Fault]db-base file copy error:", err)
 		}
 	}
-	seelog.Info("Config loaded")
+	logrus.Info("Config loaded")
+	var err error
 	Db, err = sql.Open("sqlite", Root+"/db/database.db")
 	if err != nil {
 		log.Fatalln("[Fault]db open fail .", err)
@@ -208,12 +192,12 @@ func SaveConfig() error {
 	var out bytes.Buffer
 	errjson := json.Indent(&out, rrs, "", "\t")
 	if errjson != nil {
-		seelog.Error("[func:SaveConfig] Json Parse ", errjson)
+		logrus.Error("[func:SaveConfig] Json Parse ", errjson)
 		return errjson
 	}
 	err := os.WriteFile(Root+"/conf/"+"config.json", []byte(out.String()), 0644)
 	if err != nil {
-		seelog.Error("[func:SaveConfig] Config File Write", err)
+		logrus.Error("[func:SaveConfig] Config File Write", err)
 		return err
 	}
 	return nil

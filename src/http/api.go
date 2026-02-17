@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cihub/seelog"
+	"github.com/sirupsen/logrus"
 )
 
 func configApiRoutes() {
@@ -101,9 +101,9 @@ func configApiRoutes() {
 		}
 		querySql := "SELECT logtime,maxdelay,mindelay,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"
 		rows, err := g.Db.Query(querySql, tableip, timeStartStr, timeEndStr)
-		seelog.Debug("[func:/api/ping.json] Query ", querySql)
+		logrus.Debug("[func:/api/ping.json] Query ", querySql)
 		if err != nil {
-			seelog.Error("[func:/api/ping.json] Query ", err)
+			logrus.Error("[func:/api/ping.json] Query ", err)
 		} else {
 			start := time.Now()
 			// Use map for O(1) lookup instead of linear search
@@ -116,7 +116,7 @@ func configApiRoutes() {
 				l := new(g.PingLog)
 				err := rows.Scan(&l.Logtime, &l.Maxdelay, &l.Mindelay, &l.Avgdelay, &l.Losspk)
 				if err != nil {
-					seelog.Error("[/api/ping.json] Rows", err)
+					logrus.Error("[/api/ping.json] Rows", err)
 					continue
 				}
 
@@ -128,7 +128,7 @@ func configApiRoutes() {
 				}
 			}
 			elapsed := time.Since(start)
-			seelog.Info("[func:/api/ping.json] Query ", elapsed)
+			logrus.Info("[func:/api/ping.json] Query ", elapsed)
 			rows.Close()
 		}
 		preout := map[string][]string{
@@ -182,15 +182,15 @@ func configApiRoutes() {
 		datapreout := []g.AlertLog{}
 		querySql := "select date(logtime) as ldate from alertlog group by date(logtime) order by logtime desc"
 		rows, err := g.Db.Query(querySql)
-		seelog.Debug("[func:/api/alert.json] Query ", querySql)
+		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
-			seelog.Error("[func:/api/alert.json] Query ", err)
+			logrus.Error("[func:/api/alert.json] Query ", err)
 		} else {
 			for rows.Next() {
 				l := new(DateList)
 				err := rows.Scan(&l.Ldate)
 				if err != nil {
-					seelog.Error("[/api/alert.json] Rows", err)
+					logrus.Error("[/api/alert.json] Rows", err)
 					continue
 				}
 				listpreout = append(listpreout, l.Ldate)
@@ -199,9 +199,9 @@ func configApiRoutes() {
 		}
 		querySql = "select logtime,targetname,targetip,tracert from alertlog where logtime between ? and ?"
 		rows, err = g.Db.Query(querySql, dtb+" 00:00:00", dtb+" 23:59:59")
-		seelog.Debug("[func:/api/alert.json] Query ", querySql)
+		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
-			seelog.Error("[func:/api/alert.json] Query ", err)
+			logrus.Error("[func:/api/alert.json] Query ", err)
 		} else {
 			for rows.Next() {
 				l := new(g.AlertLog)
@@ -209,7 +209,7 @@ func configApiRoutes() {
 				l.Fromname = g.Cfg.Name
 				l.Fromip = g.Cfg.Addr
 				if err != nil {
-					seelog.Error("[/api/alert.json] Rows", err)
+					logrus.Error("[/api/alert.json] Rows", err)
 					continue
 				}
 				datapreout = append(datapreout, *l)
@@ -248,15 +248,15 @@ func configApiRoutes() {
 		querySql := "select mapjson from mappinglog where logtime = ?"
 		rows, err := g.Db.Query(querySql, dataKey)
 		g.DLock.Unlock()
-		seelog.Debug("[func:/api/mapping.json] Query ", querySql)
+		logrus.Debug("[func:/api/mapping.json] Query ", querySql)
 		if err != nil {
-			seelog.Error("[func:/api/mapping.json] Query ", err)
+			logrus.Error("[func:/api/mapping.json] Query ", err)
 		} else {
 			for rows.Next() {
 				l := new(Mapjson)
 				err := rows.Scan(&l.Mapjson)
 				if err != nil {
-					seelog.Error("[/api/mapping.json] Rows", err)
+					logrus.Error("[/api/mapping.json] Rows", err)
 					continue
 				}
 				json.Unmarshal([]byte(l.Mapjson), &chinaMp.Avgdelay)

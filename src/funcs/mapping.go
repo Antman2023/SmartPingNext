@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cihub/seelog"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -22,10 +22,10 @@ var (
 func Mapping() {
 	var wg sync.WaitGroup
 	MapStatus = map[string][]g.MapVal{}
-	seelog.Debug("[func:Mapping]", g.Cfg.Chinamap)
+	logrus.Debug("[func:Mapping]", g.Cfg.Chinamap)
 	for tel, provDetail := range g.Cfg.Chinamap {
 		for prov, _ := range provDetail {
-			seelog.Debug("[func:Mapping]", g.Cfg.Chinamap[tel][prov])
+			logrus.Debug("[func:Mapping]", g.Cfg.Chinamap[tel][prov])
 			if len(g.Cfg.Chinamap[tel][prov]) > 0 {
 				go MappingTask(tel, prov, g.Cfg.Chinamap[tel][prov], &wg)
 				wg.Add(1)
@@ -38,10 +38,10 @@ func Mapping() {
 
 // ping main function
 func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
-	seelog.Info("Start MappingTask " + tel + " " + prov + "..")
+	logrus.Info("Start MappingTask " + tel + " " + prov + "..")
 	statMap := []g.PingSt{}
 	for _, ip := range ips {
-		seelog.Debug("[func:StartChinaMapPing]", ip)
+		logrus.Debug("[func:StartChinaMapPing]", ip)
 		ipaddr, err := net.ResolveIPAddr("ip", ip)
 		if err == nil {
 			for i := 0; i < 3; i++ {
@@ -58,9 +58,9 @@ func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
 						stat.MinDelay = delay
 					}
 					stat.RevcPk = stat.RevcPk + 1
-					seelog.Debug("[func:StartChinaMapPing IcmpPing] ID:", i, " IP:", ip)
+					logrus.Debug("[func:StartChinaMapPing IcmpPing] ID:", i, " IP:", ip)
 				} else {
-					seelog.Debug("[func:StartChinaMapPing IcmpPing] ID:", i, " IP:", ip, " | ", err)
+					logrus.Debug("[func:StartChinaMapPing IcmpPing] ID:", i, " IP:", ip, " | ", err)
 					stat.LossPk = stat.LossPk + 1
 				}
 				stat.SendPk = stat.SendPk + 1
@@ -109,24 +109,24 @@ func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
 	MapStatus[prov] = append(MapStatus[prov], gMapVal)
 	MapLock.Unlock()
 	wg.Done()
-	seelog.Info("Finish MappingTask " + tel + " " + prov + "..")
+	logrus.Info("Finish MappingTask " + tel + " " + prov + "..")
 }
 
 func MapPingStorage() {
-	seelog.Info("Start MapPingStorage...")
-	seelog.Debug(MapStatus)
+	logrus.Info("Start MapPingStorage...")
+	logrus.Debug(MapStatus)
 	jdata, err := json.Marshal(MapStatus)
 	if err != nil {
-		seelog.Error("[func:StartPing] Json Error ", err)
+		logrus.Error("[func:StartPing] Json Error ", err)
 	}
 	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values(?, ?)"
 	g.DLock.Lock()
 	_, err = g.Db.Exec(sql, time.Now().Format("2006-01-02 15:04"), string(jdata))
-	seelog.Debug(sql)
+	logrus.Debug(sql)
 	if err != nil {
-		seelog.Error("[func:StartPing] Sql Error ", err)
+		logrus.Error("[func:StartPing] Sql Error ", err)
 	}
 	g.DLock.Unlock()
-	seelog.Debug("[func:MapPingStorage] ", sql)
-	seelog.Info("Finish MapPingStorage...")
+	logrus.Debug("[func:MapPingStorage] ", sql)
+	logrus.Info("Finish MapPingStorage...")
 }

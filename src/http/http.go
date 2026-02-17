@@ -10,7 +10,7 @@ import (
 	"smartping/src/g"
 	"strings"
 
-	"github.com/cihub/seelog"
+	"github.com/sirupsen/logrus"
 )
 
 func ValidIP4(ipAddress string) bool {
@@ -67,7 +67,7 @@ func AuthAgentIp(RemoteAddr string, drt bool) bool {
 func StartHttp() {
 	configApiRoutes()
 	configIndexRoutes()
-	seelog.Info("[func:StartHttp] starting to listen on ", g.Cfg.Port)
+	logrus.Info("[func:StartHttp] starting to listen on ", g.Cfg.Port)
 	s := fmt.Sprintf(":%d", g.Cfg.Port)
 	err := http.ListenAndServe(s, nil)
 	if err != nil {

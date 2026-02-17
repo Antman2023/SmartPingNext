@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cihub/seelog"
+	"github.com/sirupsen/logrus"
 )
 
 func Ping() {
@@ -23,7 +23,7 @@ func Ping() {
 
 // ping main function
 func PingTask(t g.NetworkMember, wg *sync.WaitGroup) {
-	seelog.Info("Start Ping " + t.Addr + "..")
+	logrus.Info("Start Ping " + t.Addr + "..")
 	stat := g.PingSt{}
 	stat.MinDelay = -1
 	lossPK := 0
@@ -41,9 +41,9 @@ func PingTask(t g.NetworkMember, wg *sync.WaitGroup) {
 					stat.MinDelay = delay
 				}
 				stat.RevcPk = stat.RevcPk + 1
-				seelog.Debug("[func:StartPing IcmpPing] ID:", i, " IP:", t.Addr)
+				logrus.Debug("[func:StartPing IcmpPing] ID:", i, " IP:", t.Addr)
 			} else {
-				seelog.Debug("[func:StartPing IcmpPing] ID:", i, " IP:", t.Addr, "| err:", err)
+				logrus.Debug("[func:StartPing IcmpPing] ID:", i, " IP:", t.Addr, "| err:", err)
 				lossPK = lossPK + 1
 			}
 			stat.SendPk = stat.SendPk + 1
@@ -56,7 +56,7 @@ func PingTask(t g.NetworkMember, wg *sync.WaitGroup) {
 		} else {
 			stat.AvgDelay = 0.0
 		}
-		seelog.Debug("[func:IcmpPing] Finish Addr:", t.Addr, " MaxDelay:", stat.MaxDelay, " MinDelay:", stat.MinDelay, " AvgDelay:", stat.AvgDelay, " Revc:", stat.RevcPk, " LossPK:", stat.LossPk)
+		logrus.Debug("[func:IcmpPing] Finish Addr:", t.Addr, " MaxDelay:", stat.MaxDelay, " MinDelay:", stat.MinDelay, " AvgDelay:", stat.AvgDelay, " Revc:", stat.RevcPk, " LossPK:", stat.LossPk)
 	} else {
 		stat.AvgDelay = 0.00
 		stat.MinDelay = 0.00
@@ -64,19 +64,19 @@ func PingTask(t g.NetworkMember, wg *sync.WaitGroup) {
 		stat.SendPk = 0
 		stat.RevcPk = 0
 		stat.LossPk = 100
-		seelog.Debug("[func:IcmpPing] Finish Addr:", t.Addr, " Unable to resolve destination host")
+		logrus.Debug("[func:IcmpPing] Finish Addr:", t.Addr, " Unable to resolve destination host")
 	}
 	PingStorage(stat, t.Addr)
 	wg.Done()
-	seelog.Info("Finish Ping " + t.Addr + "..")
+	logrus.Info("Finish Ping " + t.Addr + "..")
 }
 
 // storage ping data
 func PingStorage(pingres g.PingSt, Addr string) {
 	logtime := time.Now().Format("2006-01-02 15:04")
-	seelog.Info("[func:StartPing] ", "(", logtime, ")Starting PingStorage ", Addr)
+	logrus.Info("[func:StartPing] ", "(", logtime, ")Starting PingStorage ", Addr)
 	sql := "INSERT INTO [pinglog] (logtime, target, maxdelay, mindelay, avgdelay, sendpk, revcpk, losspk) values(?, ?, ?, ?, ?, ?, ?, ?)"
-	seelog.Debug("[func:StartPing] ", sql)
+	logrus.Debug("[func:StartPing] ", sql)
 	g.DLock.Lock()
 	_, err := g.Db.Exec(sql, logtime, Addr,
 		fmt.Sprintf("%.2f", pingres.MaxDelay),
@@ -84,8 +84,8 @@ func PingStorage(pingres g.PingSt, Addr string) {
 		fmt.Sprintf("%.2f", pingres.AvgDelay),
 		pingres.SendPk, pingres.RevcPk, pingres.LossPk)
 	if err != nil {
-		seelog.Error("[func:StartPing] Sql Error ", err)
+		logrus.Error("[func:StartPing] Sql Error ", err)
 	}
 	g.DLock.Unlock()
-	seelog.Info("[func:StartPing] ", "(", logtime, ") Finish PingStorage  ", Addr)
+	logrus.Info("[func:StartPing] ", "(", logtime, ") Finish PingStorage  ", Addr)
 }

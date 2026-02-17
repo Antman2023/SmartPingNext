@@ -3,7 +3,6 @@ module smartping
 go 1.24
 
 require (
-	github.com/cihub/seelog v0.0.0-20170130134532-f561c5e57575
 	github.com/jakecoffman/cron v0.0.0-20190106200828-7e2009c226a5
 	golang.org/x/net v0.37.0
 	modernc.org/sqlite v1.34.5
@@ -15,6 +14,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/sys v0.31.0 // indirect
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
