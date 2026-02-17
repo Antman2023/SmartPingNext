@@ -166,5 +166,8 @@ This project is based on [smartping/smartping](https://github.com/smartping/smar
 - Configuration import/export
 - Docker image support
 - GitHub Actions for multi-platform packaging
-- Improved chart rendering performance
+- Chart component debounce optimization for reduced redraws
+- Global error boundary for improved user experience
+- Enhanced type safety with removal of unsafe type assertions
+- Memory leak fixes ensuring proper component cleanup
 - Better responsive layout behavior
