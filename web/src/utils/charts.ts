@@ -33,6 +33,8 @@ function getThemeConfig(isDark: boolean): ChartTheme {
 
 export function getPingChartOption(data: PingLogData | null, isDark: boolean, showDataZoom = false): EChartsOption {
   const theme = getThemeConfig(isDark)
+  let lastRenderedIndex = -1
+  let lastRenderedDate = ''
 
   return {
     backgroundColor: 'transparent',
@@ -133,31 +135,23 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
       axisLabel: {
         color: theme.textColorSecondary,
         rotate: 0,
+        hideOverlap: true,
         interval: 'auto',
         formatter: (value: string, index: number) => {
           if (!value) return ''
           const time = value.length >= 16 ? value.substring(11, 16) : value
           const date = value.length >= 10 ? value.substring(5, 10) : ''
 
-          const lastcheck = data?.lastcheck || []
-
-          // 第一个点始终显示日期
-          if (index === 0) {
-            return date ? `{date|${date}}\n{time|${time}}` : `{time|${time}}`
+          if (!date) return `{time|${time}}`
+          // 只在“已显示标签”的日期发生变化时显示日期，不新增额外刻度
+          if (index <= lastRenderedIndex) {
+            lastRenderedIndex = -1
+            lastRenderedDate = ''
           }
-
-          // 向前遍历所有之前的数据点，检查是否存在不同日期
-          for (let i = index - 1; i >= 0; i--) {
-            const prevVal = lastcheck[i]
-            if (!prevVal || prevVal.length < 10) continue
-            const prevDate = prevVal.substring(5, 10)
-            // 发现不同日期，说明当前点是新的一天的开始
-            if (prevDate !== date) {
-              return `{date|${date}}\n{time|${time}}`
-            }
-          }
-
-          return `{time|${time}}`
+          const showDate = lastRenderedDate === '' || lastRenderedDate !== date
+          lastRenderedIndex = index
+          lastRenderedDate = date
+          return showDate ? `{date|${date}}\n{time|${time}}` : `{time|${time}}`
         },
         rich: {
           date: {
