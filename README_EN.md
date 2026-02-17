@@ -6,10 +6,10 @@
         <a href="./README.md">中文说明</a>
         <br>
         <br>
-        <a href="https://github.com/Antman2023/smartping-next/releases">
+        <a href="https://github.com/Antman2023/SmartPingNext/releases">
             <img src="https://img.shields.io/github/release/Antman2023/smartping-next.svg" >
         </a>
-        <a href="https://github.com/Antman2023/smartping-next/blob/master/LICENSE">
+        <a href="https://github.com/Antman2023/SmartPingNext/blob/master/LICENSE">
             <img src="https://img.shields.io/hexpm/l/plug.svg" >
         </a>
     </p>
@@ -41,7 +41,7 @@
 
 ### Download Release
 
-Download the package for your platform from [Releases](https://github.com/Antman2023/smartping-next/releases):
+Download the package for your platform from [Releases](https://github.com/Antman2023/SmartPingNext/releases):
 
 | Platform | Arch | File |
 |------|------|------|
@@ -151,7 +151,7 @@ SmartPingNext is designed as a lightweight tool. Even in multi-node mutual-PING 
 
 ## Contributing
 
-Contributions are welcome. Feel free to open a PR for bug fixes, or create an [Issue](https://github.com/Antman2023/smartping-next/issues/) for feature discussions.
+Contributions are welcome. Feel free to open a PR for bug fixes, or create an [Issue](https://github.com/Antman2023/SmartPingNext/issues/) for feature discussions.
 
 ## Acknowledgements
 

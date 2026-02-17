@@ -6,10 +6,10 @@
         <a href="./README_EN.md">English README</a>
         <br>
         <br>
-        <a href="https://github.com/Antman2023/smartping-next/releases">
+        <a href="https://github.com/Antman2023/SmartPingNext/releases">
             <img src="https://img.shields.io/github/release/Antman2023/smartping-next.svg" >
         </a>
-        <a href="https://github.com/Antman2023/smartping-next/blob/master/LICENSE">
+        <a href="https://github.com/Antman2023/SmartPingNext/blob/master/LICENSE">
             <img src="https://img.shields.io/hexpm/l/plug.svg" >
         </a>
     </p>
@@ -41,7 +41,7 @@
 
 ### 下载发布版
 
-从 [Releases](https://github.com/Antman2023/smartping-next/releases) 下载对应平台的版本：
+从 [Releases](https://github.com/Antman2023/SmartPingNext/releases) 下载对应平台的版本：
 
 | 平台 | 架构 | 文件 |
 |------|------|------|
@@ -148,7 +148,7 @@ docker-compose up -d
 
 ## 项目贡献
 
-欢迎参与项目贡献！比如提交PR修复一个bug，或者新建 [Issue](https://github.com/Antman2023/smartping-next/issues/) 讨论新特性或者变更。
+欢迎参与项目贡献！比如提交PR修复一个bug，或者新建 [Issue](https://github.com/Antman2023/SmartPingNext/issues/) 讨论新特性或者变更。
 
 ## 致谢
 
