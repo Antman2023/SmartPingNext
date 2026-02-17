@@ -8,6 +8,7 @@ import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
 import { useThemeStore } from '@/stores/theme'
 import { useSidebarStore } from '@/stores/sidebar'
+import { debounce } from '@/utils/debounce'
 
 interface Node {
   name: string
@@ -112,9 +113,9 @@ const updateChart = () => {
   chart.setOption(getChartOption())
 }
 
-const handleResize = () => {
+const handleResize = debounce(() => {
   chart?.resize()
-}
+}, 200)
 
 watch(() => [props.nodes, props.links], updateChart, { deep: true })
 watch(() => themeStore.theme, updateChart)

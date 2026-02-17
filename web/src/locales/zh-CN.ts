@@ -173,15 +173,5 @@ export default {
     nodeIPExists: '该IP节点已存在',
     pleaseEnterProvinceName: '请输入省份名称',
     perLineIP: '每行一个IP地址'
-  },
-  // 页面标题
-  pageTitle: {
-    dashboard: '正向监控',
-    reverse: '反向监控',
-    topology: '拓扑图',
-    mapping: '延迟地图',
-    tools: '检测工具',
-    alerts: '报警记录',
-    config: '系统配置'
   }
 }

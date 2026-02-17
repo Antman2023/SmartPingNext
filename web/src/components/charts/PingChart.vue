@@ -10,6 +10,7 @@ import type { PingLogData } from '@/types'
 import { useThemeStore } from '@/stores/theme'
 import { useSidebarStore } from '@/stores/sidebar'
 import { getPingChartOption } from '@/utils/charts'
+import { debounce } from '@/utils/debounce'
 
 const props = defineProps<{
   data: PingLogData | null
@@ -80,9 +81,9 @@ const updateChart = () => {
   safeSetTimeout(() => chart?.resize(), 0)
 }
 
-const handleResize = () => {
+const handleResize = debounce(() => {
   chart?.resize()
-}
+}, 200)
 
 watch(() => props.data?.lastcheck, async () => {
   await nextTick()

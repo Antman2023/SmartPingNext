@@ -173,15 +173,5 @@ export default {
     nodeIPExists: 'Node IP already exists',
     pleaseEnterProvinceName: 'Please enter province name',
     perLineIP: 'One IP per line'
-  },
-  // Page titles
-  pageTitle: {
-    dashboard: 'Dashboard',
-    reverse: 'Reverse Monitor',
-    topology: 'Topology',
-    mapping: 'Latency Map',
-    tools: 'Check Tools',
-    alerts: 'Alert Records',
-    config: 'Settings'
   }
 }
