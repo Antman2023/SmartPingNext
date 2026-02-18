@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime"
 	"smartping/src/funcs"
 	"smartping/src/g"
 	"smartping/src/http"
@@ -17,7 +16,6 @@ import (
 var Version = "dev"
 
 func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
 	version := flag.Bool("v", false, "show version")
 	flag.Parse()
 	if *version {

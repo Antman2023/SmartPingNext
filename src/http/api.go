@@ -88,11 +88,9 @@ func configApiRoutes() {
 		var mindelay []string
 		var avgdelay []string
 		var losspk []string
-		timwwnum := map[string]int{}
 		cursor := timeStart
-		for i := range cnt + 1 {
+		for range cnt + 1 {
 			ntime := time.Unix(cursor, 0).Format("2006-01-02 15:04")
-			timwwnum[ntime] = i
 			lastcheck = append(lastcheck, ntime)
 			maxdelay = append(maxdelay, "0")
 			mindelay = append(mindelay, "0")
@@ -229,8 +227,7 @@ func configApiRoutes() {
 			http.Error(w, o, http.StatusUnauthorized)
 			return
 		}
-		m, _ := time.ParseDuration("-1m")
-		dataKey := time.Now().Add(m).Format("2006-01-02 15:04")
+		dataKey := time.Now().Add(-time.Minute).Format("2006-01-02 15:04")
 		r.ParseForm()
 		if len(r.Form["d"]) > 0 {
 			dataKey = r.Form["d"][0]
@@ -552,7 +549,7 @@ func configApiRoutes() {
 		if len(r.Form["t"]) > 0 {
 			to = r.Form["t"][0]
 		}
-		url := strings.Replace(strings.Replace(r.Form["g"][0], "%26", "&", -1), " ", "%20", -1)
+		targetURL := strings.Replace(strings.Replace(r.Form["g"][0], "%26", "&", -1), " ", "%20", -1)
 		defaultto, err := strconv.Atoi(to)
 		if err != nil {
 			o := "Timeout Param Error!"
@@ -562,7 +559,7 @@ func configApiRoutes() {
 		client := &http.Client{
 			Timeout: time.Duration(defaultto) * time.Second,
 		}
-		resp, err := client.Get(url)
+		resp, err := client.Get(targetURL)
 		if err != nil {
 			o := "Request Remote Data Error:" + err.Error()
 			http.Error(w, o, http.StatusServiceUnavailable)

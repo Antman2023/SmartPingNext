@@ -26,7 +26,7 @@ func Mapping() {
 	MapLock.Unlock()
 	logrus.Debug("[func:Mapping]", g.Cfg.Chinamap)
 	for tel, provDetail := range g.Cfg.Chinamap {
-		for prov, _ := range provDetail {
+		for prov := range provDetail {
 			logrus.Debug("[func:Mapping]", g.Cfg.Chinamap[tel][prov])
 			if len(g.Cfg.Chinamap[tel][prov]) > 0 {
 				go MappingTask(tel, prov, g.Cfg.Chinamap[tel][prov], &wg)

@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"regexp"
 	"smartping/src/g"
 	"strings"
@@ -14,10 +13,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+var validIP4Regexp = regexp.MustCompile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
+
 func ValidIP4(ipAddress string) bool {
-	ipAddress = strings.Trim(ipAddress, " ")
-	re, _ := regexp.Compile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
-	return re.MatchString(ipAddress)
+	ipAddress = strings.TrimSpace(ipAddress)
+	return validIP4Regexp.MatchString(ipAddress)
 }
 
 func RenderJson(w http.ResponseWriter, v any) {
@@ -102,5 +102,4 @@ func StartHttp() {
 	if err != nil {
 		log.Fatalln("[StartHttp]", err)
 	}
-	os.Exit(0)
 }
