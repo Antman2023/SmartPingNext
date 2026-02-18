@@ -70,14 +70,16 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 					seq:    seq,
 					msg:    icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq}},
 				}
-				res.dest, err = net.ResolveIPAddr("ip", Addr)
-				if err != nil {
+				dest, resolveErr := net.ResolveIPAddr("ip", Addr)
+				if resolveErr != nil {
 					return
 				}
-				res.netmsg, err = res.msg.Marshal(nil)
-				if nil != err {
+				res.dest = dest
+				netmsg, marshalErr := res.msg.Marshal(nil)
+				if marshalErr != nil {
 					return
 				}
+				res.netmsg = netmsg
 				nowTime := time.Now()
 				next := res.Send(ittl)
 				Lock.Lock()
@@ -92,8 +94,12 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 	}
 	wg.Wait()
 	for i := 1; i <= len(mtr); i++ {
+		vals, ok := mtr[i]
+		if !ok || len(vals) == 0 {
+			continue
+		}
 		imtr := Mtr{}
-		for id, val := range mtr[i] {
+		for id, val := range vals {
 			if val.Addr != nil {
 				imtr.Host = val.Addr.String()
 			} else {
@@ -120,7 +126,7 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 		}
 		if (imtr.Send - imtr.Loss) > 0 {
 			imtr.Avg = imtr.Avg / time.Duration(imtr.Send-imtr.Loss)
-			for _, val := range mtr[i] {
+			for _, val := range vals {
 				if !val.Timeout {
 					v := (float64(val.RTT.Nanoseconds()) / 1e6) - (float64(imtr.Avg.Nanoseconds()) / 1e6)
 					imtr.StDev += v * v

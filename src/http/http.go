@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -35,11 +36,14 @@ func AuthUserIp(RemoteAddr string) bool {
 	if len(g.AuthUserIpMap) == 0 {
 		return true
 	}
-	ips := strings.Split(RemoteAddr, ":")
-	if len(ips) == 2 {
-		if _, ok := g.AuthUserIpMap[ips[0]]; ok {
-			return true
-		}
+
+	ip := parseRemoteIP(RemoteAddr)
+	if ip == "" {
+		return false
+	}
+
+	if _, ok := g.AuthUserIpMap[ip]; ok {
+		return true
 	}
 	return false
 }
@@ -55,13 +59,38 @@ func AuthAgentIp(RemoteAddr string, drt bool) bool {
 	if len(g.AuthAgentIpMap) == 0 {
 		return true
 	}
-	ips := strings.Split(RemoteAddr, ":")
-	if len(ips) == 2 {
-		if _, ok := g.AuthAgentIpMap[ips[0]]; ok {
-			return true
-		}
+
+	ip := parseRemoteIP(RemoteAddr)
+	if ip == "" {
+		return false
+	}
+
+	if _, ok := g.AuthAgentIpMap[ip]; ok {
+		return true
 	}
 	return false
+}
+
+func parseRemoteIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(remoteAddr)
+	}
+
+	host = strings.Trim(host, "[]")
+	if host == "" {
+		return ""
+	}
+
+	parsed := net.ParseIP(host)
+	if parsed == nil {
+		return host
+	}
+
+	if v4 := parsed.To4(); v4 != nil {
+		return v4.String()
+	}
+	return parsed.String()
 }
 
 func StartHttp() {

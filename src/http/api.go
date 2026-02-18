@@ -89,15 +89,16 @@ func configApiRoutes() {
 		var avgdelay []string
 		var losspk []string
 		timwwnum := map[string]int{}
+		cursor := timeStart
 		for i := range cnt + 1 {
-			ntime := time.Unix(timeStart, 0).Format("2006-01-02 15:04")
+			ntime := time.Unix(cursor, 0).Format("2006-01-02 15:04")
 			timwwnum[ntime] = i
 			lastcheck = append(lastcheck, ntime)
 			maxdelay = append(maxdelay, "0")
 			mindelay = append(mindelay, "0")
 			avgdelay = append(avgdelay, "0")
 			losspk = append(losspk, "0")
-			timeStart = timeStart + 60
+			cursor += 60
 		}
 		querySql := "SELECT logtime,maxdelay,mindelay,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"
 		rows, err := g.Db.Query(querySql, tableip, timeStartStr, timeEndStr)
