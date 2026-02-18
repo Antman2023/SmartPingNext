@@ -90,7 +90,7 @@ func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
 	effCnt := 0
 	for _, stat := range statMap {
 		if len(statMap) > 1 && fT < int(math.Ceil(float64(len(statMap)))/4) {
-			if stat.LossPk == 3 {
+			if stat.LossPk == 100 || stat.RevcPk == 0 {
 				fT = fT + 1
 				continue
 			}
@@ -105,6 +105,10 @@ func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
 	}
 	gMapVal := g.MapVal{}
 	gMapVal.Name = tel
+	if effCnt == 0 {
+		effCnt = 1
+		fStatDetail.AvgDelay = 2000
+	}
 	value, _ := strconv.ParseFloat(fmt.Sprintf("%.2f", fStatDetail.AvgDelay/float64(effCnt)), 64)
 	gMapVal.Value = value
 	MapLock.Lock()
