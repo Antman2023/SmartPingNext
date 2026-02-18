@@ -20,11 +20,10 @@ type NetworkMember struct {
 	Addr      string
 	Smartping bool
 	Ping      []string
-	//Tools map[string][]string
-	Topology []map[string]string
+	Topology  []map[string]string
 }
 
-//Ping Struct
+// Ping Struct
 type PingSt struct {
 	SendPk   int
 	RevcPk   int

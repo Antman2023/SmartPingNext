@@ -20,9 +20,8 @@ import (
 )
 
 var (
-	Root string
-	Cfg  Config
-	//CLock	       sync.Mutex
+	Root            string
+	Cfg             Config
 	SelfCfg         NetworkMember
 	AlertStatus     map[string]bool
 	AlertStatusLock sync.RWMutex

@@ -530,7 +530,6 @@ func configApiRoutes() {
 		RenderJson(w, preout)
 	})
 
-	//发送测试邮件
 	//代理访问
 	http.HandleFunc("/api/proxy.json", func(w http.ResponseWriter, r *http.Request) {
 		if !AuthUserIp(r.RemoteAddr) {

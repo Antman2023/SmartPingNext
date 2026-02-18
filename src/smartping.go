@@ -9,7 +9,6 @@ import (
 	"smartping/src/http"
 
 	"github.com/jakecoffman/cron"
-	//"sync"
 )
 
 // Init config
