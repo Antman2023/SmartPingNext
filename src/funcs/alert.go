@@ -57,34 +57,18 @@ func StartAlert() {
 }
 
 func CheckAlertStatus(v map[string]string) bool {
-	type Cnt struct {
-		Cnt int
-	}
 	Thdchecksec, _ := strconv.Atoi(v["Thdchecksec"])
 	timeStartStr := time.Unix((time.Now().Unix() - int64(Thdchecksec)), 0).Format("2006-01-02 15:04")
 	querysql := "SELECT count(1) cnt FROM `pinglog` where logtime > ? and target = ? and (cast(avgdelay as double) > ? or cast(losspk as double) > ?)"
-	rows, err := g.Db.Query(querysql, timeStartStr, v["Addr"], v["Thdavgdelay"], v["Thdloss"])
+	var cnt int
+	err := g.Db.QueryRow(querysql, timeStartStr, v["Addr"], v["Thdavgdelay"], v["Thdloss"]).Scan(&cnt)
 	logrus.Debug("[func:StartAlert] ", querysql)
 	if err != nil {
 		logrus.Error("[func:StartAlert] Query Error ", err)
 		return false
 	}
-	defer rows.Close()
-	for rows.Next() {
-		l := new(Cnt)
-		err := rows.Scan(&l.Cnt)
-		if err != nil {
-			logrus.Error("[func:StartAlert]", err)
-			return false
-		}
-		Thdoccnum, _ := strconv.Atoi(v["Thdoccnum"])
-		if l.Cnt <= Thdoccnum {
-			return true
-		} else {
-			return false
-		}
-	}
-	return false
+	Thdoccnum, _ := strconv.Atoi(v["Thdoccnum"])
+	return cnt <= Thdoccnum
 }
 
 func AlertStorage(t g.AlertLog) {

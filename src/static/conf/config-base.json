@@ -11,6 +11,11 @@
 	},
 	"Base": {
 		"Archive": 10,
+		"MappingConcurrency": 8,
+		"MappingProbeCount": 3,
+		"PingCount": 20,
+		"PingIntervalMs": 3000,
+		"PingQueryMaxMinutes": 1440,
 		"Refresh": 1,
 		"Timeout": 5
 	},

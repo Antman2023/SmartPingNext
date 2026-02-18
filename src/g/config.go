@@ -61,7 +61,7 @@ func GetRoot() string {
 	if err != nil {
 		log.Fatal("Get Root Path Error:", err)
 	}
-	return strings.Replace(dir, "\\", "/", -1)
+	return filepath.ToSlash(dir)
 }
 
 func releaseDefaultFiles() {
@@ -164,6 +164,9 @@ func SaveCloudConfig(url string) (Config, error) {
 		config.Name = string(body)
 		return config, err
 	}
+	if config.Mode == nil {
+		config.Mode = map[string]string{}
+	}
 	Name := Cfg.Name
 	Addr := Cfg.Addr
 	Ver := Cfg.Ver
@@ -183,6 +186,17 @@ func SaveCloudConfig(url string) (Config, error) {
 	SelfCfg = Cfg.Network[Cfg.Addr]
 	saveAuth()
 	return config, nil
+}
+
+func GetBaseInt(key string, defaultValue int) int {
+	if Cfg.Base == nil {
+		return defaultValue
+	}
+	v, ok := Cfg.Base[key]
+	if !ok || v <= 0 {
+		return defaultValue
+	}
+	return v
 }
 
 func SaveConfig() error {

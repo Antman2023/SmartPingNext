@@ -5,7 +5,6 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"math"
-	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -30,8 +29,8 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 	var err error
 	timeouts := 0
 	for ttl := 1; ttl <= maxttl; ttl++ {
-		id := rand.Intn(65535)
-		seq := rand.Intn(65535)
+		id := randomUint16()
+		seq := randomUint16()
 		res := pkg{
 			maxrtt: maxrtt,
 			id:     id,
@@ -62,8 +61,8 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 		go func(ittl int) {
 			defer wg.Done()
 			for j := 1; j < 10; j++ {
-				id := rand.Intn(65535)
-				seq := rand.Intn(65535)
+				id := randomUint16()
+				seq := randomUint16()
 				res := pkg{
 					maxrtt: maxrtt,
 					id:     id,
@@ -72,12 +71,18 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 				}
 				dest, resolveErr := net.ResolveIPAddr("ip", Addr)
 				if resolveErr != nil {
-					return
+					Lock.Lock()
+					mtr[ittl] = append(mtr[ittl], ICMP{Timeout: true, Error: resolveErr})
+					Lock.Unlock()
+					continue
 				}
 				res.dest = dest
 				netmsg, marshalErr := res.msg.Marshal(nil)
 				if marshalErr != nil {
-					return
+					Lock.Lock()
+					mtr[ittl] = append(mtr[ittl], ICMP{Timeout: true, Error: marshalErr})
+					Lock.Unlock()
+					continue
 				}
 				res.netmsg = netmsg
 				nowTime := time.Now()
@@ -85,7 +90,10 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 				Lock.Lock()
 				mtr[ittl] = append(mtr[ittl], next)
 				Lock.Unlock()
-				time.Sleep(time.Second - time.Since(nowTime))
+				sleepFor := time.Second - time.Since(nowTime)
+				if sleepFor > 0 {
+					time.Sleep(sleepFor)
+				}
 			}
 		}(ttl)
 		if next.Final {
@@ -110,6 +118,8 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 			imtr.Send += 1
 			if val.Timeout {
 				imtr.Loss += 1
+			} else if val.Error != nil {
+				imtr.Loss += 1
 			} else {
 				if imtr.Wrst < val.RTT {
 					imtr.Wrst = val.RTT
@@ -127,7 +137,7 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 		if (imtr.Send - imtr.Loss) > 0 {
 			imtr.Avg = imtr.Avg / time.Duration(imtr.Send-imtr.Loss)
 			for _, val := range vals {
-				if !val.Timeout {
+				if !val.Timeout && val.Error == nil {
 					v := (float64(val.RTT.Nanoseconds()) / 1e6) - (float64(imtr.Avg.Nanoseconds()) / 1e6)
 					imtr.StDev += v * v
 				}

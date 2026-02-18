@@ -3,7 +3,6 @@ package nettools
 import (
 	"bytes"
 	"encoding/binary"
-	"math/rand"
 	"net"
 	"time"
 
@@ -117,7 +116,7 @@ func RunPing(IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (flo
 	var err error
 	res.dest = IpAddr
 	res.maxrtt = maxrtt
-	res.id = rand.Intn(65535)
+	res.id = randomUint16()
 	res.seq = seq
 	res.msg = icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: res.id, Seq: res.seq, Data: bytes.Repeat([]byte("Go Smart Ping!"), 4)}}
 	res.netmsg, err = res.msg.Marshal(nil)

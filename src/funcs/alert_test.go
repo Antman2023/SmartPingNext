@@ -78,6 +78,22 @@ func TestCheckAlertStatus(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("true when no matching rows", func(t *testing.T) {
+		withFuncTestDB(t, schema, func(db *sql.DB) {
+			v := map[string]string{
+				"Thdchecksec": "600",
+				"Addr":        "9.9.9.9",
+				"Thdavgdelay": "200",
+				"Thdloss":     "30",
+				"Thdoccnum":   "1",
+			}
+
+			if !CheckAlertStatus(v) {
+				t.Fatalf("CheckAlertStatus should return true when count is zero and threshold is one")
+			}
+		})
+	})
 }
 
 func TestAlertStorage(t *testing.T) {

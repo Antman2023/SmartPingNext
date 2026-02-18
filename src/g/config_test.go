@@ -96,6 +96,26 @@ func TestIsExist(t *testing.T) {
 	}
 }
 
+func TestGetBaseInt(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		Cfg = Config{
+			Base: map[string]int{
+				"PingCount": 15,
+				"Bad":       0,
+			},
+		}
+		if got := GetBaseInt("PingCount", 20); got != 15 {
+			t.Fatalf("GetBaseInt existing key = %d, want 15", got)
+		}
+		if got := GetBaseInt("NotExist", 20); got != 20 {
+			t.Fatalf("GetBaseInt missing key = %d, want 20", got)
+		}
+		if got := GetBaseInt("Bad", 20); got != 20 {
+			t.Fatalf("GetBaseInt non-positive value = %d, want 20", got)
+		}
+	})
+}
+
 func TestSaveAuth(t *testing.T) {
 	withGlobalConfigState(t, func() {
 		Cfg = Config{

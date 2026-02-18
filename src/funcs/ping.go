@@ -11,6 +11,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	defaultPingCount      = 20
+	defaultPingIntervalMs = 3000
+)
+
 func Ping() {
 	var wg sync.WaitGroup
 	for _, target := range g.SelfCfg.Ping {
@@ -27,9 +32,11 @@ func PingTask(t g.NetworkMember, wg *sync.WaitGroup) {
 	stat := g.PingSt{}
 	stat.MinDelay = -1
 	lossPK := 0
+	pingCount := g.GetBaseInt("PingCount", defaultPingCount)
+	pingInterval := time.Duration(g.GetBaseInt("PingIntervalMs", defaultPingIntervalMs)) * time.Millisecond
 	ipaddr, err := net.ResolveIPAddr("ip", t.Addr)
 	if err == nil {
-		for i := 0; i < 20; i++ {
+		for i := 0; i < pingCount; i++ {
 			starttime := time.Now().UnixNano()
 			delay, err := nettools.RunPing(ipaddr, 3*time.Second, 64, i)
 			if err == nil {
@@ -49,7 +56,10 @@ func PingTask(t g.NetworkMember, wg *sync.WaitGroup) {
 			stat.SendPk = stat.SendPk + 1
 			stat.LossPk = int((float64(lossPK) / float64(stat.SendPk)) * 100)
 			duringtime := time.Now().UnixNano() - starttime
-			time.Sleep(time.Duration(3000*1000000-duringtime) * time.Nanosecond)
+			sleepFor := pingInterval - time.Duration(duringtime)*time.Nanosecond
+			if sleepFor > 0 {
+				time.Sleep(sleepFor)
+			}
 		}
 		if stat.RevcPk > 0 {
 			stat.AvgDelay = stat.AvgDelay / float64(stat.RevcPk)

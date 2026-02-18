@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -82,20 +83,30 @@ func configApiRoutes() {
 			timeEnd = time.Now().Unix()
 			timeEndStr = time.Unix(timeEnd, 0).Format("2006-01-02 15:04")
 		}
+		maxRangeMinutes := g.GetBaseInt("PingQueryMaxMinutes", 24*60)
+		maxRangeSeconds := int64(maxRangeMinutes * 60)
+		if (timeEnd - timeStart) > maxRangeSeconds {
+			timeStart = timeEnd - maxRangeSeconds
+			timeStartStr = time.Unix(timeStart, 0).Format("2006-01-02 15:04")
+		}
 		cnt := int((timeEnd - timeStart) / 60)
-		var lastcheck []string
-		var maxdelay []string
-		var mindelay []string
-		var avgdelay []string
-		var losspk []string
+		if cnt < 0 {
+			cnt = 0
+		}
+		size := cnt + 1
+		lastcheck := make([]string, size)
+		maxdelay := make([]string, size)
+		mindelay := make([]string, size)
+		avgdelay := make([]string, size)
+		losspk := make([]string, size)
 		cursor := timeStart
-		for range cnt + 1 {
+		for i := 0; i < size; i++ {
 			ntime := time.Unix(cursor, 0).Format("2006-01-02 15:04")
-			lastcheck = append(lastcheck, ntime)
-			maxdelay = append(maxdelay, "0")
-			mindelay = append(mindelay, "0")
-			avgdelay = append(avgdelay, "0")
-			losspk = append(losspk, "0")
+			lastcheck[i] = ntime
+			maxdelay[i] = "0"
+			mindelay[i] = "0"
+			avgdelay[i] = "0"
+			losspk[i] = "0"
 			cursor += 60
 		}
 		querySql := "SELECT logtime,maxdelay,mindelay,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"
@@ -242,24 +253,16 @@ func configApiRoutes() {
 		chinaMp.Avgdelay["ctcc"] = []g.MapVal{}
 		chinaMp.Avgdelay["cucc"] = []g.MapVal{}
 		chinaMp.Avgdelay["cmcc"] = []g.MapVal{}
-		g.DLock.Lock()
 		querySql := "select mapjson from mappinglog where logtime = ?"
-		rows, err := g.Db.Query(querySql, dataKey)
-		g.DLock.Unlock()
+		mapRow := new(Mapjson)
+		err := g.Db.QueryRow(querySql, dataKey).Scan(&mapRow.Mapjson)
 		logrus.Debug("[func:/api/mapping.json] Query ", querySql)
 		if err != nil {
-			logrus.Error("[func:/api/mapping.json] Query ", err)
-		} else {
-			for rows.Next() {
-				l := new(Mapjson)
-				err := rows.Scan(&l.Mapjson)
-				if err != nil {
-					logrus.Error("[/api/mapping.json] Rows", err)
-					continue
-				}
-				json.Unmarshal([]byte(l.Mapjson), &chinaMp.Avgdelay)
+			if err != sql.ErrNoRows {
+				logrus.Error("[func:/api/mapping.json] Query ", err)
 			}
-			rows.Close()
+		} else if err = json.Unmarshal([]byte(mapRow.Mapjson), &chinaMp.Avgdelay); err != nil {
+			logrus.Error("[/api/mapping.json] Json", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		RenderJson(w, chinaMp)
@@ -303,24 +306,33 @@ func configApiRoutes() {
 			return
 		}
 		preout.Ip = ipaddr.String()
-		var channel chan float64 = make(chan float64, 5)
+		type pingResult struct {
+			seq   int
+			delay float64
+		}
+		const toolsPingCount = 5
+		channel := make(chan pingResult, toolsPingCount)
 		var wg sync.WaitGroup
-		for i := range 5 {
+		for i := 0; i < toolsPingCount; i++ {
 			wg.Add(1)
 			go func(seq int) {
 				delay, err := nettools.RunPing(ipaddr, 3*time.Second, 64, seq)
 				if err != nil {
-					channel <- -1.00
+					channel <- pingResult{seq: seq, delay: -1.00}
 				} else {
-					channel <- delay
+					channel <- pingResult{seq: seq, delay: delay}
 				}
 				wg.Done()
 			}(i)
-			time.Sleep(time.Duration(100 * time.Millisecond))
+			time.Sleep(100 * time.Millisecond)
 		}
 		wg.Wait()
-		for range 5 {
-			delay := <-channel
+		close(channel)
+		delays := make([]float64, toolsPingCount)
+		for res := range channel {
+			delays[res.seq] = res.delay
+		}
+		for _, delay := range delays {
 			if delay != -1.00 {
 				preout.Ping.AvgDelay = preout.Ping.AvgDelay + delay
 				if preout.Ping.MaxDelay < delay {
