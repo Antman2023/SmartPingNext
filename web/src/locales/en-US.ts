@@ -172,6 +172,8 @@ export default {
     pleaseEnterValidIPv4: 'Please enter a valid IPv4 address',
     nodeIPExists: 'Node IP already exists',
     pleaseEnterProvinceName: 'Please enter province name',
-    perLineIP: 'One IP per line'
+    perLineIP: 'One IP per line',
+    editNode: 'Edit Node',
+    nodeUpdated: 'Node updated, please save to apply'
   }
 }

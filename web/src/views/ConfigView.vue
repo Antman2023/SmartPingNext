@@ -114,9 +114,10 @@
                   <el-checkbox v-model="row._original.Smartping" :disabled="row.isSelf" />
                 </template>
               </el-table-column>
-              <el-table-column :label="$t('common.operation')" min-width="180">
+              <el-table-column :label="$t('common.operation')" min-width="240">
                 <template #default="{ row }">
                   <el-button-group>
+                    <el-button size="small" @click="showEditNode(row)">{{ $t('common.edit') }}</el-button>
                     <el-button size="small" :disabled="!row.isSelf && !row._original.Smartping" @click="editPingConfig(row)">{{ $t('config.pingConfig') }}</el-button>
                     <el-button size="small" :disabled="!row.isSelf && !row._original.Smartping" @click="editTopoConfig(row)">{{ $t('config.topoConfig') }}</el-button>
                   </el-button-group>
@@ -172,6 +173,22 @@
       <template #footer>
         <el-button @click="addNodeVisible = false">{{ $t('common.cancel') }}</el-button>
         <el-button type="primary" @click="addNode">{{ $t('config.tempSave') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑节点弹窗 -->
+    <el-dialog v-model="editNodeVisible" :title="$t('config.editNode')" width="400px">
+      <el-form label-width="80px">
+        <el-form-item :label="$t('config.nodeName')">
+          <el-input v-model="editNodeName" :placeholder="$t('config.pleaseEnterNodeName')" />
+        </el-form-item>
+        <el-form-item :label="$t('config.nodeIP')">
+          <el-input v-model="editNodeAddr" :placeholder="$t('config.pleaseEnterIPv4')" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editNodeVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="saveEditNode">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
@@ -321,6 +338,12 @@ const networkList = computed(() => {
 const addNodeVisible = ref(false)
 const newNodeName = ref('')
 const newNodeAddr = ref('')
+
+// 编辑节点相关
+const editNodeVisible = ref(false)
+const editNodeName = ref('')
+const editNodeAddr = ref('')
+const editNodeOriginalAddr = ref('')  // 编辑前的原始 IP，用于 key 映射
 
 // Ping 配置相关
 const pingConfigVisible = ref(false)
@@ -504,6 +527,90 @@ const addNode = () => {
 
 const deleteNode = (row: NetworkListItem) => {
   delete formConfig.Network[row.Addr]
+}
+
+const showEditNode = (row: NetworkListItem) => {
+  editNodeOriginalAddr.value = row.Addr
+  editNodeName.value = row.Name
+  editNodeAddr.value = row.Addr
+  editNodeVisible.value = true
+}
+
+const saveEditNode = () => {
+  if (!editNodeName.value || !editNodeAddr.value) {
+    ElMessage.warning(t('config.pleaseEnterNodeAndIP'))
+    return
+  }
+
+  // 验证 IP 格式
+  const ipRegex = /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/
+  if (!ipRegex.test(editNodeAddr.value.trim())) {
+    ElMessage.warning(t('config.pleaseEnterValidIPv4'))
+    return
+  }
+
+  const oldAddr = editNodeOriginalAddr.value
+  const newAddr = editNodeAddr.value.trim()
+  const newName = editNodeName.value.trim()
+
+  // 如果 IP 变了，检查新 IP 是否已被占用
+  if (oldAddr !== newAddr && formConfig.Network[newAddr]) {
+    ElMessage.warning(t('config.nodeIPExists'))
+    return
+  }
+
+  const nodeData = formConfig.Network[oldAddr]
+  if (!nodeData) return
+
+  // 更新节点数据
+  nodeData.Name = newName
+  nodeData.Addr = newAddr
+
+  if (oldAddr !== newAddr) {
+    // IP 发生变化：重新映射 Network key
+    formConfig.Network[newAddr] = nodeData
+    delete formConfig.Network[oldAddr]
+
+    // 更新其他节点中引用旧 IP 的 Ping 和 Topology 配置
+    for (const [, member] of Object.entries(formConfig.Network)) {
+      // 更新 Ping 列表中的引用
+      const pingIdx = member.Ping.indexOf(oldAddr)
+      if (pingIdx !== -1) {
+        member.Ping[pingIdx] = newAddr
+      }
+
+      // 更新 Topology 列表中的引用
+      for (const topo of member.Topology) {
+        if (topo.Addr === oldAddr) {
+          topo.Addr = newAddr
+          topo.Name = newName
+        }
+      }
+    }
+
+    // 如果编辑的是自身节点，同步更新 formConfig.Addr 和 Name
+    if (oldAddr === formConfig.Addr) {
+      formConfig.Addr = newAddr
+      formConfig.Name = newName
+    }
+  } else {
+    // IP 没变，只改了名称 — 同步 Topology 中的名称引用
+    for (const [, member] of Object.entries(formConfig.Network)) {
+      for (const topo of member.Topology) {
+        if (topo.Addr === oldAddr) {
+          topo.Name = newName
+        }
+      }
+    }
+
+    // 如果编辑的是自身节点，同步更新 formConfig.Name
+    if (oldAddr === formConfig.Addr) {
+      formConfig.Name = newName
+    }
+  }
+
+  editNodeVisible.value = false
+  ElMessage.success(t('config.nodeUpdated'))
 }
 
 const editPingConfig = (row: NetworkListItem) => {

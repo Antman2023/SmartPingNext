@@ -172,6 +172,8 @@ export default {
     pleaseEnterValidIPv4: '请输入有效的IPv4地址',
     nodeIPExists: '该IP节点已存在',
     pleaseEnterProvinceName: '请输入省份名称',
-    perLineIP: '每行一个IP地址'
+    perLineIP: '每行一个IP地址',
+    editNode: '编辑节点',
+    nodeUpdated: '节点已更新，请点击保存按钮保存配置'
   }
 }
