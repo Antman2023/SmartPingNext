@@ -25,6 +25,7 @@
 - Mutual PING topology between nodes, customizable latency/loss alert thresholds (with sound), plus MTR checks on alert
 - Nationwide latency map (Telecom / Unicom / Mobile lines per province)
 - Built-in diagnostic tools using SmartPingNext nodes
+- Node editing (modify name and IP address with automatic reference syncing)
 - Configuration import/export
 - Light/Dark theme switching
 - Unified settings panel for theme and language
