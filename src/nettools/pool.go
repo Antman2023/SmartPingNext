@@ -2,10 +2,12 @@ package nettools
 
 import (
 	"encoding/binary"
+	"errors"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
@@ -87,9 +89,16 @@ func (p *icmpPool) readLoop() {
 	for {
 		n, addr, err := p.conn.ReadFrom(buf)
 		if err != nil {
-			// socket 关闭则退出
-			return
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			// 瞬态错误（Windows WSAECONNRESET 等），继续读取
+			logrus.Debug("[icmpPool:readLoop] ReadFrom error: ", err)
+			continue
 		}
+
+		// Go 的 IPConn.ReadFrom 已通过 stripIPv4Header 剥离 IP 头，
+		// 此处 buf[:n] 即为纯 ICMP 载荷。
 		msg, err := icmp.ParseMessage(1, buf[:n])
 		if err != nil {
 			continue

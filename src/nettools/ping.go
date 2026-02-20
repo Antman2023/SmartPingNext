@@ -51,7 +51,7 @@ func RunPing(IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (flo
 		return 0, errors.New("request timeout")
 	}
 	if result.Down {
-		return 0, result.Error
+		return 0, errors.New("destination unreachable")
 	}
 	return float64(result.RTT.Nanoseconds()) / 1e6, result.Error
 }
