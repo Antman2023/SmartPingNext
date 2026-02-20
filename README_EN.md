@@ -172,3 +172,8 @@ This project is based on [smartping/smartping](https://github.com/smartping/smar
 - Enhanced type safety with removal of unsafe type assertions
 - Memory leak fixes ensuring proper component cleanup
 - Better responsive layout behavior
+- Global ICMP connection pool to eliminate false packet loss under concurrent pings
+- Fix deleted nodes still appearing on chart pages
+- Fix ICMP DestinationUnreachable type assertion error
+- Fix 24-hour upper limit on ping data queries
+- Fix minimum delay falsely reported as 0 due to timing race
