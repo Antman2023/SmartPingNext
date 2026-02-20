@@ -144,13 +144,12 @@ func (p *icmpPool) sendICMP(id, seq, ttl int, msg []byte, dest net.Addr, timeout
 		p.sendMu.Unlock()
 		return ICMP{Error: err}
 	}
+	sendOn := time.Now()
 	_, err = p.conn.WriteTo(msg, dest)
 	p.sendMu.Unlock()
 	if err != nil {
 		return ICMP{Error: err}
 	}
-
-	sendOn := time.Now()
 
 	select {
 	case resp := <-ch:

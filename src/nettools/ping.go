@@ -2,17 +2,11 @@ package nettools
 
 import (
 	"bytes"
-	"errors"
 	"net"
 	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
-)
-
-var (
-	errTimeout     = errors.New("ping timeout")
-	errUnreachable = errors.New("destination unreachable")
 )
 
 type pkg struct {
@@ -48,14 +42,8 @@ func RunPing(IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (flo
 		return 0, err
 	}
 	result := pool.sendICMP(id, seq, maxttl, netmsg, IpAddr, maxrtt)
-	if result.Error != nil {
+	if result.Down {
 		return 0, result.Error
 	}
-	if result.Timeout {
-		return 0, errTimeout
-	}
-	if result.Down {
-		return 0, errUnreachable
-	}
-	return float64(result.RTT.Nanoseconds()) / 1e6, nil
+	return float64(result.RTT.Nanoseconds()) / 1e6, result.Error
 }
