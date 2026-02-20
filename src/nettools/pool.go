@@ -12,6 +12,8 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
+const defaultICMPReadBufferBytes = 4 * 1024 * 1024
+
 // icmpResponse 是 readLoop 分发给等待者的响应
 type icmpResponse struct {
 	addr  net.Addr
@@ -22,9 +24,9 @@ type icmpResponse struct {
 
 // icmpPool 全局唯一 ICMP 连接池
 type icmpPool struct {
-	once   sync.Once
-	conn   net.PacketConn
-	ipconn *ipv4.PacketConn
+	once    sync.Once
+	conn    net.PacketConn
+	ipconn  *ipv4.PacketConn
 	initErr error
 
 	mu      sync.RWMutex
@@ -37,7 +39,7 @@ var pool icmpPool
 
 // waiterKey 生成等待者唯一标识
 func waiterKey(id, seq int) uint32 {
-	return uint32((id & 0xFFFF) << 16 | (seq & 0xFFFF))
+	return uint32((id&0xFFFF)<<16 | (seq & 0xFFFF))
 }
 
 // init 惰性初始化全局 socket
@@ -47,6 +49,11 @@ func (p *icmpPool) init() error {
 		p.conn, p.initErr = net.ListenPacket("ip4:icmp", "0.0.0.0")
 		if p.initErr != nil {
 			return
+		}
+		if connWithReadBuffer, ok := p.conn.(interface{ SetReadBuffer(bytes int) error }); ok {
+			if err := connWithReadBuffer.SetReadBuffer(defaultICMPReadBufferBytes); err != nil {
+				logrus.Warnf("[icmpPool:init] SetReadBuffer(%d) failed: %v", defaultICMPReadBufferBytes, err)
+			}
 		}
 		p.ipconn = ipv4.NewPacketConn(p.conn)
 		go p.readLoop()
