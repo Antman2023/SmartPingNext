@@ -1,7 +1,7 @@
 <template>
   <div class="mapping-view">
     <div class="mapping-header">
-      <h2>{{ config?.Name || 'SmartPingNext' }} - {{ $t('mapping.title') }}</h2>
+      <h2>{{ displayName(config?.Name || 'SmartPingNext') }} - {{ $t('mapping.title') }}</h2>
       <div class="mapping-actions">
         <el-date-picker
           v-model="selectedDate"
@@ -31,7 +31,7 @@
               @click="switchAgent(agent)"
             >
               <el-icon v-if="agent.loading" class="is-loading"><Loading /></el-icon>
-              <span>{{ agent.name }}</span>
+              <span>{{ displayName(agent.name) }}</span>
             </div>
           </div>
         </el-card>
@@ -47,6 +47,7 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { fetchConfig } from '@/api/config'
+import { displayName } from '@/utils/format'
 import { getMapping, getProxyMapping } from '@/api/mapping'
 import type { Config, ChinaMapData } from '@/types'
 import type { EChartsOption } from 'echarts'

@@ -57,7 +57,7 @@
           <div class="node-list">
             <div v-for="node in nodes" :key="node.name" class="node-item">
               <el-icon v-if="node.loading" class="is-loading"><Loading /></el-icon>
-              <span>{{ node.name }}</span>
+              <span>{{ displayName(node.name) }}</span>
             </div>
           </div>
         </el-card>
@@ -104,6 +104,7 @@
 import { ref, onMounted } from 'vue'
 import { ArrowLeft, Loading } from '@element-plus/icons-vue'
 import { fetchConfig } from '@/api/config'
+import { displayName } from '@/utils/format'
 import { getAlerts } from '@/api/alert'
 import type { Config, AlertLog, MtrResult } from '@/types'
 

@@ -1,7 +1,7 @@
 <template>
   <div class="reverse-view">
     <div class="reverse-header">
-      <h2>{{ config?.Name || 'SmartPingNext' }} - {{ $t('reverse.title') }}</h2>
+      <h2>{{ displayName(config?.Name || 'SmartPingNext') }} - {{ $t('reverse.title') }}</h2>
     </div>
 
     <div class="reverse-content">
@@ -13,7 +13,7 @@
           @click="showDetail(target)"
         >
           <div class="chart-card__header">
-            <span class="chart-card__title">{{ target.fromName }} -> {{ config?.Name }}</span>
+            <span class="chart-card__title">{{ displayName(target.fromName) }} -> {{ displayName(config?.Name || '') }}</span>
             <span v-if="target.loading" class="chart-card__loading-text">{{ $t('common.loading') }}</span>
           </div>
           <div class="chart-card__body">
@@ -48,7 +48,7 @@
               @click="switchAgent(agent)"
             >
               <el-icon v-if="agent.loading" class="is-loading"><Loading /></el-icon>
-              <span>{{ agent.name }}</span>
+              <span>{{ displayName(agent.name) }}</span>
             </div>
           </div>
         </el-card>
@@ -93,7 +93,7 @@ import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
 import { fetchConfig, fetchProxyConfig } from '@/api/config'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, displayName } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
 
 interface ReverseTarget {
@@ -184,7 +184,7 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
 }
 
 const showDetail = async (target: ReverseTarget) => {
-  detailTitle.value = `${target.fromName} -> ${config.value?.Name}`
+  detailTitle.value = `${displayName(target.fromName)} -> ${displayName(config.value?.Name || '')}`
   currentTarget.value = target
 
   const end = new Date()

@@ -1,7 +1,7 @@
 <template>
   <div class="topology-view">
     <div class="topology-header">
-      <h2>{{ config?.Name || 'SmartPingNext' }} - {{ $t('topology.title') }}</h2>
+      <h2>{{ displayName(config?.Name || 'SmartPingNext') }} - {{ $t('topology.title') }}</h2>
     </div>
 
     <div class="topology-content">
@@ -35,7 +35,7 @@
             >
               <el-icon v-if="loadingNodes.has(node.name)" class="is-loading"><Loading /></el-icon>
               <el-icon v-else-if="node.color === 'red'" class="text-danger"><Warning /></el-icon>
-              <span>{{ node.name }}</span>
+              <span>{{ displayName(node.name) }}</span>
             </div>
           </div>
         </el-card>
@@ -50,6 +50,7 @@ import { Bell, Loading, Warning } from '@element-plus/icons-vue'
 import TopologyGraph from '@/components/charts/TopologyGraph.vue'
 import { getTopology } from '@/api/topology'
 import { fetchConfig } from '@/api/config'
+import { displayName } from '@/utils/format'
 import type { Config } from '@/types'
 
 const config = ref<Config | null>(null)
@@ -77,7 +78,7 @@ const topologyNodes = computed<TopoNode[]>(() => {
   Object.values(config.value.Network).forEach(network => {
     const hasTopology = network.Topology && network.Topology.length > 0
     nodes.push({
-      name: network.Name,
+      name: displayName(network.Name),
       color: hasTopology ? 'gray' : 'green'
     })
   })
@@ -95,8 +96,8 @@ const topologyLinks = computed<TopoLink[]>(() => {
 
       const status = topologyStatus.value[addr]?.[topo.Addr]
       links.push({
-        source: network.Name,
-        target: targetNetwork.Name,
+        source: displayName(network.Name),
+        target: displayName(targetNetwork.Name),
         color: status === 'true' ? 'green' : status === 'false' ? 'red' : 'gray',
         curveness: status === 'true' ? 0 : 0.2
       })

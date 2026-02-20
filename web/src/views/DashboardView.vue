@@ -1,7 +1,7 @@
 <template>
   <div class="dashboard-view">
     <div class="dashboard-header">
-      <h2>{{ config?.Name || 'SmartPingNext' }} - {{ $t('dashboard.title') }}</h2>
+      <h2>{{ displayName(config?.Name || 'SmartPingNext') }} - {{ $t('dashboard.title') }}</h2>
     </div>
 
     <div class="dashboard-content">
@@ -13,7 +13,7 @@
           @click="showDetail(target)"
         >
           <div class="chart-card__header">
-            <span class="chart-card__title">{{ config?.Name }} -> {{ target.name }}</span>
+            <span class="chart-card__title">{{ displayName(config?.Name || '') }} -> {{ displayName(target.name) }}</span>
             <span v-if="target.loading" class="chart-card__loading-text">{{ $t('common.loading') }}</span>
           </div>
           <div class="chart-card__body">
@@ -48,7 +48,7 @@
               @click="switchAgent(agent)"
             >
               <el-icon v-if="agent.loading" class="is-loading"><Loading /></el-icon>
-              <span>{{ agent.name }}</span>
+              <span>{{ displayName(agent.name) }}</span>
             </div>
           </div>
         </el-card>
@@ -101,7 +101,7 @@ import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
 import { fetchConfig, fetchProxyConfig } from '@/api/config'
 import { getPingData } from '@/api/ping'
-import { formatDateTime } from '@/utils/format'
+import { formatDateTime, displayName } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
 
 interface PingTarget {
@@ -206,7 +206,7 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
 const DEFAULT_TIME_RANGE_HOURS = Number(import.meta.env.VITE_DEFAULT_TIME_RANGE) || 6
 
 const showDetail = async (target: PingTarget) => {
-  detailTitle.value = `${config.value?.Name} -> ${target.name}`
+  detailTitle.value = `${displayName(config.value?.Name || '')} -> ${displayName(target.name)}`
   currentTargetIp.value = target.targetIp
 
   setTimeRange(DEFAULT_TIME_RANGE_HOURS)

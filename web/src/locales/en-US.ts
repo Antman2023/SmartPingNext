@@ -4,6 +4,10 @@ export default {
     lightMode: 'Light Mode',
     darkMode: 'Dark Mode'
   },
+  // Default node name translations
+  nodeName: {
+    '本机': 'Local'
+  } as Record<string, string>,
   // Common
   common: {
     save: 'Save',

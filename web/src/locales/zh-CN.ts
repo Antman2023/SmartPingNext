@@ -4,6 +4,8 @@ export default {
     lightMode: '浅色模式',
     darkMode: '深色模式'
   },
+  // 默认节点名翻译（中文模式保持原样）
+  nodeName: {} as Record<string, string>,
   // 通用
   common: {
     save: '保存',
