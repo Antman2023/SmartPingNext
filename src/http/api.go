@@ -83,12 +83,6 @@ func configApiRoutes() {
 			timeEnd = time.Now().Unix()
 			timeEndStr = time.Unix(timeEnd, 0).Format("2006-01-02 15:04")
 		}
-		maxRangeMinutes := g.GetBaseInt("PingQueryMaxMinutes", 24*60)
-		maxRangeSeconds := int64(maxRangeMinutes * 60)
-		if (timeEnd - timeStart) > maxRangeSeconds {
-			timeStart = timeEnd - maxRangeSeconds
-			timeStartStr = time.Unix(timeStart, 0).Format("2006-01-02 15:04")
-		}
 		cnt := int((timeEnd - timeStart) / 60)
 		if cnt < 0 {
 			cnt = 0
