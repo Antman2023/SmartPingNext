@@ -526,7 +526,17 @@ const addNode = () => {
 }
 
 const deleteNode = (row: NetworkListItem) => {
-  delete formConfig.Network[row.Addr]
+  const addr = row.Addr
+  delete formConfig.Network[addr]
+
+  // 清理其他节点的 Ping 和 Topology 中对该节点的引用
+  for (const [, member] of Object.entries(formConfig.Network)) {
+    const pingIdx = member.Ping.indexOf(addr)
+    if (pingIdx !== -1) {
+      member.Ping.splice(pingIdx, 1)
+    }
+    member.Topology = member.Topology.filter(t => t.Addr !== addr)
+  }
 }
 
 const showEditNode = (row: NetworkListItem) => {
