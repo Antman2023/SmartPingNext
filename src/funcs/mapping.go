@@ -9,6 +9,7 @@ import (
 	"smartping/src/nettools"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -24,7 +25,15 @@ const (
 	defaultMappingConcurrency = 8
 )
 
+var mappingRunning int32
+
 func Mapping() {
+	if !atomic.CompareAndSwapInt32(&mappingRunning, 0, 1) {
+		logrus.Warn("[func:Mapping] Previous round still running, skip")
+		return
+	}
+	defer atomic.StoreInt32(&mappingRunning, 0)
+
 	var wg sync.WaitGroup
 	workerLimit := g.GetBaseInt("MappingConcurrency", defaultMappingConcurrency)
 	sem := make(chan struct{}, workerLimit)

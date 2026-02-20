@@ -2,12 +2,16 @@ package nettools
 
 import (
 	"bytes"
+	"errors"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
+
+var seqCounter uint32
 
 type pkg struct {
 	msg    icmp.Message
@@ -36,12 +40,16 @@ func (t *pkg) Send(ttl int) ICMP {
 
 func RunPing(IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (float64, error) {
 	id := randomUint16()
-	msg := icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq, Data: bytes.Repeat([]byte("Go Smart Ping!"), 4)}}
+	uniqueSeq := int(atomic.AddUint32(&seqCounter, 1) & 0xFFFF)
+	msg := icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: uniqueSeq, Data: bytes.Repeat([]byte("Go Smart Ping!"), 4)}}
 	netmsg, err := msg.Marshal(nil)
 	if err != nil {
 		return 0, err
 	}
-	result := pool.sendICMP(id, seq, maxttl, netmsg, IpAddr, maxrtt)
+	result := pool.sendICMP(id, uniqueSeq, maxttl, netmsg, IpAddr, maxrtt)
+	if result.Timeout {
+		return 0, errors.New("request timeout")
+	}
 	if result.Down {
 		return 0, result.Error
 	}

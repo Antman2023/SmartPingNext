@@ -6,6 +6,7 @@ import (
 	"smartping/src/g"
 	"smartping/src/nettools"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -16,7 +17,15 @@ const (
 	defaultPingIntervalMs = 3000
 )
 
+var pingRunning int32
+
 func Ping() {
+	if !atomic.CompareAndSwapInt32(&pingRunning, 0, 1) {
+		logrus.Warn("[func:Ping] Previous round still running, skip")
+		return
+	}
+	defer atomic.StoreInt32(&pingRunning, 0)
+
 	var wg sync.WaitGroup
 	for _, target := range g.SelfCfg.Ping {
 		wg.Add(1)
