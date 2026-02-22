@@ -40,7 +40,8 @@ export default {
     configSaveFailed: '保存配置失败',
     configLoadFailedNetwork: '加载配置失败，请检查网络连接',
     chartLoadFailed: '加载图表数据失败',
-    dataLoadFailed: '加载数据失败'
+    dataLoadFailed: '加载数据失败',
+    autoRefresh: '自动刷新'
   },
   // 导航菜单
   nav: {

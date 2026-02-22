@@ -42,7 +42,8 @@ export default {
     configSaveFailed: 'Failed to save config',
     configLoadFailedNetwork: 'Failed to load config, please check network connection',
     chartLoadFailed: 'Failed to load chart data',
-    dataLoadFailed: 'Failed to load data'
+    dataLoadFailed: 'Failed to load data',
+    autoRefresh: 'Auto Refresh'
   },
   // Navigation menu
   nav: {

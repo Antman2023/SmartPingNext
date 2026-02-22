@@ -2,6 +2,13 @@
   <div class="reverse-view">
     <div class="reverse-header">
       <h2>{{ displayName(config?.Name || 'SmartPingNext') }} - {{ $t('reverse.title') }}</h2>
+      <div class="header-actions">
+        <span class="auto-refresh-label">{{ $t('common.autoRefresh') }}</span>
+        <el-switch
+          v-model="autoRefresh"
+          size="small"
+        />
+      </div>
     </div>
 
     <div class="reverse-content">
@@ -80,6 +87,8 @@
           />
           <el-button type="primary" @click="loadDetailData">{{ $t('common.query') }}</el-button>
           <el-button @click="saveChartImage">{{ $t('common.saveImage') }}</el-button>
+          <span class="auto-refresh-label">{{ $t('common.autoRefresh') }}</span>
+          <el-switch v-model="detailAutoRefresh" size="small" />
         </div>
         <PingChart v-if="detailData" ref="pingChartRef" :data="detailData" :height="400" />
       </div>
@@ -88,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
@@ -116,6 +125,12 @@ const startTime = ref('')
 const endTime = ref('')
 const currentTarget = ref<ReverseTarget | null>(null)
 const pingChartRef = ref<{ saveAsImage: () => void } | null>(null)
+
+const autoRefresh = ref(false)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+const detailAutoRefresh = ref(false)
+let detailRefreshTimer: ReturnType<typeof setInterval> | null = null
+const REFRESH_INTERVAL = 60 * 1000 // 1分钟
 
 const loadConfig = async (proxyUrl?: string) => {
   try {
@@ -222,6 +237,47 @@ const saveChartImage = () => {
 onMounted(() => {
   loadConfig()
 })
+
+watch(autoRefresh, (enabled) => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+  if (enabled) {
+    refreshTimer = setInterval(() => {
+      loadAllCharts()
+    }, REFRESH_INTERVAL)
+  }
+})
+
+watch(detailAutoRefresh, (enabled) => {
+  if (detailRefreshTimer) {
+    clearInterval(detailRefreshTimer)
+    detailRefreshTimer = null
+  }
+  if (enabled) {
+    detailRefreshTimer = setInterval(() => {
+      loadDetailData()
+    }, REFRESH_INTERVAL)
+  }
+})
+
+watch(detailVisible, (visible) => {
+  if (!visible) {
+    detailAutoRefresh.value = false
+  }
+})
+
+onUnmounted(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+  if (detailRefreshTimer) {
+    clearInterval(detailRefreshTimer)
+    detailRefreshTimer = null
+  }
+})
 </script>
 
 <style scoped lang="scss">
@@ -231,12 +287,26 @@ onMounted(() => {
 
 .reverse-header {
   margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 
   h2 {
     margin: 0;
     font-size: 18px;
     color: var(--color-text-primary);
   }
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auto-refresh-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
 }
 
 .reverse-content {
