@@ -6,7 +6,7 @@ export default {
   },
   // Default node name translations
   nodeName: {
-    '本机': 'Local'
+    本机: 'Local'
   } as Record<string, string>,
   // Common
   common: {
@@ -43,7 +43,18 @@ export default {
     configLoadFailedNetwork: 'Failed to load config, please check network connection',
     chartLoadFailed: 'Failed to load chart data',
     dataLoadFailed: 'Failed to load data',
-    autoRefresh: 'Auto Refresh'
+    autoRefresh: 'Auto Refresh',
+    targets: 'Targets',
+    probes: 'Probe Nodes',
+    records: 'Records',
+    links: 'Links',
+    provinces: 'Provinces',
+    sources: 'Sources',
+    loaded: 'Loaded',
+    selectedDate: 'Selected Time',
+    issues: 'Issues',
+    active: 'Active',
+    alert: 'Alert'
   },
   // Navigation menu
   nav: {
@@ -56,11 +67,13 @@ export default {
     config: 'Settings',
     language: 'Language',
     zhCN: '简体中文',
-    enUS: 'English'
+    enUS: 'English',
+    consoleLabel: 'Network Console'
   },
   // Dashboard page
   dashboard: {
     title: 'Dashboard',
+    subtitle: 'Inspect latency trends and refresh status from the current node to its targets.',
     timeRanges: {
       hour1: '1 Hour',
       hour3: '3 Hours',
@@ -75,17 +88,20 @@ export default {
   },
   // Reverse page
   reverse: {
-    title: 'Reverse Monitor'
+    title: 'Reverse Monitor',
+    subtitle: 'Inspect return-path quality from remote nodes back to the current node.'
   },
   // Topology page
   topology: {
     title: 'PING Topology',
+    subtitle: 'Aggregate topology status to surface degraded links and nodes that need attention.',
     viewAlerts: 'View Alerts',
     topologyList: 'Topology List'
   },
   // Mapping page
   mapping: {
     title: 'Latency Map',
+    subtitle: 'Observe nationwide average latency by carrier and switch the source node on demand.',
     selectTime: 'Select Time',
     telecom: 'Telecom',
     unicom: 'Unicom',
@@ -94,6 +110,7 @@ export default {
   // Tools page
   tools: {
     title: 'Check Tools',
+    subtitle: 'Run ad-hoc diagnostics from multiple probe nodes in parallel.',
     check: 'Check',
     enterTarget: 'Enter target address',
     resolvedIP: 'Resolved IP',
@@ -106,6 +123,7 @@ export default {
   // Alerts page
   alerts: {
     title: 'Alert Records',
+    subtitle: 'Review alert history by date and open MTR detail whenever a route needs inspection.',
     alertArchive: 'Alert Archive',
     alertHistory: 'Alert History',
     alertDate: 'Alert Date',
@@ -126,6 +144,7 @@ export default {
   // Config page
   config: {
     title: 'System Settings',
+    subtitle: 'Manage nodes, topology policy, and map measurement sources from one surface.',
     saveConfig: 'Save Config',
     importExport: 'Import/Export',
     exportConfig: 'Export',

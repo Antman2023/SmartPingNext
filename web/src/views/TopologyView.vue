@@ -1,66 +1,126 @@
 <template>
-  <div class="topology-view">
-    <div class="topology-header">
-      <h2>{{ displayName(config?.Name || 'SmartPingNext') }} - {{ $t('topology.title') }}</h2>
+  <div class="page-shell topology-view">
+    <div class="page-header">
+      <div class="page-heading">
+        <span class="page-eyebrow">{{ $t('topology.title') }}</span>
+        <h1 class="page-title">{{ displayName(config?.Name || 'SmartPingNext') }}</h1>
+        <p class="page-subtitle">{{ $t('topology.subtitle') }}</p>
+      </div>
+
+      <div class="page-actions">
+        <div class="page-kpis">
+          <div class="page-kpi">
+            <span class="page-kpi__label">{{ $t('common.node') }}</span>
+            <strong class="page-kpi__value">{{ topologyNodes.length }}</strong>
+          </div>
+          <div class="page-kpi">
+            <span class="page-kpi__label">{{ $t('common.links') }}</span>
+            <strong class="page-kpi__value">{{ topologyLinks.length }}</strong>
+          </div>
+          <div class="page-kpi">
+            <span class="page-kpi__label">{{ $t('common.issues') }}</span>
+            <strong class="page-kpi__value">{{ degradedLinks }}</strong>
+          </div>
+          <div class="page-kpi">
+            <span class="page-kpi__label">{{ $t('common.loaded') }}</span>
+            <strong class="page-kpi__value">{{ monitoredNodes.length - loadingNodes.size }}</strong>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <div class="topology-content">
-      <div class="topology-chart-container">
-        <TopologyGraph
-          :nodes="topologyNodes"
-          :links="topologyLinks"
-          :symbol-size="Number(config?.Topology?.Tsymbolsize || 50)"
-          :line-width="Number(config?.Topology?.Tline || 2)"
-          :height="chartHeight"
-        />
-      </div>
-
-      <div class="topology-sidebar">
-        <el-card class="alert-card" @click="$router.push('/alerts')">
-          <div class="alert-card__content">
-            <el-icon><Bell /></el-icon>
-            <span>{{ $t('topology.viewAlerts') }}</span>
-          </div>
-        </el-card>
-
-        <el-card>
-          <template #header>
-            <span>{{ $t('topology.topologyList') }}</span>
-          </template>
-          <div class="topology-list">
-            <div
-              v-for="node in topologyNodes.filter(n => n.color !== 'green')"
-              :key="node.name"
-              class="topology-item"
-            >
-              <el-icon v-if="loadingNodes.has(node.name)" class="is-loading"><Loading /></el-icon>
-              <el-icon v-else-if="node.color === 'red'" class="text-danger"><Warning /></el-icon>
-              <span>{{ displayName(node.name) }}</span>
+    <div class="page-frame">
+      <div class="page-main">
+        <section class="surface-panel">
+          <div class="surface-panel__header">
+            <div>
+              <h2 class="surface-panel__title">{{ $t('topology.title') }}</h2>
+              <p class="surface-panel__description">
+                {{ topologyLinks.length }} {{ $t('common.links') }} · {{ degradedLinks }}
+                {{ $t('common.issues') }}
+              </p>
             </div>
           </div>
-        </el-card>
+
+          <TopologyGraph
+            :nodes="topologyNodes"
+            :links="topologyLinks"
+            :symbol-size="Number(config?.Topology?.Tsymbolsize || 50)"
+            :line-width="Number(config?.Topology?.Tline || 2)"
+            :height="graphHeight"
+          />
+        </section>
       </div>
+
+      <aside class="page-aside page-aside--narrow">
+        <button
+          type="button"
+          class="surface-panel topology-view__alert-link"
+          @click="router.push('/alerts')"
+        >
+          <div class="topology-view__alert-copy">
+            <span class="page-eyebrow">{{ $t('topology.viewAlerts') }}</span>
+            <strong>{{ degradedLinks }} {{ $t('common.issues') }}</strong>
+          </div>
+          <el-icon><Bell /></el-icon>
+        </button>
+
+        <section class="surface-panel surface-panel--soft">
+          <div class="surface-panel__header">
+            <div>
+              <h2 class="surface-panel__title">{{ $t('topology.topologyList') }}</h2>
+              <p class="surface-panel__description">
+                {{ monitoredNodes.length }} {{ $t('common.node') }}
+              </p>
+            </div>
+          </div>
+
+          <div class="list-stack">
+            <div v-for="node in monitoredNodes" :key="node.name" class="list-row">
+              <div class="list-row__meta">
+                <el-icon v-if="loadingNodes.has(node.rawName)" class="is-loading"
+                  ><Loading
+                /></el-icon>
+                <el-icon v-else-if="node.color === 'red'" class="text-danger"><Warning /></el-icon>
+                <div
+                  v-else
+                  class="topology-view__dot"
+                  :class="`topology-view__dot--${node.color}`"
+                ></div>
+                <div class="list-row__text">
+                  <span class="list-row__title">{{ node.name }}</span>
+                  <span class="list-row__caption">{{ getNodeStatus(node) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </aside>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { Bell, Loading, Warning } from '@element-plus/icons-vue'
 import TopologyGraph from '@/components/charts/TopologyGraph.vue'
-import { getTopology } from '@/api/topology'
 import { fetchConfig } from '@/api/config'
+import { getTopology } from '@/api/topology'
 import { displayName } from '@/utils/format'
 import type { Config } from '@/types'
 
+const router = useRouter()
+const { t } = useI18n()
 const config = ref<Config | null>(null)
 const loadingNodes = ref(new Set<string>())
 const topologyStatus = ref<Record<string, Record<string, string>>>({})
-
-const chartHeight = computed(() => window.innerHeight - 280)
+const graphHeight = ref(Math.max(window.innerHeight - 300, 420))
 
 interface TopoNode {
   name: string
+  rawName: string
   color: string
 }
 
@@ -72,13 +132,16 @@ interface TopoLink {
 }
 
 const topologyNodes = computed<TopoNode[]>(() => {
-  if (!config.value) return []
+  if (!config.value) {
+    return []
+  }
 
   const nodes: TopoNode[] = []
-  Object.values(config.value.Network).forEach(network => {
+  Object.values(config.value.Network).forEach((network) => {
     const hasTopology = network.Topology && network.Topology.length > 0
     nodes.push({
       name: displayName(network.Name),
+      rawName: network.Name,
       color: hasTopology ? 'gray' : 'green'
     })
   })
@@ -86,13 +149,17 @@ const topologyNodes = computed<TopoNode[]>(() => {
 })
 
 const topologyLinks = computed<TopoLink[]>(() => {
-  if (!config.value) return []
+  if (!config.value) {
+    return []
+  }
 
   const links: TopoLink[] = []
   Object.entries(config.value.Network).forEach(([addr, network]) => {
-    network.Topology?.forEach(topo => {
+    network.Topology?.forEach((topo) => {
       const targetNetwork = config.value?.Network[topo.Addr]
-      if (!targetNetwork) return
+      if (!targetNetwork) {
+        return
+      }
 
       const status = topologyStatus.value[addr]?.[topo.Addr]
       links.push({
@@ -106,31 +173,37 @@ const topologyLinks = computed<TopoLink[]>(() => {
   return links
 })
 
+const monitoredNodes = computed(() => topologyNodes.value.filter((node) => node.color !== 'green'))
+const degradedLinks = computed(
+  () => topologyLinks.value.filter((link) => link.color === 'red').length
+)
+
 const loadConfig = async () => {
   try {
     const cfg = await fetchConfig()
     config.value = cfg
-
-    // 加载拓扑状态
     await loadTopologyStatus()
-  } catch (e) {
-    console.error('加载配置失败', e)
+  } catch (error) {
+    console.error('加载配置失败', error)
   }
 }
 
 const loadTopologyStatus = async () => {
-  if (!config.value) return
+  if (!config.value) {
+    return
+  }
 
-const networkWithTopology = Object.entries(config.value.Network)
-    .filter(([, network]) => network.Topology && network.Topology.length > 0)
+  const networkWithTopology = Object.entries(config.value.Network).filter(
+    ([, network]) => network.Topology && network.Topology.length > 0
+  )
 
   const promises = networkWithTopology.map(async ([addr, network]) => {
     loadingNodes.value.add(network.Name)
     try {
       const status = await getTopology(addr, config.value!.Port)
       topologyStatus.value[addr] = status
-    } catch (e) {
-      console.error(`获取 ${network.Name} 拓扑状态失败`, e)
+    } catch (error) {
+      console.error(`获取 ${network.Name} 拓扑状态失败`, error)
     } finally {
       loadingNodes.value.delete(network.Name)
     }
@@ -139,77 +212,81 @@ const networkWithTopology = Object.entries(config.value.Network)
   await Promise.all(promises)
 }
 
+const handleResize = () => {
+  graphHeight.value = Math.max(window.innerHeight - 300, 420)
+}
+
+const getNodeStatus = (node: TopoNode) => {
+  if (loadingNodes.value.has(node.rawName)) {
+    return t('common.loading')
+  }
+  if (node.color === 'red') {
+    return t('common.alert')
+  }
+  return t('common.active')
+}
+
 onMounted(() => {
   loadConfig()
+  window.addEventListener('resize', handleResize)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
 })
 </script>
 
 <style scoped lang="scss">
-.topology-view {
-  height: 100%;
-}
-
-.topology-header {
-  margin-bottom: 20px;
-
-  h2 {
-    margin: 0;
-    font-size: 18px;
-    color: var(--color-text-primary);
-  }
-}
-
-.topology-content {
-  display: flex;
-  gap: 20px;
-}
-
-.topology-chart-container {
-  flex: 1;
-  background-color: var(--color-bg-primary);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-
-.topology-sidebar {
-  width: 200px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.alert-card {
+.topology-view__alert-link {
+  width: 100%;
+  text-align: left;
   cursor: pointer;
-  transition: transform 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font: inherit;
+  color: var(--color-text-primary);
+  transition:
+    transform 0.24s ease,
+    box-shadow 0.24s ease,
+    border-color 0.24s ease;
 
   &:hover {
     transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
   }
 
-  &__content {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 10px;
+  .el-icon {
+    font-size: 20px;
     color: var(--color-warning);
   }
 }
 
-.topology-list {
-  .topology-item {
-    padding: 10px 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    border-radius: var(--radius-sm);
-    color: var(--color-text-primary);
+.topology-view__alert-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 
-    &:hover {
-      background-color: var(--color-bg-secondary);
-    }
+  strong {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
   }
+}
+
+.topology-view__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.topology-view__dot--gray {
+  background: var(--color-text-secondary);
+}
+
+.topology-view__dot--green {
+  background: var(--color-success);
 }
 </style>

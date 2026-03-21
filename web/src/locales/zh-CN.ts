@@ -41,7 +41,18 @@ export default {
     configLoadFailedNetwork: '加载配置失败，请检查网络连接',
     chartLoadFailed: '加载图表数据失败',
     dataLoadFailed: '加载数据失败',
-    autoRefresh: '自动刷新'
+    autoRefresh: '自动刷新',
+    targets: '目标',
+    probes: '探测节点',
+    records: '记录',
+    links: '链路',
+    provinces: '省份',
+    sources: '来源',
+    loaded: '已加载',
+    selectedDate: '选定时间',
+    issues: '异常',
+    active: '正常',
+    alert: '告警'
   },
   // 导航菜单
   nav: {
@@ -54,11 +65,13 @@ export default {
     config: '系统配置',
     language: '语言',
     zhCN: '简体中文',
-    enUS: 'English'
+    enUS: 'English',
+    consoleLabel: '网络控制台'
   },
   // 正向监控页面
   dashboard: {
     title: '正向监控',
+    subtitle: '查看当前节点到目标节点的延迟趋势与刷新状态。',
     timeRanges: {
       hour1: '1小时',
       hour3: '3小时',
@@ -73,17 +86,20 @@ export default {
   },
   // 反向监控页面
   reverse: {
-    title: '反向监控'
+    title: '反向监控',
+    subtitle: '查看其他节点回探当前节点的链路质量。'
   },
   // 拓扑图页面
   topology: {
     title: 'PING 拓扑',
+    subtitle: '聚合拓扑状态，快速定位异常链路与待检查节点。',
     viewAlerts: '查看报警记录',
     topologyList: '拓扑列表'
   },
   // 延迟地图页面
   mapping: {
     title: '全国延迟地图',
+    subtitle: '按运营商观察全国平均延迟分布，支持切换发起节点。',
     selectTime: '选择时间',
     telecom: '电信',
     unicom: '联通',
@@ -92,6 +108,7 @@ export default {
   // 检测工具页面
   tools: {
     title: '检测工具',
+    subtitle: '从多个探测节点并行执行即时网络检测。',
     check: '检测',
     enterTarget: '输入目标地址',
     resolvedIP: '解析IP',
@@ -104,6 +121,7 @@ export default {
   // 报警记录页面
   alerts: {
     title: '报警记录',
+    subtitle: '按日期回看报警历史，并随时展开 MTR 明细。',
     alertArchive: '报警存档',
     alertHistory: '报警历史',
     alertDate: '报警日期',
@@ -124,6 +142,7 @@ export default {
   // 系统配置页面
   config: {
     title: '系统配置',
+    subtitle: '统一管理节点、拓扑策略与全国延迟测试来源。',
     saveConfig: '保存配置',
     importExport: '导入/导出',
     exportConfig: '导出配置',

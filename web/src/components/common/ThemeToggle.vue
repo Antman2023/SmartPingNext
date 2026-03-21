@@ -55,17 +55,17 @@ const handleCommand = (command: string) => {
     themeStore.toggleTheme()
   }
 }
-
 </script>
 
 <style scoped lang="scss">
 .el-button {
-  background-color: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: color-mix(in srgb, var(--color-bg-primary) 80%, transparent);
+  border-color: var(--color-border-light);
   color: var(--navbar-text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 
   &:hover {
-    background-color: rgba(255, 255, 255, 0.2);
+    border-color: color-mix(in srgb, var(--color-primary) 22%, transparent);
   }
 }
 </style>
