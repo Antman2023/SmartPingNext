@@ -537,55 +537,68 @@ func configApiRoutes() {
 	})
 
 	//代理访问
-	http.HandleFunc("/api/proxy.json", func(w http.ResponseWriter, r *http.Request) {
-		if !AuthUserIp(r.RemoteAddr) {
-			o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
-			http.Error(w, o, http.StatusUnauthorized)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		r.ParseForm()
-		if len(r.Form["g"]) == 0 {
-			o := "Url Param Error!"
-			http.Error(w, o, http.StatusNotAcceptable)
-			return
-		}
-		to := strconv.Itoa(g.Cfg.Base["Timeout"])
-		if len(r.Form["t"]) > 0 {
-			to = r.Form["t"][0]
-		}
-		targetURL := strings.Replace(strings.Replace(r.Form["g"][0], "%26", "&", -1), " ", "%20", -1)
-		defaultto, err := strconv.Atoi(to)
-		if err != nil {
+	http.HandleFunc("/api/proxy.json", handleProxy)
+
+}
+
+func handleProxy(w http.ResponseWriter, r *http.Request) {
+	if !AuthUserIp(r.RemoteAddr) {
+		o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
+		http.Error(w, o, http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	r.ParseForm()
+	if len(r.Form["g"]) == 0 {
+		o := "Url Param Error!"
+		http.Error(w, o, http.StatusNotAcceptable)
+		return
+	}
+	defaultto := g.GetBaseInt("Timeout", 10)
+	if len(r.Form["t"]) > 0 {
+		const maxProxyTimeoutSeconds = 60
+		customTimeout, err := strconv.Atoi(r.Form["t"][0])
+		if err != nil || customTimeout < 1 || customTimeout > maxProxyTimeoutSeconds {
 			o := "Timeout Param Error!"
 			http.Error(w, o, http.StatusNotAcceptable)
 			return
 		}
-		client := &http.Client{
-			Timeout: time.Duration(defaultto) * time.Second,
-		}
-		resp, err := client.Get(targetURL)
-		if err != nil {
-			o := "Request Remote Data Error:" + err.Error()
-			http.Error(w, o, http.StatusServiceUnavailable)
-			return
-		}
-		defer resp.Body.Close()
-		resCode := resp.StatusCode
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			o := "Read Remote Data Error:" + err.Error()
-			http.Error(w, o, http.StatusServiceUnavailable)
-			return
-		}
-		if resCode != 200 {
-			o := "Get Remote Data Status Error"
-			http.Error(w, o, resCode)
-		}
-		var out bytes.Buffer
-		json.Indent(&out, body, "", "\t")
-		o := out.String()
-		fmt.Fprintln(w, o)
-	})
-
+		defaultto = customTimeout
+	}
+	rawTarget := strings.Replace(strings.Replace(r.Form["g"][0], "%26", "&", -1), " ", "%20", -1)
+	targetURL, err := validateProxyTarget(rawTarget)
+	if err != nil {
+		o := err.Error()
+		http.Error(w, o, http.StatusNotAcceptable)
+		return
+	}
+	client := &http.Client{
+		Timeout: time.Duration(defaultto) * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(targetURL.String())
+	if err != nil {
+		o := "Request Remote Data Error:" + err.Error()
+		http.Error(w, o, http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+	resCode := resp.StatusCode
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		o := "Read Remote Data Error:" + err.Error()
+		http.Error(w, o, http.StatusServiceUnavailable)
+		return
+	}
+	if resCode != 200 {
+		o := "Get Remote Data Status Error"
+		http.Error(w, o, resCode)
+		return
+	}
+	var out bytes.Buffer
+	json.Indent(&out, body, "", "\t")
+	o := out.String()
+	fmt.Fprintln(w, o)
 }
