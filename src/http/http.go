@@ -20,6 +20,11 @@ var validIP4Regexp = regexp.MustCompile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-
 
 const maxPingRangeMinutes = 31 * 24 * 60
 
+const (
+	maxPasswordFormBytes = 64 << 10
+	maxConfigFormBytes   = 16 << 20
+)
+
 func ValidIP4(ipAddress string) bool {
 	ipAddress = strings.TrimSpace(ipAddress)
 	return validIP4Regexp.MatchString(ipAddress)
@@ -33,6 +38,29 @@ func RenderJson(w http.ResponseWriter, v any) {
 	}
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
 	w.Write(bs)
+}
+
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method == method {
+		return true
+	}
+	w.Header().Set("Allow", method)
+	http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	return false
+}
+
+func parseFormLimited(w http.ResponseWriter, r *http.Request, maxBytes int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	if err := r.ParseForm(); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "Request Body Too Large", http.StatusRequestEntityTooLarge)
+		} else {
+			http.Error(w, "Invalid Form Data", http.StatusBadRequest)
+		}
+		return false
+	}
+	return true
 }
 
 func AuthUserIp(RemoteAddr string) bool {

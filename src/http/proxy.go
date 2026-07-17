@@ -2,12 +2,18 @@ package http
 
 import (
 	"errors"
+	"io"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
 
 	"smartping/src/g"
+)
+
+const (
+	maxProxyResponseBytes  = 16 << 20
+	maxProxyTimeoutSeconds = 60
 )
 
 type proxyQueryRule struct {
@@ -38,6 +44,28 @@ func newProxyQueryRule(required []string, optional []string) proxyQueryRule {
 		required: requiredMap,
 		allowed:  allowed,
 	}
+}
+
+func normalizeProxyTimeout(seconds int) int {
+	if seconds < 1 {
+		return 10
+	}
+	if seconds > maxProxyTimeoutSeconds {
+		return maxProxyTimeoutSeconds
+	}
+	return seconds
+}
+
+func readProxyResponseBody(reader io.Reader) ([]byte, error) {
+	limited := io.LimitReader(reader, maxProxyResponseBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxProxyResponseBytes {
+		return nil, errors.New("Proxy Response Too Large!")
+	}
+	return body, nil
 }
 
 func validateProxyTarget(rawTarget string) (*url.URL, error) {

@@ -102,6 +102,9 @@ jobs:
       - name: Build backend (Windows/macOS)
         if: matrix.os != 'linux'
         env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.goarch || matrix.arch }}
+          GOARM: ${{ matrix.goarm || '' }}
           CGO_ENABLED: 0
         run: |
           go mod download

@@ -53,7 +53,11 @@ func TestCheckAlertStatus(t *testing.T) {
 				"Thdoccnum":   "1",
 			}
 
-			if !CheckAlertStatus(v) {
+			healthy, err := CheckAlertStatus(v)
+			if err != nil {
+				t.Fatalf("CheckAlertStatus returned error: %v", err)
+			}
+			if !healthy {
 				t.Fatalf("CheckAlertStatus should return true when count <= threshold")
 			}
 		})
@@ -73,7 +77,11 @@ func TestCheckAlertStatus(t *testing.T) {
 				"Thdoccnum":   "1",
 			}
 
-			if CheckAlertStatus(v) {
+			healthy, err := CheckAlertStatus(v)
+			if err != nil {
+				t.Fatalf("CheckAlertStatus returned error: %v", err)
+			}
+			if healthy {
 				t.Fatalf("CheckAlertStatus should return false when count > threshold")
 			}
 		})
@@ -89,8 +97,30 @@ func TestCheckAlertStatus(t *testing.T) {
 				"Thdoccnum":   "1",
 			}
 
-			if !CheckAlertStatus(v) {
+			healthy, err := CheckAlertStatus(v)
+			if err != nil {
+				t.Fatalf("CheckAlertStatus returned error: %v", err)
+			}
+			if !healthy {
 				t.Fatalf("CheckAlertStatus should return true when count is zero and threshold is one")
+			}
+		})
+	})
+
+	t.Run("database error is returned", func(t *testing.T) {
+		withFuncTestDB(t, schema, func(db *sql.DB) {
+			if err := db.Close(); err != nil {
+				t.Fatalf("close test database failed: %v", err)
+			}
+			_, err := CheckAlertStatus(map[string]string{
+				"Thdchecksec": "600",
+				"Addr":        "9.9.9.9",
+				"Thdavgdelay": "200",
+				"Thdloss":     "30",
+				"Thdoccnum":   "1",
+			})
+			if err == nil {
+				t.Fatalf("CheckAlertStatus should return database error")
 			}
 		})
 	})

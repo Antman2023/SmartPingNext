@@ -1,6 +1,7 @@
 package g
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -119,18 +120,21 @@ func TestGetBaseInt(t *testing.T) {
 func TestSetConfigUpdatesAuth(t *testing.T) {
 	withGlobalConfigState(t, func() {
 		SetConfig(Config{
-			Authiplist: " 127.0.0.1, ::1 ",
+			Authiplist: " 127.0.0.1, ::1, 2001:0db8:0:0:0:0:0:1 ",
 			Network: map[string]NetworkMember{
 				"127.0.0.1": {Addr: "127.0.0.1"},
 				"::1":       {Addr: "::1"},
 			},
 		})
 
-		if Cfg.Authiplist != "127.0.0.1,::1" {
+		if Cfg.Authiplist != "127.0.0.1,::1,2001:db8::1" {
 			t.Fatalf("SetConfig normalized Authiplist = %q", Cfg.Authiplist)
 		}
 		if !AuthUserIpMap["127.0.0.1"] || !AuthUserIpMap["::1"] {
 			t.Fatalf("SetConfig did not populate AuthUserIpMap correctly: %#v", AuthUserIpMap)
+		}
+		if !AuthUserIpMap["2001:db8::1"] {
+			t.Fatalf("SetConfig did not normalize IPv6 auth address: %#v", AuthUserIpMap)
 		}
 		if !AuthAgentIpMap["127.0.0.1"] || !AuthAgentIpMap["::1"] {
 			t.Fatalf("SetConfig did not populate AuthAgentIpMap correctly: %#v", AuthAgentIpMap)
@@ -143,6 +147,15 @@ func TestSaveCloudConfigSuccess(t *testing.T) {
 		respCfg := Config{
 			Name: "cloud-name",
 			Addr: "8.8.8.8",
+			Base: map[string]int{
+				"Timeout": 5,
+				"Refresh": 1,
+				"Archive": 30,
+			},
+			Topology: map[string]string{
+				"Tline":       "1",
+				"Tsymbolsize": "70",
+			},
 			Mode: map[string]string{
 				"Type": "cloud",
 			},
@@ -226,6 +239,59 @@ func TestSaveCloudConfigInvalidJSON(t *testing.T) {
 	})
 }
 
+func TestSaveCloudConfigRejectsInvalidConfig(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(Config{
+				Name:    "invalid-cloud",
+				Addr:    "127.0.0.1",
+				Network: map[string]NetworkMember{},
+			})
+		}))
+		defer srv.Close()
+
+		Cfg = Config{
+			Name:     "local-name",
+			Addr:     "127.0.0.1",
+			Port:     8899,
+			Password: "pwd",
+			Mode:     map[string]string{"Endpoint": srv.URL, "Type": "cloud"},
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "local", Addr: "127.0.0.1"},
+			},
+		}
+		HttpClient = srv.Client()
+
+		if _, err := SaveCloudConfig(srv.URL); err == nil {
+			t.Fatalf("SaveCloudConfig should reject invalid cloud config")
+		}
+		if Cfg.Name != "local-name" || Cfg.Addr != "127.0.0.1" {
+			t.Fatalf("invalid cloud config replaced current identity: %#v", Cfg)
+		}
+	})
+}
+
+func TestReadCloudConfigBodyRejectsOversizedBody(t *testing.T) {
+	body := bytes.NewReader(make([]byte, maxCloudConfigBytes+1))
+	if _, err := readCloudConfigBody(body); err == nil {
+		t.Fatalf("readCloudConfigBody should reject oversized body")
+	}
+}
+
+func TestSaveCloudConfigRejectsNonOKStatus(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+		HttpClient = srv.Client()
+
+		if _, err := SaveCloudConfig(srv.URL); err == nil {
+			t.Fatalf("SaveCloudConfig should reject non-200 response")
+		}
+	})
+}
+
 func TestSaveConfig(t *testing.T) {
 	withGlobalConfigState(t, func() {
 		root := t.TempDir()
@@ -262,6 +328,29 @@ func TestSaveConfig(t *testing.T) {
 		}
 		if saved.Name != "node-1" {
 			t.Fatalf("saved config Name = %q, want node-1", saved.Name)
+		}
+
+		Cfg.Name = "node-2"
+		if err := SaveConfig(); err != nil {
+			t.Fatalf("second SaveConfig returned error: %v", err)
+		}
+		content, err = os.ReadFile(filepath.Join(root, "conf", "config.json"))
+		if err != nil {
+			t.Fatalf("read replaced config failed: %v", err)
+		}
+		if err := json.Unmarshal(content, &saved); err != nil {
+			t.Fatalf("replaced config is not valid json: %v", err)
+		}
+		if saved.Name != "node-2" {
+			t.Fatalf("replaced config Name = %q, want node-2", saved.Name)
+		}
+
+		tempFiles, err := filepath.Glob(filepath.Join(root, "conf", ".config.json.tmp-*"))
+		if err != nil {
+			t.Fatalf("list temporary files failed: %v", err)
+		}
+		if len(tempFiles) != 0 {
+			t.Fatalf("temporary config files were not cleaned up: %v", tempFiles)
 		}
 	})
 }

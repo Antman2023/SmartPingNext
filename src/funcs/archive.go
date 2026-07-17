@@ -16,9 +16,25 @@ func ClearArchive() {
 	}
 	cutoffDate := time.Now().AddDate(0, 0, -archiveDays).Format("2006-01-02")
 	g.DLock.Lock()
-	g.Db.Exec("delete from alertlog where logtime < ?", cutoffDate)
-	g.Db.Exec("delete from mappinglog where logtime < ?", cutoffDate)
-	g.Db.Exec("delete from pinglog where logtime < ?", cutoffDate)
+	err := clearArchiveBefore(cutoffDate)
 	g.DLock.Unlock()
+	if err != nil {
+		logrus.Error("[func:ClearArchive] ", err)
+		return
+	}
 	logrus.Info("[func:ClearArchive] ", "ClearArchive Finish ")
+}
+
+func clearArchiveBefore(cutoffDate string) error {
+	tx, err := g.Db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, table := range []string{"alertlog", "mappinglog", "pinglog"} {
+		if _, err := tx.Exec("delete from "+table+" where logtime < ?", cutoffDate); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }

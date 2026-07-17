@@ -2,6 +2,7 @@ package funcs
 
 import (
 	"encoding/json"
+	"fmt"
 	"smartping/src/g"
 	"smartping/src/nettools"
 	"strconv"
@@ -16,7 +17,11 @@ func StartAlert() {
 	selfConfig := config.Network[config.Addr]
 	for _, v := range selfConfig.Topology {
 		if v["Addr"] != selfConfig.Addr {
-			sFlag := CheckAlertStatus(v)
+			sFlag, err := CheckAlertStatus(v)
+			if err != nil {
+				logrus.Error("[func:StartAlert] Check status error ", err)
+				continue
+			}
 			g.AlertStatusLock.Lock()
 			if sFlag {
 				g.AlertStatus[v["Addr"]] = true
@@ -58,19 +63,24 @@ func StartAlert() {
 	logrus.Info("[func:StartAlert] ", "AlertCheck finish ")
 }
 
-func CheckAlertStatus(v map[string]string) bool {
-	Thdchecksec, _ := strconv.Atoi(v["Thdchecksec"])
+func CheckAlertStatus(v map[string]string) (bool, error) {
+	Thdchecksec, err := strconv.Atoi(v["Thdchecksec"])
+	if err != nil || Thdchecksec <= 0 {
+		return false, fmt.Errorf("invalid Thdchecksec %q", v["Thdchecksec"])
+	}
 	timeStartStr := time.Unix((time.Now().Unix() - int64(Thdchecksec)), 0).Format("2006-01-02 15:04")
 	querysql := "SELECT count(1) cnt FROM `pinglog` where logtime > ? and target = ? and (cast(avgdelay as double) > ? or cast(losspk as double) > ?)"
 	var cnt int
-	err := g.Db.QueryRow(querysql, timeStartStr, v["Addr"], v["Thdavgdelay"], v["Thdloss"]).Scan(&cnt)
+	err = g.Db.QueryRow(querysql, timeStartStr, v["Addr"], v["Thdavgdelay"], v["Thdloss"]).Scan(&cnt)
 	logrus.Debug("[func:StartAlert] ", querysql)
 	if err != nil {
-		logrus.Error("[func:StartAlert] Query Error ", err)
-		return false
+		return false, fmt.Errorf("query alert status for %s: %w", v["Addr"], err)
 	}
-	Thdoccnum, _ := strconv.Atoi(v["Thdoccnum"])
-	return cnt <= Thdoccnum
+	Thdoccnum, err := strconv.Atoi(v["Thdoccnum"])
+	if err != nil || Thdoccnum <= 0 {
+		return false, fmt.Errorf("invalid Thdoccnum %q", v["Thdoccnum"])
+	}
+	return cnt <= Thdoccnum, nil
 }
 
 func AlertStorage(t g.AlertLog) {

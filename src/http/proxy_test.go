@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -101,6 +102,22 @@ func TestValidateProxyTargetRejectsUnexpectedPort(t *testing.T) {
 			t.Fatalf("validateProxyTarget should reject unexpected port")
 		}
 	})
+}
+
+func TestNormalizeProxyTimeout(t *testing.T) {
+	if got := normalizeProxyTimeout(0); got != 10 {
+		t.Fatalf("normalizeProxyTimeout(0) = %d, want 10", got)
+	}
+	if got := normalizeProxyTimeout(3600); got != maxProxyTimeoutSeconds {
+		t.Fatalf("normalizeProxyTimeout(3600) = %d, want %d", got, maxProxyTimeoutSeconds)
+	}
+}
+
+func TestReadProxyResponseBodyRejectsOversizedBody(t *testing.T) {
+	body := bytes.NewReader(make([]byte, maxProxyResponseBytes+1))
+	if _, err := readProxyResponseBody(body); err == nil {
+		t.Fatalf("readProxyResponseBody should reject oversized body")
+	}
 }
 
 func proxyTestConfig(t *testing.T, serverURL string) g.Config {
@@ -233,6 +250,22 @@ func TestHandleProxyStopsAfterRemoteError(t *testing.T) {
 		}
 		if strings.Contains(recorder.Body.String(), "must not be appended") {
 			t.Fatalf("handleProxy appended remote error body: %q", recorder.Body.String())
+		}
+	})
+}
+
+func TestHandleProxyRejectsInvalidJSON(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("not-json"))
+	}))
+	defer remote.Close()
+
+	withProxyConfig(proxyTestConfig(t, remote.URL), func() {
+		recorder := httptest.NewRecorder()
+		handleProxy(recorder, proxyRequest(remote.URL+"/api/config.json"))
+
+		if recorder.Code != http.StatusBadGateway {
+			t.Fatalf("handleProxy status = %d, want %d", recorder.Code, http.StatusBadGateway)
 		}
 	})
 }

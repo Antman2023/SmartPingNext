@@ -6,7 +6,8 @@ export const fetchConfig = (): Promise<Config> => {
 }
 
 export const fetchProxyConfig = (url: string): Promise<Config> => {
-  return request.get(`/proxy.json?g=${url}/api/config.json`)
+	const params = new URLSearchParams({ g: `${url}/api/config.json` })
+	return request.get(`/proxy.json?${params.toString()}`)
 }
 
 export const saveConfig = (config: Config, password: string): Promise<{ status: string; info?: string }> => {

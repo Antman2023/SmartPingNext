@@ -47,11 +47,21 @@ func RunPing(IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (flo
 		return 0, err
 	}
 	result := pool.sendICMP(id, uniqueSeq, maxttl, netmsg, IpAddr, maxrtt)
+	return evaluatePingResult(result)
+}
+
+func evaluatePingResult(result ICMP) (float64, error) {
 	if result.Timeout {
 		return 0, errors.New("request timeout")
 	}
 	if result.Down {
 		return 0, errors.New("destination unreachable")
 	}
-	return float64(result.RTT.Nanoseconds()) / 1e6, result.Error
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	if !result.Final {
+		return 0, errors.New("destination not reached")
+	}
+	return float64(result.RTT.Nanoseconds()) / 1e6, nil
 }

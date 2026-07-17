@@ -15,7 +15,7 @@ COPY . .
 
 # Build frontend
 WORKDIR /app/web
-RUN npm install && npm run build
+RUN npm ci && npm run build
 
 # Copy frontend to embed directory
 WORKDIR /app

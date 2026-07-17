@@ -22,11 +22,19 @@ const (
 
 var pingRunning int32
 
-func resolvePingRoundConfig() (int, time.Duration, time.Duration, time.Duration) {
-	pingCount := g.GetBaseInt("PingCount", defaultPingCount)
-	pingInterval := time.Duration(g.GetBaseInt("PingIntervalMs", defaultPingIntervalMs)) * time.Millisecond
-	pingTimeout := time.Duration(g.GetBaseInt("PingTimeoutMs", defaultPingTimeoutMs)) * time.Millisecond
-	pingStagger := time.Duration(g.GetBaseInt("PingStaggerMs", defaultPingStaggerMs)) * time.Millisecond
+func boundedBaseInt(config g.Config, key string, defaultValue int, minValue int, maxValue int) int {
+	value, ok := config.Base[key]
+	if !ok || value < minValue || value > maxValue {
+		return defaultValue
+	}
+	return value
+}
+
+func resolvePingRoundConfig(config g.Config) (int, time.Duration, time.Duration, time.Duration) {
+	pingCount := boundedBaseInt(config, "PingCount", defaultPingCount, 1, 120)
+	pingInterval := time.Duration(boundedBaseInt(config, "PingIntervalMs", defaultPingIntervalMs, 100, 60000)) * time.Millisecond
+	pingTimeout := time.Duration(boundedBaseInt(config, "PingTimeoutMs", defaultPingTimeoutMs, 100, 60000)) * time.Millisecond
+	pingStagger := time.Duration(boundedBaseInt(config, "PingStaggerMs", defaultPingStaggerMs, 0, 60000)) * time.Millisecond
 
 	if pingTimeout <= 0 {
 		pingTimeout = defaultPingTimeoutMs * time.Millisecond
@@ -56,9 +64,9 @@ func Ping() {
 }
 
 func runPingRound(roundTime time.Time) {
-	pingCount, pingInterval, pingTimeout, pingStagger := resolvePingRoundConfig()
-	logtime := roundTime.Format("2006-01-02 15:04")
 	config := g.ConfigSnapshot()
+	pingCount, pingInterval, pingTimeout, pingStagger := resolvePingRoundConfig(config)
+	logtime := roundTime.Format("2006-01-02 15:04")
 	selfConfig := config.Network[config.Addr]
 
 	var wg sync.WaitGroup

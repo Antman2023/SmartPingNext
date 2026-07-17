@@ -1,9 +1,10 @@
 package g
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -12,12 +13,15 @@ import (
 
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 )
+
+const maxCloudConfigBytes = 8 << 20
 
 var (
 	Root            string
@@ -68,8 +72,12 @@ func GetRoot() string {
 
 func releaseDefaultFiles() {
 	// Create directories if not exist
-	os.MkdirAll(Root+"/conf", 0755)
-	os.MkdirAll(Root+"/db", 0755)
+	if err := os.MkdirAll(Root+"/conf", 0755); err != nil {
+		log.Fatalln("[Fault]create conf directory fail:", err)
+	}
+	if err := os.MkdirAll(Root+"/db", 0755); err != nil {
+		log.Fatalln("[Fault]create db directory fail:", err)
+	}
 
 	// Release config-base.json
 	configBase := Root + "/conf/config-base.json"
@@ -120,23 +128,19 @@ func ParseConfig(ver string) {
 		config.Addr = "127.0.0.1"
 	}
 	config.Ver = ver
+	if err := ValidateConfig(config); err != nil {
+		log.Fatalln("[Fault]invalid config:", err)
+	}
 	SetConfig(config)
 	if !IsExist(Root + "/db/" + "database.db") {
 		if !IsExist(Root + "/db/" + "database-base.db") {
 			log.Fatalln("[Fault]db file:", Root+"/db/"+"database(-base).db", "both not existent.")
 		}
-		src, err := os.Open(Root + "/db/" + "database-base.db")
+		data, err := os.ReadFile(Root + "/db/" + "database-base.db")
 		if err != nil {
-			log.Fatalln("[Fault]db-base file open error.")
+			log.Fatalln("[Fault]db-base file read error:", err)
 		}
-		defer src.Close()
-		dst, err := os.OpenFile(Root+"/db/"+"database.db", os.O_WRONLY|os.O_CREATE, 0644)
-		if err != nil {
-			log.Fatalln("[Fault]db-base file copy error.")
-		}
-		defer dst.Close()
-		_, err = io.Copy(dst, src)
-		if err != nil {
+		if err := writeFileAtomic(Root+"/db/"+"database.db", data, 0644); err != nil {
 			log.Fatalln("[Fault]db-base file copy error:", err)
 		}
 	}
@@ -145,6 +149,9 @@ func ParseConfig(ver string) {
 	Db, err = sql.Open("sqlite", Root+"/db/database.db")
 	if err != nil {
 		log.Fatalln("[Fault]db open fail .", err)
+	}
+	if err := Db.Ping(); err != nil {
+		log.Fatalln("[Fault]db connection fail .", err)
 	}
 	LocalTimezone = time.Local
 	HttpClient = &http.Client{Timeout: 10 * time.Second}
@@ -159,7 +166,13 @@ func SaveCloudConfig(url string) (Config, error) {
 		return config, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return config, errors.New("cloud config returned non-200 status")
+	}
+	body, err := readCloudConfigBody(resp.Body)
+	if err != nil {
+		return config, err
+	}
 	err = json.Unmarshal(body, &config)
 	if err != nil {
 		config.Name = string(body)
@@ -184,8 +197,23 @@ func SaveCloudConfig(url string) (Config, error) {
 	published.Mode["Status"] = "true"
 	published.Mode["Endpoint"] = current.Mode["Endpoint"]
 	published.Mode["Type"] = "cloud"
+	if err := ValidateConfig(published); err != nil {
+		return downloaded, fmt.Errorf("invalid cloud config: %w", err)
+	}
 	SetConfig(published)
 	return downloaded, nil
+}
+
+func readCloudConfigBody(reader io.Reader) ([]byte, error) {
+	limited := io.LimitReader(reader, maxCloudConfigBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxCloudConfigBytes {
+		return nil, errors.New("cloud config response too large")
+	}
+	return body, nil
 }
 
 func ConfigSnapshot() Config {
@@ -195,17 +223,20 @@ func ConfigSnapshot() Config {
 }
 
 func SetConfig(config Config) {
-	config.Authiplist = strings.ReplaceAll(config.Authiplist, " ", "")
 	userIPs := make(map[string]bool)
 	agentIPs := make(map[string]bool)
 	for _, member := range config.Network {
-		agentIPs[member.Addr] = true
+		agentIPs[normalizeIP(member.Addr)] = true
 	}
-	if config.Authiplist != "" {
-		for _, ip := range strings.Split(config.Authiplist, ",") {
+	normalizedAuthIPs := make([]string, 0)
+	for _, rawIP := range strings.Split(strings.ReplaceAll(config.Authiplist, " ", ""), ",") {
+		if rawIP != "" {
+			ip := normalizeIP(rawIP)
+			normalizedAuthIPs = append(normalizedAuthIPs, ip)
 			userIPs[ip] = true
 		}
 	}
+	config.Authiplist = strings.Join(normalizedAuthIPs, ",")
 
 	CfgLock.Lock()
 	AuthIpLock.Lock()
@@ -215,6 +246,17 @@ func SetConfig(config Config) {
 	AuthAgentIpMap = agentIPs
 	AuthIpLock.Unlock()
 	CfgLock.Unlock()
+}
+
+func normalizeIP(value string) string {
+	parsed := net.ParseIP(value)
+	if parsed == nil {
+		return value
+	}
+	if ipv4 := parsed.To4(); ipv4 != nil {
+		return ipv4.String()
+	}
+	return parsed.String()
 }
 
 func GetBaseInt(key string, defaultValue int) int {
@@ -233,17 +275,41 @@ func SaveConfig() error {
 	configSaveLock.Lock()
 	defer configSaveLock.Unlock()
 	config := ConfigSnapshot()
-	rrs, _ := json.Marshal(config)
-	var out bytes.Buffer
-	errjson := json.Indent(&out, rrs, "", "\t")
-	if errjson != nil {
-		logrus.Error("[func:SaveConfig] Json Parse ", errjson)
-		return errjson
+	data, err := json.MarshalIndent(config, "", "\t")
+	if err != nil {
+		logrus.Error("[func:SaveConfig] Json Parse ", err)
+		return err
 	}
-	err := os.WriteFile(Root+"/conf/"+"config.json", []byte(out.String()), 0644)
+	err = writeFileAtomic(filepath.Join(Root, "conf", "config.json"), data, 0644)
 	if err != nil {
 		logrus.Error("[func:SaveConfig] Config File Write", err)
 		return err
 	}
 	return nil
+}
+
+func writeFileAtomic(filename string, data []byte, perm os.FileMode) error {
+	temp, err := os.CreateTemp(filepath.Dir(filename), "."+filepath.Base(filename)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+
+	if err := temp.Chmod(perm); err != nil {
+		temp.Close()
+		return err
+	}
+	if _, err := temp.Write(data); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempName, filename)
 }

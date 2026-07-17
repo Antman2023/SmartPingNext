@@ -62,12 +62,16 @@ func (p *icmpPool) init() error {
 }
 
 // register 注册一个等待者，返回接收 channel
-func (p *icmpPool) register(key uint32) chan icmpResponse {
+func (p *icmpPool) register(key uint32) (chan icmpResponse, bool) {
 	ch := make(chan icmpResponse, 1)
 	p.mu.Lock()
+	if _, exists := p.waiters[key]; exists {
+		p.mu.Unlock()
+		return nil, false
+	}
 	p.waiters[key] = ch
 	p.mu.Unlock()
-	return ch
+	return ch, true
 }
 
 // unregister 移除等待者
@@ -101,6 +105,7 @@ func (p *icmpPool) readLoop() {
 			}
 			// 瞬态错误（Windows WSAECONNRESET 等），继续读取
 			logrus.Debug("[icmpPool:readLoop] ReadFrom error: ", err)
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 
@@ -150,7 +155,10 @@ func (p *icmpPool) sendICMP(id, seq, ttl int, msg []byte, dest net.Addr, timeout
 	}
 
 	key := waiterKey(id, seq)
-	ch := p.register(key)
+	ch, registered := p.register(key)
+	if !registered {
+		return ICMP{Error: errors.New("icmp request identifier collision")}
+	}
 	defer p.unregister(key)
 
 	// SetTTL + WriteTo 必须原子执行

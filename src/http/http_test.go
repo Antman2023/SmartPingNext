@@ -160,6 +160,46 @@ func TestRenderJsonMarshalError(t *testing.T) {
 	}
 }
 
+func TestRequireMethod(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/saveconfig.json", nil)
+	if requireMethod(recorder, request, http.MethodPost) {
+		t.Fatalf("requireMethod should reject unexpected method")
+	}
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
+	}
+	if allow := recorder.Header().Get("Allow"); allow != http.MethodPost {
+		t.Fatalf("Allow header = %q, want POST", allow)
+	}
+}
+
+func TestParseFormLimited(t *testing.T) {
+	t.Run("accepts form within limit", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("password=ok"))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if !parseFormLimited(recorder, request, 64) {
+			t.Fatalf("parseFormLimited should accept small form: %s", recorder.Body.String())
+		}
+		if got := request.Form.Get("password"); got != "ok" {
+			t.Fatalf("password = %q, want ok", got)
+		}
+	})
+
+	t.Run("rejects oversized form", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("password=too-long"))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if parseFormLimited(recorder, request, 8) {
+			t.Fatalf("parseFormLimited should reject oversized form")
+		}
+		if recorder.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
+		}
+	})
+}
+
 func TestResolvePingTimeRange(t *testing.T) {
 	now := time.Date(2026, 7, 17, 12, 34, 45, 0, time.UTC)
 

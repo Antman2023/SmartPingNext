@@ -35,8 +35,9 @@ func Mapping() {
 	defer atomic.StoreInt32(&mappingRunning, 0)
 
 	var wg sync.WaitGroup
-	workerLimit := g.GetBaseInt("MappingConcurrency", defaultMappingConcurrency)
 	config := g.ConfigSnapshot()
+	workerLimit := boundedBaseInt(config, "MappingConcurrency", defaultMappingConcurrency, 1, 64)
+	probeCount := boundedBaseInt(config, "MappingProbeCount", defaultMappingProbeCount, 1, 20)
 	sem := make(chan struct{}, workerLimit)
 	MapLock.Lock()
 	MapStatus = map[string][]g.MapVal{}
@@ -51,7 +52,7 @@ func Mapping() {
 				sem <- struct{}{}
 				go func(tel, prov string, ips []string) {
 					defer func() { <-sem }()
-					MappingTask(tel, prov, ips, &wg)
+					MappingTask(tel, prov, ips, probeCount, &wg)
 				}(tel, prov, ips)
 			}
 		}
@@ -61,9 +62,9 @@ func Mapping() {
 }
 
 // ping main function
-func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
+func MappingTask(tel string, prov string, ips []string, probeCount int, wg *sync.WaitGroup) {
+	defer wg.Done()
 	logrus.Info("Start MappingTask " + tel + " " + prov + "..")
-	probeCount := g.GetBaseInt("MappingProbeCount", defaultMappingProbeCount)
 	statMap := []g.PingSt{}
 	for _, ip := range ips {
 		logrus.Debug("[func:StartChinaMapPing]", ip)
@@ -137,7 +138,6 @@ func MappingTask(tel string, prov string, ips []string, wg *sync.WaitGroup) {
 	MapLock.Lock()
 	MapStatus[prov] = append(MapStatus[prov], gMapVal)
 	MapLock.Unlock()
-	wg.Done()
 	logrus.Info("Finish MappingTask " + tel + " " + prov + "..")
 }
 
