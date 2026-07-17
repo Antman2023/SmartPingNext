@@ -30,7 +30,7 @@ func configApiRoutes() {
 		}
 		r.ParseForm()
 		nconf := g.Config{}
-		cfgJson, _ := json.Marshal(g.Cfg)
+		cfgJson, _ := json.Marshal(g.ConfigSnapshot())
 		json.Unmarshal(cfgJson, &nconf)
 		nconf.Password = ""
 		onconf, _ := json.Marshal(nconf)
@@ -55,38 +55,17 @@ func configApiRoutes() {
 			return
 		}
 		var tableip string
-		var timeStart int64
-		var timeEnd int64
-		var timeStartStr string
-		var timeEndStr string
 		tableip = r.Form["ip"][0]
-		if len(r.Form["starttime"]) > 0 && len(r.Form["endtime"]) > 0 {
-			timeStartStr = r.Form["starttime"][0]
-			if timeStartStr != "" {
-				tms, _ := time.ParseInLocation("2006-01-02 15:04", timeStartStr, g.LocalTimezone)
-				timeStart = tms.Unix()
-			} else {
-				timeStart = time.Now().Unix() - 6*60*60
-				timeStartStr = time.Unix(timeStart, 0).Format("2006-01-02 15:04")
-			}
-			timeEndStr = r.Form["endtime"][0]
-			if timeEndStr != "" {
-				tmn, _ := time.ParseInLocation("2006-01-02 15:04", timeEndStr, g.LocalTimezone)
-				timeEnd = tmn.Unix()
-			} else {
-				timeEnd = time.Now().Unix()
-				timeEndStr = time.Unix(timeEnd, 0).Format("2006-01-02 15:04")
-			}
-		} else {
-			timeStart = time.Now().Unix() - 6*60*60
-			timeStartStr = time.Unix(timeStart, 0).Format("2006-01-02 15:04")
-			timeEnd = time.Now().Unix()
-			timeEndStr = time.Unix(timeEnd, 0).Format("2006-01-02 15:04")
+		timeStartValue, timeEndValue, err := resolvePingTimeRange(r.Form, time.Now(), g.LocalTimezone)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotAcceptable)
+			return
 		}
+		timeStart := timeStartValue.Unix()
+		timeEnd := timeEndValue.Unix()
+		timeStartStr := timeStartValue.Format("2006-01-02 15:04")
+		timeEndStr := timeEndValue.Format("2006-01-02 15:04")
 		cnt := int((timeEnd - timeStart) / 60)
-		if cnt < 0 {
-			cnt = 0
-		}
 		size := cnt + 1
 		lastcheck := make([]string, size)
 		maxdelay := make([]string, size)
@@ -154,7 +133,9 @@ func configApiRoutes() {
 			return
 		}
 		preout := make(map[string]string)
-		for _, v := range g.SelfCfg.Topology {
+		config := g.ConfigSnapshot()
+		selfConfig := config.Network[config.Addr]
+		for _, v := range selfConfig.Topology {
 			if funcs.CheckAlertStatus(v) {
 				preout[v["Addr"]] = "true"
 			} else {
@@ -175,6 +156,7 @@ func configApiRoutes() {
 		type DateList struct {
 			Ldate string
 		}
+		config := g.ConfigSnapshot()
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		r.ParseForm()
@@ -210,8 +192,8 @@ func configApiRoutes() {
 			for rows.Next() {
 				l := new(g.AlertLog)
 				err := rows.Scan(&l.Logtime, &l.Targetname, &l.Targetip, &l.Tracert)
-				l.Fromname = g.Cfg.Name
-				l.Fromip = g.Cfg.Addr
+				l.Fromname = config.Name
+				l.Fromip = config.Addr
 				if err != nil {
 					logrus.Error("[/api/alert.json] Rows", err)
 					continue
@@ -241,7 +223,7 @@ func configApiRoutes() {
 			Mapjson string
 		}
 		chinaMp := g.ChinaMp{}
-		chinaMp.Text = g.Cfg.Name
+		chinaMp.Text = g.ConfigSnapshot().Name
 		chinaMp.Subtext = dataKey
 		chinaMp.Avgdelay = map[string][]g.MapVal{}
 		chinaMp.Avgdelay["ctcc"] = []g.MapVal{}
@@ -278,17 +260,11 @@ func configApiRoutes() {
 			return
 		}
 		nowtime := int(time.Now().Unix())
-		g.ToolLimitLock.Lock()
-		if _, ok := g.ToolLimit[r.RemoteAddr]; ok {
-			if (nowtime - g.ToolLimit[r.RemoteAddr]) <= g.Cfg.Toollimit {
-				g.ToolLimitLock.Unlock()
-				preout.Error = "Time Limit Exceeded!"
-				RenderJson(w, preout)
-				return
-			}
+		if !allowToolRequest(r.RemoteAddr, nowtime, g.ConfigSnapshot().Toollimit) {
+			preout.Error = "Time Limit Exceeded!"
+			RenderJson(w, preout)
+			return
 		}
-		g.ToolLimit[r.RemoteAddr] = nowtime
-		g.ToolLimitLock.Unlock()
 		target := strings.Replace(strings.Replace(r.Form["t"][0], "https://", "", -1), "http://", "", -1)
 		preout.Ping = g.PingSt{}
 		preout.Ping.MinDelay = -1
@@ -368,7 +344,7 @@ func configApiRoutes() {
 		preout := make(map[string]string)
 		r.ParseForm()
 		preout["status"] = "false"
-		if len(r.Form["password"]) == 0 || r.Form["password"][0] != g.Cfg.Password {
+		if len(r.Form["password"]) == 0 || r.Form["password"][0] != g.ConfigSnapshot().Password {
 			preout["info"] = "密码错误!"
 			RenderJson(w, preout)
 			return
@@ -387,7 +363,8 @@ func configApiRoutes() {
 		preout := make(map[string]string)
 		r.ParseForm()
 		preout["status"] = "false"
-		if len(r.Form["password"]) == 0 || r.Form["password"][0] != g.Cfg.Password {
+		currentConfig := g.ConfigSnapshot()
+		if len(r.Form["password"]) == 0 || r.Form["password"][0] != currentConfig.Password {
 			preout["info"] = "密码错误!"
 			RenderJson(w, preout)
 			return
@@ -521,11 +498,10 @@ func configApiRoutes() {
 				}
 			}
 		}
-		nconfig.Ver = g.Cfg.Ver
-		nconfig.Port = g.Cfg.Port
-		nconfig.Password = g.Cfg.Password
-		g.Cfg = nconfig
-		g.SelfCfg = g.Cfg.Network[g.Cfg.Addr]
+		nconfig.Ver = currentConfig.Ver
+		nconfig.Port = currentConfig.Port
+		nconfig.Password = currentConfig.Password
+		g.SetConfig(nconfig)
 		saveerr := g.SaveConfig()
 		if saveerr != nil {
 			preout["info"] = saveerr.Error()

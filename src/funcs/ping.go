@@ -7,6 +7,7 @@ import (
 	"smartping/src/nettools"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -18,6 +19,8 @@ const (
 	defaultPingTimeoutMs  = 3000
 	defaultPingStaggerMs  = 100
 )
+
+var pingRunning int32
 
 func resolvePingRoundConfig() (int, time.Duration, time.Duration, time.Duration) {
 	pingCount := g.GetBaseInt("PingCount", defaultPingCount)
@@ -43,6 +46,11 @@ func resolvePingRoundConfig() (int, time.Duration, time.Duration, time.Duration)
 }
 
 func Ping() {
+	if !atomic.CompareAndSwapInt32(&pingRunning, 0, 1) {
+		logrus.Warn("[func:Ping] Previous round still running, skip")
+		return
+	}
+	defer atomic.StoreInt32(&pingRunning, 0)
 	roundTime := time.Now().Truncate(time.Minute)
 	runPingRound(roundTime)
 }
@@ -50,11 +58,13 @@ func Ping() {
 func runPingRound(roundTime time.Time) {
 	pingCount, pingInterval, pingTimeout, pingStagger := resolvePingRoundConfig()
 	logtime := roundTime.Format("2006-01-02 15:04")
+	config := g.ConfigSnapshot()
+	selfConfig := config.Network[config.Addr]
 
 	var wg sync.WaitGroup
 	validIndex := 0
-	for _, target := range g.SelfCfg.Ping {
-		t, ok := g.Cfg.Network[target]
+	for _, target := range selfConfig.Ping {
+		t, ok := config.Network[target]
 		if !ok || strings.TrimSpace(t.Addr) == "" {
 			logrus.Warnf("[func:Ping] Skip invalid ping target: %q", target)
 			continue

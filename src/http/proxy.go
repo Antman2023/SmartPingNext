@@ -59,11 +59,12 @@ func validateProxyTarget(rawTarget string) (*url.URL, error) {
 		return nil, errors.New("Proxy Target Not Allowed!")
 	}
 
-	if !isConfiguredProxyTargetHost(targetURL.Hostname()) {
+	config := g.ConfigSnapshot()
+	if !isConfiguredProxyTargetHost(targetURL.Hostname(), config) {
 		return nil, errors.New("Proxy Target Host Not Allowed!")
 	}
 
-	if !isConfiguredProxyTargetPort(targetURL.Port(), scheme) {
+	if !isConfiguredProxyTargetPort(targetURL.Port(), config) {
 		return nil, errors.New("Proxy Target Port Not Allowed!")
 	}
 
@@ -97,13 +98,13 @@ func (r proxyQueryRule) validate(values url.Values) error {
 	return nil
 }
 
-func isConfiguredProxyTargetHost(host string) bool {
+func isConfiguredProxyTargetHost(host string, config g.Config) bool {
 	normalizedHost := normalizeProxyTargetHost(host)
 	if normalizedHost == "" {
 		return false
 	}
 
-	for key, member := range g.Cfg.Network {
+	for key, member := range config.Network {
 		if normalizeProxyTargetHost(key) == normalizedHost {
 			return true
 		}
@@ -133,7 +134,7 @@ func normalizeProxyTargetHost(host string) string {
 	return parsedIP.String()
 }
 
-func isConfiguredProxyTargetPort(port string, scheme string) bool {
+func isConfiguredProxyTargetPort(port string, config g.Config) bool {
 	if port == "" {
 		return false
 	}
@@ -143,5 +144,5 @@ func isConfiguredProxyTargetPort(port string, scheme string) bool {
 		return false
 	}
 
-	return targetPort == g.Cfg.Port
+	return targetPort == config.Port
 }

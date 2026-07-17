@@ -13,7 +13,7 @@ export class ApiError extends Error {
 
 interface AxiosErrorResponse {
   status: number
-  data?: { message?: string }
+  data?: { message?: string; info?: string }
 }
 
 interface AxiosError {
@@ -49,7 +49,7 @@ export function handleNetworkError(error: unknown): ApiError {
 
       switch (status) {
         case 400:
-          return new ApiError(data?.message || '请求参数错误', status)
+          return new ApiError(data?.info || data?.message || '请求参数错误', status)
         case 401:
           return new ApiError('未授权，请登录', status)
         case 403:
@@ -57,7 +57,7 @@ export function handleNetworkError(error: unknown): ApiError {
         case 404:
           return new ApiError('请求资源不存在', status)
         case 500:
-          return new ApiError(data?.message || '服务器内部错误', status)
+          return new ApiError(data?.info || data?.message || '服务器内部错误', status)
         case 502:
           return new ApiError('网关错误', status)
         case 503:
@@ -65,7 +65,7 @@ export function handleNetworkError(error: unknown): ApiError {
         case 504:
           return new ApiError('网关超时', status)
         default:
-          return new ApiError(data?.message || `请求失败 (${status})`, status)
+          return new ApiError(data?.info || data?.message || `请求失败 (${status})`, status)
       }
     } else if (error.request) {
       return new ApiError('网络连接失败，请检查网络', 0)

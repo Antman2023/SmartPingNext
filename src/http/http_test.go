@@ -3,9 +3,11 @@ package http
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"smartping/src/g"
 	"strings"
 	"testing"
+	"time"
 )
 
 func cloneBoolMap(in map[string]bool) map[string]bool {
@@ -155,5 +157,96 @@ func TestRenderJsonMarshalError(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("RenderJson status code = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestResolvePingTimeRange(t *testing.T) {
+	now := time.Date(2026, 7, 17, 12, 34, 45, 0, time.UTC)
+
+	t.Run("default six hours", func(t *testing.T) {
+		start, end, err := resolvePingTimeRange(url.Values{}, now, time.UTC)
+		if err != nil {
+			t.Fatalf("resolvePingTimeRange returned error: %v", err)
+		}
+		if got := end.Sub(start); got != 6*time.Hour {
+			t.Fatalf("default range = %v, want %v", got, 6*time.Hour)
+		}
+		if end.Second() != 0 {
+			t.Fatalf("default end should be minute-aligned: %v", end)
+		}
+	})
+
+	t.Run("valid custom range", func(t *testing.T) {
+		values := url.Values{
+			"starttime": {"2026-07-10 12:00"},
+			"endtime":   {"2026-07-17 12:00"},
+		}
+		if _, _, err := resolvePingTimeRange(values, now, time.UTC); err != nil {
+			t.Fatalf("valid range returned error: %v", err)
+		}
+	})
+
+	cases := map[string]url.Values{
+		"missing end": {
+			"starttime": {"2026-07-10 12:00"},
+		},
+		"invalid date": {
+			"starttime": {"invalid"},
+			"endtime":   {"2026-07-17 12:00"},
+		},
+		"reversed": {
+			"starttime": {"2026-07-17 12:00"},
+			"endtime":   {"2026-07-10 12:00"},
+		},
+		"over limit": {
+			"starttime": {"2026-06-01 12:00"},
+			"endtime":   {"2026-07-17 12:00"},
+		},
+	}
+	for name, values := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := resolvePingTimeRange(values, now, time.UTC); err == nil {
+				t.Fatalf("resolvePingTimeRange should reject %s", name)
+			}
+		})
+	}
+}
+
+func TestAllowToolRequestUsesClientIPAndCleansExpiredEntries(t *testing.T) {
+	g.ToolLimitLock.Lock()
+	oldToolLimit := g.ToolLimit
+	g.ToolLimit = map[string]int{"expired": 800}
+	g.ToolLimitLock.Unlock()
+	defer func() {
+		g.ToolLimitLock.Lock()
+		g.ToolLimit = oldToolLimit
+		g.ToolLimitLock.Unlock()
+	}()
+
+	if !allowToolRequest("192.0.2.1:10001", 1000, 30) {
+		t.Fatalf("first request should be allowed")
+	}
+	if allowToolRequest("192.0.2.1:10002", 1001, 30) {
+		t.Fatalf("same client IP should be rate-limited across source ports")
+	}
+	g.ToolLimitLock.RLock()
+	_, expiredExists := g.ToolLimit["expired"]
+	_, ipExists := g.ToolLimit["192.0.2.1"]
+	g.ToolLimitLock.RUnlock()
+	if expiredExists {
+		t.Fatalf("expired rate-limit entry should be removed")
+	}
+	if !ipExists {
+		t.Fatalf("rate-limit map should use normalized client IP")
+	}
+}
+
+func TestNewHTTPServerTimeouts(t *testing.T) {
+	server := newHTTPServer(":8899", http.NewServeMux())
+	if server.ReadHeaderTimeout <= 0 || server.ReadTimeout <= 0 || server.WriteTimeout <= 0 || server.IdleTimeout <= 0 {
+		t.Fatalf("server timeouts must all be positive: %#v", server)
+	}
+	if server.MaxHeaderBytes <= 0 {
+		t.Fatalf("MaxHeaderBytes must be positive")
 	}
 }

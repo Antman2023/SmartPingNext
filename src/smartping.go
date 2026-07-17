@@ -27,7 +27,7 @@ func main() {
 	c.AddFunc("*/60 * * * * *", func() {
 		go funcs.Ping()
 		go funcs.Mapping()
-		if g.Cfg.Mode["Type"] == "cloud" {
+		if g.ConfigSnapshot().Mode["Type"] == "cloud" {
 			go funcs.StartCloudMonitor()
 		}
 	}, "ping")

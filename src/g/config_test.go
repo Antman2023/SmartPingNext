@@ -116,26 +116,24 @@ func TestGetBaseInt(t *testing.T) {
 	})
 }
 
-func TestSaveAuth(t *testing.T) {
+func TestSetConfigUpdatesAuth(t *testing.T) {
 	withGlobalConfigState(t, func() {
-		Cfg = Config{
+		SetConfig(Config{
 			Authiplist: " 127.0.0.1, ::1 ",
 			Network: map[string]NetworkMember{
 				"127.0.0.1": {Addr: "127.0.0.1"},
 				"::1":       {Addr: "::1"},
 			},
-		}
-
-		saveAuth()
+		})
 
 		if Cfg.Authiplist != "127.0.0.1,::1" {
-			t.Fatalf("saveAuth normalized Authiplist = %q", Cfg.Authiplist)
+			t.Fatalf("SetConfig normalized Authiplist = %q", Cfg.Authiplist)
 		}
 		if !AuthUserIpMap["127.0.0.1"] || !AuthUserIpMap["::1"] {
-			t.Fatalf("saveAuth did not populate AuthUserIpMap correctly: %#v", AuthUserIpMap)
+			t.Fatalf("SetConfig did not populate AuthUserIpMap correctly: %#v", AuthUserIpMap)
 		}
 		if !AuthAgentIpMap["127.0.0.1"] || !AuthAgentIpMap["::1"] {
-			t.Fatalf("saveAuth did not populate AuthAgentIpMap correctly: %#v", AuthAgentIpMap)
+			t.Fatalf("SetConfig did not populate AuthAgentIpMap correctly: %#v", AuthAgentIpMap)
 		}
 	})
 }

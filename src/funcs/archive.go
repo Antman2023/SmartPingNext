@@ -10,7 +10,7 @@ import (
 // clear timeout alert table
 func ClearArchive() {
 	logrus.Info("[func:ClearArchive] ", "starting run ClearArchive ")
-	archiveDays := g.Cfg.Base["Archive"]
+	archiveDays := g.ConfigSnapshot().Base["Archive"]
 	if archiveDays <= 0 {
 		archiveDays = 30
 	}

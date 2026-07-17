@@ -12,8 +12,10 @@ import (
 
 func StartAlert() {
 	logrus.Info("[func:StartAlert] ", "starting run AlertCheck ")
-	for _, v := range g.SelfCfg.Topology {
-		if v["Addr"] != g.SelfCfg.Addr {
+	config := g.ConfigSnapshot()
+	selfConfig := config.Network[config.Addr]
+	for _, v := range selfConfig.Topology {
+		if v["Addr"] != selfConfig.Addr {
 			sFlag := CheckAlertStatus(v)
 			g.AlertStatusLock.Lock()
 			if sFlag {
@@ -29,8 +31,8 @@ func StartAlert() {
 			if shouldAlert {
 				logrus.Debug("[func:StartAlert] ", v["Addr"]+" Alert!")
 				l := g.AlertLog{}
-				l.Fromname = g.SelfCfg.Name
-				l.Fromip = g.SelfCfg.Addr
+				l.Fromname = selfConfig.Name
+				l.Fromip = selfConfig.Addr
 				l.Logtime = time.Unix(time.Now().Unix(), 0).Format("2006-01-02 15:04")
 				l.Targetname = v["Name"]
 				l.Targetip = v["Addr"]

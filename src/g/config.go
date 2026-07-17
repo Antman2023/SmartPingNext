@@ -23,6 +23,8 @@ var (
 	Root            string
 	Cfg             Config
 	SelfCfg         NetworkMember
+	CfgLock         sync.RWMutex
+	configSaveLock  sync.Mutex
 	AlertStatus     map[string]bool
 	AlertStatusLock sync.RWMutex
 	AuthUserIpMap   map[string]bool
@@ -110,14 +112,15 @@ func ParseConfig(ver string) {
 		cfile = "config-base.json"
 	}
 	InitLogger(Root)
-	Cfg = ReadConfig(Root + "/conf/" + cfile)
-	if Cfg.Name == "" {
-		Cfg.Name, _ = os.Hostname()
+	config := ReadConfig(Root + "/conf/" + cfile)
+	if config.Name == "" {
+		config.Name, _ = os.Hostname()
 	}
-	if Cfg.Addr == "" {
-		Cfg.Addr = "127.0.0.1"
+	if config.Addr == "" {
+		config.Addr = "127.0.0.1"
 	}
-	Cfg.Ver = ver
+	config.Ver = ver
+	SetConfig(config)
 	if !IsExist(Root + "/db/" + "database.db") {
 		if !IsExist(Root + "/db/" + "database-base.db") {
 			log.Fatalln("[Fault]db file:", Root+"/db/"+"database(-base).db", "both not existent.")
@@ -145,10 +148,8 @@ func ParseConfig(ver string) {
 	}
 	LocalTimezone = time.Local
 	HttpClient = &http.Client{Timeout: 10 * time.Second}
-	SelfCfg = Cfg.Network[Cfg.Addr]
 	AlertStatus = map[string]bool{}
 	ToolLimit = map[string]int{}
-	saveAuth()
 }
 
 func SaveCloudConfig(url string) (Config, error) {
@@ -167,32 +168,61 @@ func SaveCloudConfig(url string) (Config, error) {
 	if config.Mode == nil {
 		config.Mode = map[string]string{}
 	}
-	Name := Cfg.Name
-	Addr := Cfg.Addr
-	Ver := Cfg.Ver
-	Password := Cfg.Password
-	Port := Cfg.Port
-	Endpoint := Cfg.Mode["Endpoint"]
+	downloaded := config
+	published := config
+	published.Mode = make(map[string]string, len(config.Mode)+4)
+	for key, value := range config.Mode {
+		published.Mode[key] = value
+	}
+	current := ConfigSnapshot()
+	published.Name = current.Name
+	published.Addr = current.Addr
+	published.Ver = current.Ver
+	published.Port = current.Port
+	published.Password = current.Password
+	published.Mode["LastSuccTime"] = time.Now().Format("2006-01-02 15:04:05")
+	published.Mode["Status"] = "true"
+	published.Mode["Endpoint"] = current.Mode["Endpoint"]
+	published.Mode["Type"] = "cloud"
+	SetConfig(published)
+	return downloaded, nil
+}
+
+func ConfigSnapshot() Config {
+	CfgLock.RLock()
+	defer CfgLock.RUnlock()
+	return Cfg
+}
+
+func SetConfig(config Config) {
+	config.Authiplist = strings.ReplaceAll(config.Authiplist, " ", "")
+	userIPs := make(map[string]bool)
+	agentIPs := make(map[string]bool)
+	for _, member := range config.Network {
+		agentIPs[member.Addr] = true
+	}
+	if config.Authiplist != "" {
+		for _, ip := range strings.Split(config.Authiplist, ",") {
+			userIPs[ip] = true
+		}
+	}
+
+	CfgLock.Lock()
+	AuthIpLock.Lock()
 	Cfg = config
-	Cfg.Name = Name
-	Cfg.Addr = Addr
-	Cfg.Ver = Ver
-	Cfg.Port = Port
-	Cfg.Password = Password
-	Cfg.Mode["LastSuccTime"] = time.Now().Format("2006-01-02 15:04:05")
-	Cfg.Mode["Status"] = "true"
-	Cfg.Mode["Endpoint"] = Endpoint
-	Cfg.Mode["Type"] = "cloud"
-	SelfCfg = Cfg.Network[Cfg.Addr]
-	saveAuth()
-	return config, nil
+	SelfCfg = config.Network[config.Addr]
+	AuthUserIpMap = userIPs
+	AuthAgentIpMap = agentIPs
+	AuthIpLock.Unlock()
+	CfgLock.Unlock()
 }
 
 func GetBaseInt(key string, defaultValue int) int {
-	if Cfg.Base == nil {
+	config := ConfigSnapshot()
+	if config.Base == nil {
 		return defaultValue
 	}
-	v, ok := Cfg.Base[key]
+	v, ok := config.Base[key]
 	if !ok || v <= 0 {
 		return defaultValue
 	}
@@ -200,8 +230,10 @@ func GetBaseInt(key string, defaultValue int) int {
 }
 
 func SaveConfig() error {
-	saveAuth()
-	rrs, _ := json.Marshal(Cfg)
+	configSaveLock.Lock()
+	defer configSaveLock.Unlock()
+	config := ConfigSnapshot()
+	rrs, _ := json.Marshal(config)
 	var out bytes.Buffer
 	errjson := json.Indent(&out, rrs, "", "\t")
 	if errjson != nil {
@@ -214,21 +246,4 @@ func SaveConfig() error {
 		return err
 	}
 	return nil
-}
-
-func saveAuth() {
-	AuthIpLock.Lock()
-	defer AuthIpLock.Unlock()
-	AuthUserIpMap = map[string]bool{}
-	AuthAgentIpMap = map[string]bool{}
-	for _, k := range Cfg.Network {
-		AuthAgentIpMap[k.Addr] = true
-	}
-	Cfg.Authiplist = strings.Replace(Cfg.Authiplist, " ", "", -1)
-	if Cfg.Authiplist != "" {
-		authiplist := strings.Split(Cfg.Authiplist, ",")
-		for _, ip := range authiplist {
-			AuthUserIpMap[ip] = true
-		}
-	}
 }

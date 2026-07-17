@@ -36,21 +36,23 @@ func Mapping() {
 
 	var wg sync.WaitGroup
 	workerLimit := g.GetBaseInt("MappingConcurrency", defaultMappingConcurrency)
+	config := g.ConfigSnapshot()
 	sem := make(chan struct{}, workerLimit)
 	MapLock.Lock()
 	MapStatus = map[string][]g.MapVal{}
 	MapLock.Unlock()
-	logrus.Debug("[func:Mapping]", g.Cfg.Chinamap)
-	for tel, provDetail := range g.Cfg.Chinamap {
+	logrus.Debug("[func:Mapping]", config.Chinamap)
+	for tel, provDetail := range config.Chinamap {
 		for prov := range provDetail {
-			logrus.Debug("[func:Mapping]", g.Cfg.Chinamap[tel][prov])
-			if len(g.Cfg.Chinamap[tel][prov]) > 0 {
+			ips := provDetail[prov]
+			logrus.Debug("[func:Mapping]", ips)
+			if len(ips) > 0 {
 				wg.Add(1)
 				sem <- struct{}{}
 				go func(tel, prov string, ips []string) {
 					defer func() { <-sem }()
 					MappingTask(tel, prov, ips, &wg)
-				}(tel, prov, g.Cfg.Chinamap[tel][prov])
+				}(tel, prov, ips)
 			}
 		}
 	}
