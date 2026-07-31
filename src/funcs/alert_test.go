@@ -126,6 +126,26 @@ func TestCheckAlertStatus(t *testing.T) {
 	})
 }
 
+func TestAlertWindowStartUsesMinuteSamples(t *testing.T) {
+	now := time.Date(2026, 7, 31, 12, 0, 57, 0, time.Local)
+	tests := []struct {
+		name          string
+		windowSeconds int
+		want          time.Time
+	}{
+		{name: "sub-minute legacy window", windowSeconds: 1, want: time.Date(2026, 7, 31, 12, 0, 0, 0, time.Local)},
+		{name: "fifteen minute window", windowSeconds: 900, want: time.Date(2026, 7, 31, 11, 46, 0, 0, time.Local)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := alertWindowStart(now, tt.windowSeconds); !got.Equal(tt.want) {
+				t.Fatalf("alertWindowStart = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAlertStorage(t *testing.T) {
 	schema := []string{
 		`CREATE TABLE alertlog (logtime TEXT, targetip TEXT, targetname TEXT, tracert TEXT);`,

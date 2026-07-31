@@ -172,6 +172,7 @@ import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
 import { fetchConfig, fetchProxyConfig } from '@/api/config'
+import { getProxyPingData } from '@/api/ping'
 import { displayName, formatDateTime } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
 
@@ -202,7 +203,7 @@ const autoRefresh = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 const detailAutoRefresh = ref(false)
 let detailRefreshTimer: ReturnType<typeof setInterval> | null = null
-const REFRESH_INTERVAL = 60 * 1000
+const refreshInterval = computed(() => Math.max(config.value?.Base.Refresh || 1, 1) * 60 * 1000)
 
 const timeRanges = computed(() => [
   { label: t('dashboard.timeRanges.hour1'), hours: 1 },
@@ -262,12 +263,10 @@ const loadAllCharts = async () => {
 const loadChartData = async (target: ReverseTarget) => {
   target.loading = true
   try {
-    const proxyUrl = `http://${target.fromAddr}:${target.fromPort}/api/ping.json?ip=${target.targetIp}`
-    const response = await fetch(`/api/proxy.json?g=${encodeURIComponent(proxyUrl)}`)
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-    target.chartData = await response.json()
+    target.chartData = await getProxyPingData(
+      `http://${target.fromAddr}:${target.fromPort}`,
+      target.targetIp
+    )
   } catch (error) {
     console.error('加载图表数据失败', error)
     target.chartData = null
@@ -278,6 +277,7 @@ const loadChartData = async (target: ReverseTarget) => {
 
 const switchAgent = async (agent: { name: string; addr: string; loading: boolean }) => {
   agent.loading = true
+  detailVisible.value = false
   currentAgent.value = agent.addr
   const proxyUrl = `http://${agent.addr}:${config.value?.Port}`
   await loadConfig(proxyUrl)
@@ -297,19 +297,16 @@ const loadDetailData = async () => {
     return
   }
 
-  let remoteUrl = `http://${currentTarget.value.fromAddr}:${currentTarget.value.fromPort}/api/ping.json?ip=${currentTarget.value.targetIp}`
-  if (startTime.value) {
-    remoteUrl += `&starttime=${encodeURIComponent(startTime.value)}`
-  }
-  if (endTime.value) {
-    remoteUrl += `&endtime=${encodeURIComponent(endTime.value)}`
-  }
-
   try {
-    const response = await fetch(`/api/proxy.json?g=${encodeURIComponent(remoteUrl)}`)
-    detailData.value = await response.json()
+    detailData.value = await getProxyPingData(
+      `http://${currentTarget.value.fromAddr}:${currentTarget.value.fromPort}`,
+      currentTarget.value.targetIp,
+      startTime.value,
+      endTime.value
+    )
   } catch (error) {
     console.error('加载数据失败', error)
+    detailData.value = null
   }
 }
 
@@ -352,7 +349,7 @@ onMounted(() => {
   loadConfig()
 })
 
-watch(autoRefresh, (enabled) => {
+watch([autoRefresh, refreshInterval], ([enabled, interval]) => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
     refreshTimer = null
@@ -361,11 +358,11 @@ watch(autoRefresh, (enabled) => {
   if (enabled) {
     refreshTimer = setInterval(() => {
       loadAllCharts()
-    }, REFRESH_INTERVAL)
+    }, interval)
   }
 })
 
-watch(detailAutoRefresh, (enabled) => {
+watch([detailAutoRefresh, refreshInterval], ([enabled, interval]) => {
   if (detailRefreshTimer) {
     clearInterval(detailRefreshTimer)
     detailRefreshTimer = null
@@ -374,7 +371,7 @@ watch(detailAutoRefresh, (enabled) => {
   if (enabled) {
     detailRefreshTimer = setInterval(() => {
       loadDetailData()
-    }, REFRESH_INTERVAL)
+    }, interval)
   }
 })
 

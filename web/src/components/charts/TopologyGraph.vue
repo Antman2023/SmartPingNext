@@ -11,6 +11,7 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { debounce } from '@/utils/debounce'
 
 interface Node {
+  id: string
   name: string
   color: string
 }
@@ -54,6 +55,8 @@ const clearAllTimers = () => {
 
 const getChartOption = (): EChartsOption => {
   const isDark = themeStore.theme === 'dark'
+  const symbolSize = props.symbolSize || 50
+  const layoutPadding = Math.ceil(symbolSize / 2) + 12
 
   return {
     backgroundColor: 'transparent',
@@ -64,12 +67,20 @@ const getChartOption = (): EChartsOption => {
       {
         type: 'graph',
         layout: 'circular',
-        symbolSize: props.symbolSize || 50,
-        focusNodeAdjacency: true,
+        left: layoutPadding,
+        right: layoutPadding,
+        top: layoutPadding,
+        bottom: layoutPadding,
+        symbolSize,
+        emphasis: {
+          focus: 'adjacency'
+        },
         roam: true,
         label: {
           show: true,
-          color: isDark ? '#e5eaf3' : '#303133'
+          color: isDark ? '#e5eaf3' : '#303133',
+          width: Math.max(symbolSize - 12, 32),
+          overflow: 'truncate'
         },
         edgeSymbol: ['circle', 'arrow'],
         edgeSymbolSize: [3, 15],
@@ -77,6 +88,7 @@ const getChartOption = (): EChartsOption => {
           fontSize: 12
         },
         data: props.nodes.map(node => ({
+          id: node.id,
           name: node.name,
           draggable: true,
           itemStyle: {

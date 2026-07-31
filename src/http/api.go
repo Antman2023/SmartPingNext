@@ -449,10 +449,8 @@ func configApiRoutes() {
 		nconfig.Ver = currentConfig.Ver
 		nconfig.Port = currentConfig.Port
 		nconfig.Password = currentConfig.Password
-		g.SetConfig(nconfig)
-		saveerr := g.SaveConfig()
-		if saveerr != nil {
-			preout["info"] = saveerr.Error()
+		if err := g.ApplyConfig(nconfig); err != nil {
+			preout["info"] = err.Error()
 			RenderJson(w, preout)
 			return
 		}

@@ -23,7 +23,7 @@
           </div>
           <div class="page-kpi">
             <span class="page-kpi__label">{{ $t('common.loaded') }}</span>
-            <strong class="page-kpi__value">{{ monitoredNodes.length - loadingNodes.size }}</strong>
+            <strong class="page-kpi__value">{{ loadedNodes }}</strong>
           </div>
         </div>
       </div>
@@ -76,12 +76,16 @@
           </div>
 
           <div class="list-stack">
-            <div v-for="node in monitoredNodes" :key="node.name" class="list-row">
+            <div v-for="node in monitoredNodes" :key="node.id" class="list-row">
               <div class="list-row__meta">
-                <el-icon v-if="loadingNodes.has(node.rawName)" class="is-loading"
+                <el-icon v-if="loadingNodes.has(node.id)" class="is-loading"
                   ><Loading
                 /></el-icon>
-                <el-icon v-else-if="node.color === 'red'" class="text-danger"><Warning /></el-icon>
+                <el-icon
+                  v-else-if="node.color === 'red' || failedNodes.has(node.id)"
+                  class="text-danger"
+                  ><Warning
+                /></el-icon>
                 <div
                   v-else
                   class="topology-view__dot"
@@ -115,13 +119,15 @@ const router = useRouter()
 const { t } = useI18n()
 const config = ref<Config | null>(null)
 const loadingNodes = ref(new Set<string>())
+const failedNodes = ref(new Set<string>())
 const topologyStatus = ref<Record<string, Record<string, string>>>({})
 const graphHeight = ref(Math.max(window.innerHeight - 300, 420))
 
 interface TopoNode {
+  id: string
   name: string
-  rawName: string
   color: string
+  monitored: boolean
 }
 
 interface TopoLink {
@@ -137,12 +143,23 @@ const topologyNodes = computed<TopoNode[]>(() => {
   }
 
   const nodes: TopoNode[] = []
-  Object.values(config.value.Network).forEach((network) => {
+  Object.entries(config.value.Network).forEach(([addr, network]) => {
     const hasTopology = network.Topology && network.Topology.length > 0
+    const statuses = hasTopology
+      ? network.Topology.map((topology) => topologyStatus.value[addr]?.[topology.Addr])
+      : []
+    const color = statuses.some((status) => status === 'false')
+      ? 'red'
+      : statuses.length > 0 && statuses.every((status) => status === 'true')
+        ? 'green'
+        : hasTopology
+          ? 'gray'
+          : 'green'
     nodes.push({
+      id: addr,
       name: displayName(network.Name),
-      rawName: network.Name,
-      color: hasTopology ? 'gray' : 'green'
+      color,
+      monitored: hasTopology
     })
   })
   return nodes
@@ -163,8 +180,8 @@ const topologyLinks = computed<TopoLink[]>(() => {
 
       const status = topologyStatus.value[addr]?.[topo.Addr]
       links.push({
-        source: displayName(network.Name),
-        target: displayName(targetNetwork.Name),
+        source: addr,
+        target: topo.Addr,
         color: status === 'true' ? 'green' : status === 'false' ? 'red' : 'gray',
         curveness: status === 'true' ? 0 : 0.2
       })
@@ -173,7 +190,10 @@ const topologyLinks = computed<TopoLink[]>(() => {
   return links
 })
 
-const monitoredNodes = computed(() => topologyNodes.value.filter((node) => node.color !== 'green'))
+const monitoredNodes = computed(() => topologyNodes.value.filter((node) => node.monitored))
+const loadedNodes = computed(
+  () => monitoredNodes.value.length - loadingNodes.value.size - failedNodes.value.size
+)
 const degradedLinks = computed(
   () => topologyLinks.value.filter((link) => link.color === 'red').length
 )
@@ -198,14 +218,17 @@ const loadTopologyStatus = async () => {
   )
 
   const promises = networkWithTopology.map(async ([addr, network]) => {
-    loadingNodes.value.add(network.Name)
+    loadingNodes.value.add(addr)
+    failedNodes.value.delete(addr)
+    delete topologyStatus.value[addr]
     try {
-      const status = await getTopology(addr, config.value!.Port)
+      const status = await getTopology(addr, config.value!.Port, config.value!.Addr)
       topologyStatus.value[addr] = status
     } catch (error) {
+      failedNodes.value.add(addr)
       console.error(`获取 ${network.Name} 拓扑状态失败`, error)
     } finally {
-      loadingNodes.value.delete(network.Name)
+      loadingNodes.value.delete(addr)
     }
   })
 
@@ -217,8 +240,11 @@ const handleResize = () => {
 }
 
 const getNodeStatus = (node: TopoNode) => {
-  if (loadingNodes.value.has(node.rawName)) {
+  if (loadingNodes.value.has(node.id)) {
     return t('common.loading')
+  }
+  if (failedNodes.value.has(node.id)) {
+    return t('common.loadFailed')
   }
   if (node.color === 'red') {
     return t('common.alert')

@@ -181,27 +181,10 @@ func SaveCloudConfig(url string) (Config, error) {
 	if config.Mode == nil {
 		config.Mode = map[string]string{}
 	}
-	downloaded := config
-	published := config
-	published.Mode = make(map[string]string, len(config.Mode)+4)
-	for key, value := range config.Mode {
-		published.Mode[key] = value
+	if err := applyCloudConfig(config, url); err != nil {
+		return config, err
 	}
-	current := ConfigSnapshot()
-	published.Name = current.Name
-	published.Addr = current.Addr
-	published.Ver = current.Ver
-	published.Port = current.Port
-	published.Password = current.Password
-	published.Mode["LastSuccTime"] = time.Now().Format("2006-01-02 15:04:05")
-	published.Mode["Status"] = "true"
-	published.Mode["Endpoint"] = current.Mode["Endpoint"]
-	published.Mode["Type"] = "cloud"
-	if err := ValidateConfig(published); err != nil {
-		return downloaded, fmt.Errorf("invalid cloud config: %w", err)
-	}
-	SetConfig(published)
-	return downloaded, nil
+	return config, nil
 }
 
 func readCloudConfigBody(reader io.Reader) ([]byte, error) {
@@ -223,20 +206,17 @@ func ConfigSnapshot() Config {
 }
 
 func SetConfig(config Config) {
+	config = normalizeConfig(config)
 	userIPs := make(map[string]bool)
 	agentIPs := make(map[string]bool)
 	for _, member := range config.Network {
 		agentIPs[normalizeIP(member.Addr)] = true
 	}
-	normalizedAuthIPs := make([]string, 0)
-	for _, rawIP := range strings.Split(strings.ReplaceAll(config.Authiplist, " ", ""), ",") {
+	for _, rawIP := range strings.Split(config.Authiplist, ",") {
 		if rawIP != "" {
-			ip := normalizeIP(rawIP)
-			normalizedAuthIPs = append(normalizedAuthIPs, ip)
-			userIPs[ip] = true
+			userIPs[rawIP] = true
 		}
 	}
-	config.Authiplist = strings.Join(normalizedAuthIPs, ",")
 
 	CfgLock.Lock()
 	AuthIpLock.Lock()
@@ -246,6 +226,31 @@ func SetConfig(config Config) {
 	AuthAgentIpMap = agentIPs
 	AuthIpLock.Unlock()
 	CfgLock.Unlock()
+}
+
+func normalizeConfig(config Config) Config {
+	normalizedAuthIPs := make([]string, 0)
+	for _, rawIP := range strings.Split(strings.ReplaceAll(config.Authiplist, " ", ""), ",") {
+		if rawIP != "" {
+			normalizedAuthIPs = append(normalizedAuthIPs, normalizeIP(rawIP))
+		}
+	}
+	config.Authiplist = strings.Join(normalizedAuthIPs, ",")
+	return config
+}
+
+func SetCloudStatus(endpoint string, status string) {
+	CfgLock.Lock()
+	defer CfgLock.Unlock()
+	if Cfg.Mode["Type"] != "cloud" || Cfg.Mode["Endpoint"] != endpoint {
+		return
+	}
+	mode := make(map[string]string, len(Cfg.Mode)+1)
+	for key, value := range Cfg.Mode {
+		mode[key] = value
+	}
+	mode["Status"] = status
+	Cfg.Mode = mode
 }
 
 func normalizeIP(value string) string {
@@ -274,7 +279,54 @@ func GetBaseInt(key string, defaultValue int) int {
 func SaveConfig() error {
 	configSaveLock.Lock()
 	defer configSaveLock.Unlock()
-	config := ConfigSnapshot()
+	return saveConfigFile(ConfigSnapshot())
+}
+
+func ApplyConfig(config Config) error {
+	configSaveLock.Lock()
+	defer configSaveLock.Unlock()
+	return applyConfigLocked(config)
+}
+
+func applyCloudConfig(downloaded Config, endpoint string) error {
+	configSaveLock.Lock()
+	defer configSaveLock.Unlock()
+
+	current := ConfigSnapshot()
+	if current.Mode["Type"] != "cloud" || current.Mode["Endpoint"] != endpoint {
+		return errors.New("cloud configuration changed while request was in flight")
+	}
+
+	published := downloaded
+	published.Mode = make(map[string]string, len(downloaded.Mode)+4)
+	for key, value := range downloaded.Mode {
+		published.Mode[key] = value
+	}
+	published.Name = current.Name
+	published.Addr = current.Addr
+	published.Ver = current.Ver
+	published.Port = current.Port
+	published.Password = current.Password
+	published.Mode["LastSuccTime"] = time.Now().Format("2006-01-02 15:04:05")
+	published.Mode["Status"] = "true"
+	published.Mode["Endpoint"] = endpoint
+	published.Mode["Type"] = "cloud"
+	if err := ValidateConfig(published); err != nil {
+		return fmt.Errorf("invalid cloud config: %w", err)
+	}
+	return applyConfigLocked(published)
+}
+
+func applyConfigLocked(config Config) error {
+	config = normalizeConfig(config)
+	if err := saveConfigFile(config); err != nil {
+		return err
+	}
+	SetConfig(config)
+	return nil
+}
+
+func saveConfigFile(config Config) error {
 	data, err := json.MarshalIndent(config, "", "\t")
 	if err != nil {
 		logrus.Error("[func:SaveConfig] Json Parse ", err)

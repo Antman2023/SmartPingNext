@@ -1,6 +1,8 @@
 package nettools
 
 import (
+	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -26,5 +28,36 @@ func TestRunMtrZeroTTL(t *testing.T) {
 	}
 	if len(res) != 0 {
 		t.Fatalf("RunMtr with maxttl=0 should return empty result")
+	}
+}
+
+func TestSummarizeMtrInitializesBestFromFirstSuccessfulResponse(t *testing.T) {
+	got := summarizeMtr([]ICMP{
+		{Timeout: true},
+		{Addr: &net.IPAddr{IP: net.ParseIP("192.0.2.1")}, RTT: 8 * time.Millisecond},
+		{Addr: &net.IPAddr{IP: net.ParseIP("192.0.2.2")}, RTT: 3 * time.Millisecond},
+	})
+
+	if got.Send != 3 || got.Loss != 1 {
+		t.Fatalf("send/loss = %d/%d, want 3/1", got.Send, got.Loss)
+	}
+	if got.Best != 3*time.Millisecond || got.Wrst != 8*time.Millisecond {
+		t.Fatalf("best/worst = %v/%v, want 3ms/8ms", got.Best, got.Wrst)
+	}
+	if got.Avg != 5500*time.Microsecond || got.Last != 3*time.Millisecond {
+		t.Fatalf("avg/last = %v/%v, want 5.5ms/3ms", got.Avg, got.Last)
+	}
+	if got.StDev != 2.5 {
+		t.Fatalf("stdev = %v, want 2.5", got.StDev)
+	}
+}
+
+func TestSummarizeMtrAllFailures(t *testing.T) {
+	got := summarizeMtr([]ICMP{{Timeout: true}, {Error: errors.New("read failed")}})
+	if got.Send != 2 || got.Loss != 2 {
+		t.Fatalf("send/loss = %d/%d, want 2/2", got.Send, got.Loss)
+	}
+	if got.Best != 0 || got.Avg != 0 || got.Wrst != 0 || got.StDev != 0 {
+		t.Fatalf("all-failure summary should not report latency: %#v", got)
 	}
 }

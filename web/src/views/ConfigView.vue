@@ -270,17 +270,74 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="topoConfigVisible" :title="$t('config.topoConfig')" width="560px">
+    <el-dialog
+      v-model="topoConfigVisible"
+      :title="$t('config.topoConfig')"
+      width="min(960px, 94vw)"
+    >
       <p class="config-view__dialog-tip">
         {{ $t('config.selectTopoTargets', { name: currentEditNode?.Name }) }}
       </p>
       <div class="table-scroll">
-        <el-table :data="topoTargetList" stripe max-height="420">
-          <el-table-column prop="Name" :label="$t('config.nodeName')" min-width="150" />
-          <el-table-column prop="Addr" :label="$t('config.nodeIP')" min-width="150" />
-          <el-table-column :label="$t('common.enable')" width="90" align="center">
+        <el-table :data="topoTargetList" stripe max-height="460">
+          <el-table-column prop="Name" :label="$t('config.nodeName')" min-width="130" />
+          <el-table-column prop="Addr" :label="$t('config.nodeIP')" width="140" />
+          <el-table-column :label="$t('common.enable')" width="75" align="center">
             <template #default="{ row }">
               <el-checkbox v-model="row.enabled" />
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('config.checkWindow')" width="145">
+            <template #default="{ row }">
+              <el-input-number
+                v-model="row.checkSeconds"
+                class="config-view__number-input"
+                :disabled="!row.enabled"
+                :min="60"
+                :max="86400"
+                :step="60"
+                controls-position="right"
+                size="small"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('config.occurrenceThreshold')" width="125">
+            <template #default="{ row }">
+              <el-input-number
+                v-model="row.occurrenceCount"
+                class="config-view__number-input"
+                :disabled="!row.enabled"
+                :min="1"
+                :max="10000"
+                controls-position="right"
+                size="small"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('config.avgDelayThreshold')" width="135">
+            <template #default="{ row }">
+              <el-input-number
+                v-model="row.avgDelay"
+                class="config-view__number-input"
+                :disabled="!row.enabled"
+                :min="1"
+                :max="60000"
+                controls-position="right"
+                size="small"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column :label="$t('config.lossThreshold')" width="115">
+            <template #default="{ row }">
+              <el-input-number
+                v-model="row.lossPercent"
+                class="config-view__number-input"
+                :disabled="!row.enabled"
+                :min="0"
+                :max="100"
+                controls-position="right"
+                size="small"
+              />
             </template>
           </el-table-column>
         </el-table>
@@ -424,8 +481,18 @@ const pingConfigVisible = ref(false)
 const currentEditNode = ref<{ Name: string; Addr: string } | null>(null)
 const pingTargetList = ref<Array<{ Name: string; Addr: string; enabled: boolean }>>([])
 
+interface TopologyTargetItem {
+  Name: string
+  Addr: string
+  enabled: boolean
+  checkSeconds: number
+  occurrenceCount: number
+  avgDelay: number
+  lossPercent: number
+}
+
 const topoConfigVisible = ref(false)
-const topoTargetList = ref<Array<{ Name: string; Addr: string; enabled: boolean }>>([])
+const topoTargetList = ref<TopologyTargetItem[]>([])
 
 const chinaMapVisible = ref(false)
 const chinaMapTab = ref('ctcc')
@@ -710,16 +777,29 @@ const savePingConfig = () => {
 
 const editTopoConfig = (row: NetworkListItem) => {
   currentEditNode.value = { Name: row.Name, Addr: row.Addr }
-  const currentTopoList =
-    formConfig.Network[row.Addr]?.Topology?.map((topology) => topology.Addr) || []
+  const currentTopologies = new Map(
+    (formConfig.Network[row.Addr]?.Topology || []).map((topology) => [topology.Addr, topology])
+  )
+
+  const ruleNumber = (value: string | undefined, fallback: number, min: number, max: number) => {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? Math.min(Math.max(parsed, min), max) : fallback
+  }
 
   topoTargetList.value = Object.entries(formConfig.Network)
     .filter(([addr]) => addr !== row.Addr)
-    .map(([addr, network]) => ({
-      Name: network.Name,
-      Addr: addr,
-      enabled: currentTopoList.includes(addr)
-    }))
+    .map(([addr, network]) => {
+      const current = currentTopologies.get(addr)
+      return {
+        Name: network.Name,
+        Addr: addr,
+        enabled: !!current,
+        checkSeconds: ruleNumber(current?.Thdchecksec, 900, 60, 86400),
+        occurrenceCount: ruleNumber(current?.Thdoccnum, 3, 1, 10000),
+        avgDelay: ruleNumber(current?.Thdavgdelay, 200, 1, 60000),
+        lossPercent: ruleNumber(current?.Thdloss, 30, 0, 100)
+      }
+    })
 
   topoConfigVisible.value = true
 }
@@ -734,10 +814,10 @@ const saveTopoConfig = () => {
     .map((item) => ({
       Name: item.Name,
       Addr: item.Addr,
-      Thdchecksec: '1',
-      Thdoccnum: '5',
-      Thdavgdelay: '1000',
-      Thdloss: '100'
+      Thdchecksec: String(item.checkSeconds),
+      Thdoccnum: String(item.occurrenceCount),
+      Thdavgdelay: String(item.avgDelay),
+      Thdloss: String(item.lossPercent)
     }))
 
   if (formConfig.Network[currentEditNode.value.Addr]) {
@@ -898,6 +978,10 @@ onMounted(() => {
 
 .config-view__ip-editor :deep(.el-textarea__inner) {
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
+}
+
+.config-view__number-input {
+  width: 100%;
 }
 
 @media (max-width: 1320px) {

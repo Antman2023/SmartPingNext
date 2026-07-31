@@ -68,8 +68,8 @@ func CheckAlertStatus(v map[string]string) (bool, error) {
 	if err != nil || Thdchecksec <= 0 {
 		return false, fmt.Errorf("invalid Thdchecksec %q", v["Thdchecksec"])
 	}
-	timeStartStr := time.Unix((time.Now().Unix() - int64(Thdchecksec)), 0).Format("2006-01-02 15:04")
-	querysql := "SELECT count(1) cnt FROM `pinglog` where logtime > ? and target = ? and (cast(avgdelay as double) > ? or cast(losspk as double) > ?)"
+	timeStartStr := alertWindowStart(time.Now(), Thdchecksec).Format("2006-01-02 15:04")
+	querysql := "SELECT count(1) cnt FROM `pinglog` where logtime >= ? and target = ? and (cast(avgdelay as double) > ? or cast(losspk as double) > ?)"
 	var cnt int
 	err = g.Db.QueryRow(querysql, timeStartStr, v["Addr"], v["Thdavgdelay"], v["Thdloss"]).Scan(&cnt)
 	logrus.Debug("[func:StartAlert] ", querysql)
@@ -81,6 +81,14 @@ func CheckAlertStatus(v map[string]string) (bool, error) {
 		return false, fmt.Errorf("invalid Thdoccnum %q", v["Thdoccnum"])
 	}
 	return cnt <= Thdoccnum, nil
+}
+
+func alertWindowStart(now time.Time, windowSeconds int) time.Time {
+	samples := (windowSeconds + 59) / 60
+	if samples < 1 {
+		samples = 1
+	}
+	return now.Truncate(time.Minute).Add(-time.Duration(samples-1) * time.Minute)
 }
 
 func AlertStorage(t g.AlertLog) {

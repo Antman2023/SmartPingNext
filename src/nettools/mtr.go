@@ -106,46 +106,47 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 		if !ok || len(vals) == 0 {
 			continue
 		}
-		imtr := Mtr{}
-		for id, val := range vals {
-			if val.Addr != nil {
-				imtr.Host = val.Addr.String()
-			} else {
-				if imtr.Host == "" {
-					imtr.Host = "???"
-				}
-			}
-			imtr.Send += 1
-			if val.Timeout {
-				imtr.Loss += 1
-			} else if val.Error != nil {
-				imtr.Loss += 1
-			} else {
-				if imtr.Wrst < val.RTT {
-					imtr.Wrst = val.RTT
-				}
-				if id == 0 {
-					imtr.Best = val.RTT
-				}
-				if imtr.Best > val.RTT {
-					imtr.Best = val.RTT
-				}
-				imtr.Avg += val.RTT
-				imtr.Last = val.RTT
-			}
-		}
-		if (imtr.Send - imtr.Loss) > 0 {
-			imtr.Avg = imtr.Avg / time.Duration(imtr.Send-imtr.Loss)
-			for _, val := range vals {
-				if !val.Timeout && val.Error == nil {
-					v := (float64(val.RTT.Nanoseconds()) / 1e6) - (float64(imtr.Avg.Nanoseconds()) / 1e6)
-					imtr.StDev += v * v
-				}
-			}
-			imtr.StDev = math.Sqrt(imtr.StDev / float64(imtr.Send-imtr.Loss))
-		}
-		result = append(result, imtr)
+		result = append(result, summarizeMtr(vals))
 
 	}
 	return result, nil
+}
+
+func summarizeMtr(vals []ICMP) Mtr {
+	imtr := Mtr{}
+	received := 0
+	for _, val := range vals {
+		if val.Addr != nil {
+			imtr.Host = val.Addr.String()
+		} else if imtr.Host == "" {
+			imtr.Host = "???"
+		}
+		imtr.Send++
+		if val.Timeout || val.Error != nil {
+			imtr.Loss++
+			continue
+		}
+
+		if imtr.Wrst < val.RTT {
+			imtr.Wrst = val.RTT
+		}
+		if received == 0 || imtr.Best > val.RTT {
+			imtr.Best = val.RTT
+		}
+		imtr.Avg += val.RTT
+		imtr.Last = val.RTT
+		received++
+	}
+
+	if received > 0 {
+		imtr.Avg /= time.Duration(received)
+		for _, val := range vals {
+			if !val.Timeout && val.Error == nil {
+				v := (float64(val.RTT.Nanoseconds()) / 1e6) - (float64(imtr.Avg.Nanoseconds()) / 1e6)
+				imtr.StDev += v * v
+			}
+		}
+		imtr.StDev = math.Sqrt(imtr.StDev / float64(received))
+	}
+	return imtr
 }

@@ -173,7 +173,7 @@ import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
 import { fetchConfig, fetchProxyConfig } from '@/api/config'
-import { getPingData } from '@/api/ping'
+import { getPingData, getProxyPingData } from '@/api/ping'
 import { displayName, formatDateTime } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
 
@@ -189,6 +189,7 @@ const { t } = useI18n()
 const config = ref<Config | null>(null)
 const agents = ref<Array<{ name: string; addr: string; loading: boolean }>>([])
 const currentAgent = ref('')
+const currentBaseUrl = ref('')
 const pingTargets = ref<PingTarget[]>([])
 
 const detailVisible = ref(false)
@@ -203,7 +204,7 @@ const autoRefresh = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 const detailAutoRefresh = ref(false)
 let detailRefreshTimer: ReturnType<typeof setInterval> | null = null
-const REFRESH_INTERVAL = 60 * 1000
+const refreshInterval = computed(() => Math.max(config.value?.Base.Refresh || 1, 1) * 60 * 1000)
 
 const timeRanges = computed(() => [
   { label: t('dashboard.timeRanges.hour1'), hours: 1 },
@@ -227,6 +228,7 @@ const loadConfig = async (proxyUrl?: string) => {
     const cfg = proxyUrl ? await fetchProxyConfig(proxyUrl) : await fetchConfig()
     config.value = cfg
     currentAgent.value = cfg.Addr
+    currentBaseUrl.value = proxyUrl || ''
 
     agents.value = Object.values(cfg.Network)
       .filter((node) => node.Smartping)
@@ -266,8 +268,11 @@ const loadAllCharts = async () => {
 
 const loadChartData = async (target: PingTarget) => {
   target.loading = true
+  const baseUrl = currentBaseUrl.value
   try {
-    target.chartData = await getPingData(target.targetIp)
+    target.chartData = baseUrl
+      ? await getProxyPingData(baseUrl, target.targetIp)
+      : await getPingData(target.targetIp)
   } catch (error) {
     console.error(t('common.chartLoadFailed'), error)
     target.chartData = null
@@ -278,6 +283,7 @@ const loadChartData = async (target: PingTarget) => {
 
 const switchAgent = async (agent: { name: string; addr: string; loading: boolean }) => {
   agent.loading = true
+  detailVisible.value = false
   currentAgent.value = agent.addr
   const proxyUrl = `http://${agent.addr}:${config.value?.Port}`
   await loadConfig(proxyUrl)
@@ -300,7 +306,14 @@ const loadDetailData = async () => {
   }
 
   try {
-    detailData.value = await getPingData(currentTargetIp.value, startTime.value, endTime.value)
+    detailData.value = currentBaseUrl.value
+      ? await getProxyPingData(
+          currentBaseUrl.value,
+          currentTargetIp.value,
+          startTime.value,
+          endTime.value
+        )
+      : await getPingData(currentTargetIp.value, startTime.value, endTime.value)
   } catch (error) {
     console.error('加载数据失败', error)
     ElMessage.error(t('common.loadFailed'))
@@ -347,7 +360,7 @@ onMounted(() => {
   loadConfig()
 })
 
-watch(autoRefresh, (enabled) => {
+watch([autoRefresh, refreshInterval], ([enabled, interval]) => {
   if (refreshTimer) {
     clearInterval(refreshTimer)
     refreshTimer = null
@@ -356,11 +369,11 @@ watch(autoRefresh, (enabled) => {
   if (enabled) {
     refreshTimer = setInterval(() => {
       loadAllCharts()
-    }, REFRESH_INTERVAL)
+    }, interval)
   }
 })
 
-watch(detailAutoRefresh, (enabled) => {
+watch([detailAutoRefresh, refreshInterval], ([enabled, interval]) => {
   if (detailRefreshTimer) {
     clearInterval(detailRefreshTimer)
     detailRefreshTimer = null
@@ -369,7 +382,7 @@ watch(detailAutoRefresh, (enabled) => {
   if (enabled) {
     detailRefreshTimer = setInterval(() => {
       loadDetailData()
-    }, REFRESH_INTERVAL)
+    }, interval)
   }
 })
 

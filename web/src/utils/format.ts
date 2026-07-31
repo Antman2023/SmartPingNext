@@ -28,11 +28,10 @@ export function extractDate(dateTimeStr: string): string {
  * 将节点名按当前 locale 翻译（如英文模式下 "本机" → "Local"）
  */
 export function displayName(name: string): string {
-  const t = i18n.global.t as (key: string) => string
-  const translated = t(`nodeName.${name}`)
-  // t() 在找不到 key 时返回 key 本身（含前缀），此时保持原名
-  if (translated === `nodeName.${name}`) {
+  const key = `nodeName.${name}`
+  if (!i18n.global.te(key)) {
     return name
   }
-  return translated
+  const t = i18n.global.t as (key: string) => string
+  return t(key)
 }

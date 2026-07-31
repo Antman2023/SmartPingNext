@@ -144,6 +144,10 @@ func TestSetConfigUpdatesAuth(t *testing.T) {
 
 func TestSaveCloudConfigSuccess(t *testing.T) {
 	withGlobalConfigState(t, func() {
+		Root = t.TempDir()
+		if err := os.MkdirAll(filepath.Join(Root, "conf"), 0755); err != nil {
+			t.Fatalf("create conf dir failed: %v", err)
+		}
 		respCfg := Config{
 			Name: "cloud-name",
 			Addr: "8.8.8.8",
@@ -178,7 +182,7 @@ func TestSaveCloudConfigSuccess(t *testing.T) {
 			Password: "pwd",
 			Mode: map[string]string{
 				"Endpoint": srv.URL,
-				"Type":     "local",
+				"Type":     "cloud",
 			},
 			Network: map[string]NetworkMember{
 				"127.0.0.1": {Name: "local", Addr: "127.0.0.1"},
@@ -292,6 +296,68 @@ func TestSaveCloudConfigRejectsNonOKStatus(t *testing.T) {
 	})
 }
 
+func TestSaveCloudConfigDoesNotOverwriteNewerLocalConfig(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		respCfg := Config{
+			Base: map[string]int{"Timeout": 5, "Refresh": 1, "Archive": 30},
+			Topology: map[string]string{
+				"Tline":       "1",
+				"Tsymbolsize": "70",
+			},
+			Mode: map[string]string{"Type": "cloud"},
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "local", Addr: "127.0.0.1"},
+			},
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			close(started)
+			<-release
+			_ = json.NewEncoder(w).Encode(respCfg)
+		}))
+		defer srv.Close()
+
+		Root = t.TempDir()
+		if err := os.MkdirAll(filepath.Join(Root, "conf"), 0755); err != nil {
+			t.Fatalf("create conf dir failed: %v", err)
+		}
+		SetConfig(Config{
+			Name: "cloud-runtime",
+			Addr: "127.0.0.1",
+			Mode: map[string]string{"Type": "cloud", "Endpoint": srv.URL},
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "cloud-runtime", Addr: "127.0.0.1"},
+			},
+		})
+		HttpClient = srv.Client()
+
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := SaveCloudConfig(srv.URL)
+			errCh <- err
+		}()
+		<-started
+		SetConfig(Config{
+			Name: "new-local",
+			Addr: "127.0.0.1",
+			Mode: map[string]string{"Type": "local"},
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "new-local", Addr: "127.0.0.1"},
+			},
+		})
+		close(release)
+
+		if err := <-errCh; err == nil {
+			t.Fatalf("stale cloud request should be rejected")
+		}
+		got := ConfigSnapshot()
+		if got.Name != "new-local" || got.Mode["Type"] != "local" {
+			t.Fatalf("stale cloud request overwrote newer config: %#v", got)
+		}
+	})
+}
+
 func TestSaveConfig(t *testing.T) {
 	withGlobalConfigState(t, func() {
 		root := t.TempDir()
@@ -351,6 +417,68 @@ func TestSaveConfig(t *testing.T) {
 		}
 		if len(tempFiles) != 0 {
 			t.Fatalf("temporary config files were not cleaned up: %v", tempFiles)
+		}
+	})
+}
+
+func TestApplyConfigWriteFailureDoesNotPublish(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		original := Config{
+			Name:       "original",
+			Addr:       "127.0.0.1",
+			Authiplist: "127.0.0.1",
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "original", Addr: "127.0.0.1"},
+			},
+		}
+		SetConfig(original)
+		Root = filepath.Join(t.TempDir(), "missing")
+
+		candidate := cloneConfig(original)
+		candidate.Name = "candidate"
+		if err := ApplyConfig(candidate); err == nil {
+			t.Fatalf("ApplyConfig should fail when the config directory is missing")
+		}
+
+		if got := ConfigSnapshot().Name; got != "original" {
+			t.Fatalf("failed ApplyConfig published Name = %q, want original", got)
+		}
+		if !AuthUserIpMap["127.0.0.1"] {
+			t.Fatalf("failed ApplyConfig changed authorization state: %#v", AuthUserIpMap)
+		}
+	})
+}
+
+func TestApplyConfigPersistsNormalizedConfig(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		Root = t.TempDir()
+		if err := os.MkdirAll(filepath.Join(Root, "conf"), 0755); err != nil {
+			t.Fatalf("create conf dir failed: %v", err)
+		}
+
+		candidate := Config{
+			Name:       "node",
+			Addr:       "127.0.0.1",
+			Authiplist: " 127.0.0.1, 2001:0db8:0:0:0:0:0:1 ",
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "node", Addr: "127.0.0.1"},
+			},
+		}
+		if err := ApplyConfig(candidate); err != nil {
+			t.Fatalf("ApplyConfig returned error: %v", err)
+		}
+
+		content, err := os.ReadFile(filepath.Join(Root, "conf", "config.json"))
+		if err != nil {
+			t.Fatalf("read applied config failed: %v", err)
+		}
+		var saved Config
+		if err := json.Unmarshal(content, &saved); err != nil {
+			t.Fatalf("decode applied config failed: %v", err)
+		}
+		const wantAuth = "127.0.0.1,2001:db8::1"
+		if saved.Authiplist != wantAuth || ConfigSnapshot().Authiplist != wantAuth {
+			t.Fatalf("persisted/runtime auth lists differ: saved=%q runtime=%q", saved.Authiplist, ConfigSnapshot().Authiplist)
 		}
 	})
 }
