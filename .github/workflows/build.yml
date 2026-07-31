@@ -32,12 +32,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
-      - name: Test backend
-        run: go test ./...
-
-      - name: Vet backend
-        run: go vet ./...
-
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
@@ -49,6 +43,18 @@ jobs:
       - name: Build frontend
         working-directory: web
         run: npm run build
+
+      - name: Copy frontend to embed directory
+        run: |
+          rm -rf src/static/html
+          mkdir -p src/static/html
+          cp -r web/dist/* src/static/html/
+
+      - name: Test backend
+        run: go test ./...
+
+      - name: Vet backend
+        run: go vet ./...
 
   build:
     name: Build ${{ matrix.os }}-${{ matrix.arch }}
