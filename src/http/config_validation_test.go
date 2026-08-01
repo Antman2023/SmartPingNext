@@ -10,6 +10,7 @@ import (
 
 func validTestConfig() g.Config {
 	return g.Config{
+		Port: 8899,
 		Name: "local",
 		Addr: "127.0.0.1",
 		Mode: map[string]string{"Type": "local"},
@@ -78,6 +79,12 @@ func TestValidateConfigRejectsInvalidReferencesAndLimits(t *testing.T) {
 		},
 		"invalid cloud endpoint": func(config *g.Config) {
 			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "file:///etc/passwd"}
+		},
+		"zero port": func(config *g.Config) {
+			config.Port = 0
+		},
+		"port above maximum": func(config *g.Config) {
+			config.Port = 65536
 		},
 	}
 

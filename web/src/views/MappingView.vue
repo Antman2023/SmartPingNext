@@ -116,6 +116,8 @@ const chartRef = ref<HTMLDivElement>()
 const sidebarStore = useSidebarStore()
 const isMapReady = ref(false)
 let chart: echarts.ECharts | null = null
+let isUnmounted = false
+const mapAbortController = new AbortController()
 
 const currentAgentName = computed(() => {
   if (!currentAgent.value) {
@@ -144,6 +146,10 @@ const loadConfig = async () => {
 }
 
 const loadMappingData = async () => {
+  if (isUnmounted) {
+    return
+  }
+
   try {
     const data = currentBaseUrl.value
       ? await getProxyMapping(currentBaseUrl.value, selectedDate.value)
@@ -274,15 +280,21 @@ const initChart = async () => {
   const loadErrors: string[] = []
   for (const mapUrl of mapUrlCandidates) {
     try {
-      const response = await fetch(mapUrl)
+      const response = await fetch(mapUrl, { signal: mapAbortController.signal })
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`)
       }
       const chinaJson = await response.json()
+      if (isUnmounted) {
+        return
+      }
       echarts.registerMap('china', chinaJson)
       isMapReady.value = true
       return
     } catch (error) {
+      if (mapAbortController.signal.aborted) {
+        return
+      }
       loadErrors.push(`${mapUrl} -> ${String(error)}`)
     }
   }
@@ -319,13 +331,20 @@ const saveMapImage = () => {
 }
 
 onMounted(async () => {
-  await initChart()
-  await loadConfig()
   window.addEventListener('resize', handleResize)
+  await initChart()
+  if (isUnmounted) {
+    return
+  }
+  await loadConfig()
 })
 
 onUnmounted(() => {
+  isUnmounted = true
+  mapAbortController.abort()
+  isMapReady.value = false
   chart?.dispose()
+  chart = null
   window.removeEventListener('resize', handleResize)
 })
 </script>

@@ -281,6 +281,35 @@ func TestAllowToolRequestUsesClientIPAndCleansExpiredEntries(t *testing.T) {
 	}
 }
 
+func TestAllowToolRequestAllowsZeroLimitAndExactBoundary(t *testing.T) {
+	g.ToolLimitLock.Lock()
+	oldToolLimit := g.ToolLimit
+	g.ToolLimit = map[string]int{}
+	g.ToolLimitLock.Unlock()
+	defer func() {
+		g.ToolLimitLock.Lock()
+		g.ToolLimit = oldToolLimit
+		g.ToolLimitLock.Unlock()
+	}()
+
+	if !allowToolRequest("192.0.2.1:10001", 1000, 0) || !allowToolRequest("192.0.2.1:10002", 1000, 0) {
+		t.Fatalf("zero limit should disable rate limiting")
+	}
+	if len(g.ToolLimit) != 0 {
+		t.Fatalf("disabled rate limiting should not retain client entries: %#v", g.ToolLimit)
+	}
+
+	if !allowToolRequest("192.0.2.1:10001", 1000, 30) {
+		t.Fatalf("first request should be allowed")
+	}
+	if allowToolRequest("192.0.2.1:10002", 1029, 30) {
+		t.Fatalf("request before the boundary should be rate-limited")
+	}
+	if !allowToolRequest("192.0.2.1:10003", 1030, 30) {
+		t.Fatalf("request at the exact boundary should be allowed")
+	}
+}
+
 func TestNewHTTPServerTimeouts(t *testing.T) {
 	server := newHTTPServer(":8899", http.NewServeMux())
 	if server.ReadHeaderTimeout <= 0 || server.ReadTimeout <= 0 || server.WriteTimeout <= 0 || server.IdleTimeout <= 0 {

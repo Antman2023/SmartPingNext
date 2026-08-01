@@ -13,7 +13,7 @@ export class ApiError extends Error {
 
 interface AxiosErrorResponse {
   status: number
-  data?: { message?: string; info?: string }
+  data?: { message?: string; info?: string; error?: string }
 }
 
 interface AxiosError {
@@ -65,7 +65,10 @@ export function handleNetworkError(error: unknown): ApiError {
         case 504:
           return new ApiError('网关超时', status)
         default:
-          return new ApiError(data?.info || data?.message || `请求失败 (${status})`, status)
+          return new ApiError(
+            data?.info || data?.message || data?.error || `请求失败 (${status})`,
+            status
+          )
       }
     } else if (error.request) {
       return new ApiError('网络连接失败，请检查网络', 0)

@@ -106,7 +106,7 @@
           </div>
 
           <div class="list-stack">
-            <div v-for="node in nodes" :key="node.name" class="list-row">
+            <div v-for="node in nodes" :key="node.addr" class="list-row">
               <div class="list-row__meta">
                 <el-icon v-if="node.loading" class="is-loading"><Loading /></el-icon>
                 <div v-else class="alerts-view__node-dot"></div>

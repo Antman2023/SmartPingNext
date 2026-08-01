@@ -17,7 +17,6 @@ const defaultICMPReadBufferBytes = 4 * 1024 * 1024
 // icmpResponse 是 readLoop 分发给等待者的响应
 type icmpResponse struct {
 	addr  net.Addr
-	rtt   time.Duration
 	final bool // EchoReply
 	down  bool // DestinationUnreachable
 }

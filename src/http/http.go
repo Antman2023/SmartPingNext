@@ -157,6 +157,10 @@ func resolvePingTimeRange(values url.Values, now time.Time, location *time.Locat
 }
 
 func allowToolRequest(remoteAddr string, now int, limit int) bool {
+	if limit <= 0 {
+		return true
+	}
+
 	clientKey := parseRemoteIP(remoteAddr)
 	if clientKey == "" {
 		clientKey = remoteAddr
@@ -176,7 +180,7 @@ func allowToolRequest(remoteAddr string, now int, limit int) bool {
 			delete(g.ToolLimit, key)
 		}
 	}
-	if lastSeen, ok := g.ToolLimit[clientKey]; ok && now-lastSeen <= limit {
+	if lastSeen, ok := g.ToolLimit[clientKey]; ok && now-lastSeen < limit {
 		return false
 	}
 	g.ToolLimit[clientKey] = now

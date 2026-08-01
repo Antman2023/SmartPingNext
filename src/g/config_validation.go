@@ -12,6 +12,7 @@ import (
 
 const (
 	maxConfigTimeoutSeconds = 60
+	maxConfigPort           = 65535
 	maxConfigNetworkNodes   = 1024
 	maxConfigTargetsPerNode = 1024
 	maxConfigMappingTargets = 8192
@@ -21,6 +22,9 @@ const (
 func ValidateConfig(config Config) error {
 	if strings.TrimSpace(config.Name) == "" {
 		return errors.New("本机节点名称为空!")
+	}
+	if config.Port < 1 || config.Port > maxConfigPort {
+		return fmt.Errorf("非法监听端口!(1-%d)", maxConfigPort)
 	}
 	if !validIPv4(config.Addr) {
 		return errors.New("非法本机节点IP!")
