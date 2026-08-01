@@ -39,28 +39,6 @@ func withAuthMaps(userMap map[string]bool, agentMap map[string]bool, fn func()) 
 	fn()
 }
 
-func TestValidIP4(t *testing.T) {
-	cases := []struct {
-		name string
-		ip   string
-		want bool
-	}{
-		{name: "valid", ip: "192.168.1.1", want: true},
-		{name: "valid with spaces", ip: " 10.0.0.1 ", want: true},
-		{name: "invalid v6", ip: "::1", want: false},
-		{name: "invalid range", ip: "256.1.1.1", want: false},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ValidIP4(tc.ip)
-			if got != tc.want {
-				t.Fatalf("ValidIP4(%q) = %v, want %v", tc.ip, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestParseRemoteIP(t *testing.T) {
 	cases := []struct {
 		name string

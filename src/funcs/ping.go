@@ -126,6 +126,7 @@ func PingTask(t g.NetworkMember, pingCount int, pingInterval time.Duration, ping
 			stat.AvgDelay = stat.AvgDelay / float64(stat.RevcPk)
 		} else {
 			stat.AvgDelay = 0.0
+			stat.MinDelay = 0.0
 		}
 		logrus.Debug("[func:IcmpPing] Finish Addr:", t.Addr, " MaxDelay:", stat.MaxDelay, " MinDelay:", stat.MinDelay, " AvgDelay:", stat.AvgDelay, " Revc:", stat.RevcPk, " LossPK:", stat.LossPk)
 	} else {

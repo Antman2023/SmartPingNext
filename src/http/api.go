@@ -79,7 +79,7 @@ func configApiRoutes() {
 			losspk[i] = "0"
 			cursor += 60
 		}
-		querySql := "SELECT logtime,maxdelay,mindelay,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"
+		querySql := "SELECT logtime,maxdelay,CASE WHEN cast(mindelay as double) < 0 THEN '0' ELSE mindelay END,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"
 		rows, err := g.Db.Query(querySql, tableip, timeStartStr, timeEndStr)
 		logrus.Debug("[func:/api/ping.json] Query ", querySql)
 		if err != nil {
@@ -176,9 +176,8 @@ func configApiRoutes() {
 			Ldate string
 		}
 		config := g.ConfigSnapshot()
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		form := r.URL.Query()
-		dtb := time.Unix(time.Now().Unix(), 0).Format("2006-01-02")
+		dtb := time.Now().Format("2006-01-02")
 		if len(form["date"]) > 0 {
 			dtb = strings.Replace(form["date"][0], "alertlog-", "", -1)
 		}
@@ -489,7 +488,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		defaultto = customTimeout
 	}
-	rawTarget := strings.Replace(strings.Replace(form["g"][0], "%26", "&", -1), " ", "%20", -1)
+	rawTarget := form["g"][0]
 	targetURL, err := validateProxyTarget(rawTarget)
 	if err != nil {
 		o := err.Error()

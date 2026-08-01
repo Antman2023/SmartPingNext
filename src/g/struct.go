@@ -1,26 +1,26 @@
 package g
 
 type Config struct {
-	Ver        string
-	Port       int
-	Name       string
-	Addr       string
-	Mode       map[string]string
-	Base       map[string]int
-	Topology   map[string]string
-	Network    map[string]NetworkMember
-	Chinamap   map[string]map[string][]string
-	Toollimit  int
-	Authiplist string
-	Password   string
+	Ver        string                         `json:"Ver"`
+	Port       int                            `json:"Port"`
+	Name       string                         `json:"Name"`
+	Addr       string                         `json:"Addr"`
+	Mode       map[string]string              `json:"Mode"`
+	Base       map[string]int                 `json:"Base"`
+	Topology   map[string]string              `json:"Topology"`
+	Network    map[string]NetworkMember       `json:"Network"`
+	Chinamap   map[string]map[string][]string `json:"Chinamap"`
+	Toollimit  int                            `json:"Toollimit"`
+	Authiplist string                         `json:"Authiplist"`
+	Password   string                         `json:"Password"`
 }
 
 type NetworkMember struct {
-	Name      string
-	Addr      string
-	Smartping bool
-	Ping      []string
-	Topology  []map[string]string
+	Name      string              `json:"Name"`
+	Addr      string              `json:"Addr"`
+	Smartping bool                `json:"Smartping"`
+	Ping      []string            `json:"Ping"`
+	Topology  []map[string]string `json:"Topology"`
 }
 
 // Ping Struct

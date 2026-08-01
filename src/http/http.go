@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"smartping/src/g"
 	"strings"
 	"time"
@@ -16,19 +15,12 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-var validIP4Regexp = regexp.MustCompile(`^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$`)
-
 const maxPingRangeMinutes = 31 * 24 * 60
 
 const (
 	maxPasswordFormBytes = 64 << 10
 	maxConfigFormBytes   = 16 << 20
 )
-
-func ValidIP4(ipAddress string) bool {
-	ipAddress = strings.TrimSpace(ipAddress)
-	return validIP4Regexp.MatchString(ipAddress)
-}
 
 func RenderJson(w http.ResponseWriter, v any) {
 	bs, err := json.Marshal(v)

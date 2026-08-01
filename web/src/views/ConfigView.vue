@@ -296,6 +296,7 @@
                 :min="60"
                 :max="86400"
                 :step="60"
+                :step-strictly="true"
                 controls-position="right"
                 size="small"
               />

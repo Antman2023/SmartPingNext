@@ -7,6 +7,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const archiveDeleteBatchSize = 1000
+
 // clear timeout alert table
 func ClearArchive() {
 	logrus.Info("[func:ClearArchive] ", "starting run ClearArchive ")
@@ -15,9 +17,7 @@ func ClearArchive() {
 		archiveDays = 30
 	}
 	cutoffDate := time.Now().AddDate(0, 0, -archiveDays).Format("2006-01-02")
-	g.DLock.Lock()
 	err := clearArchiveBefore(cutoffDate)
-	g.DLock.Unlock()
 	if err != nil {
 		logrus.Error("[func:ClearArchive] ", err)
 		return
@@ -26,15 +26,29 @@ func ClearArchive() {
 }
 
 func clearArchiveBefore(cutoffDate string) error {
-	tx, err := g.Db.Begin()
-	if err != nil {
-		return err
-	}
 	for _, table := range []string{"alertlog", "mappinglog", "pinglog"} {
-		if _, err := tx.Exec("delete from "+table+" where logtime < ?", cutoffDate); err != nil {
-			_ = tx.Rollback()
+		if err := clearArchiveTableBefore(table, cutoffDate); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
+}
+
+func clearArchiveTableBefore(table, cutoffDate string) error {
+	query := "delete from " + table + " where rowid in (select rowid from " + table + " where logtime < ? order by logtime limit ?)"
+	for {
+		g.DLock.Lock()
+		result, err := g.Db.Exec(query, cutoffDate, archiveDeleteBatchSize)
+		g.DLock.Unlock()
+		if err != nil {
+			return err
+		}
+		deleted, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if deleted < archiveDeleteBatchSize {
+			return nil
+		}
+	}
 }

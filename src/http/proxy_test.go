@@ -167,6 +167,29 @@ func TestHandleProxyUsesValidatedTarget(t *testing.T) {
 	})
 }
 
+func TestHandleProxyPreservesEncodedAmpersandInTargetValue(t *testing.T) {
+	var receivedTarget string
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedTarget = r.URL.Query().Get("t")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer remote.Close()
+
+	withProxyConfig(proxyTestConfig(t, remote.URL), func() {
+		target := remote.URL + "/api/tools.json?t=" + url.QueryEscape("alpha&beta")
+		recorder := httptest.NewRecorder()
+		handleProxy(recorder, proxyRequest(target))
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("handleProxy status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+		}
+		if receivedTarget != "alpha&beta" {
+			t.Fatalf("remote target = %q, want encoded ampersand to be preserved", receivedTarget)
+		}
+	})
+}
+
 func TestHandleProxyRejectsUnknownHost(t *testing.T) {
 	var requests atomic.Int32
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

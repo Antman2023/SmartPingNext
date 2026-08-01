@@ -11,41 +11,6 @@ import (
 	"time"
 )
 
-func cloneConfig(c Config) Config {
-	out := c
-	if c.Mode != nil {
-		out.Mode = make(map[string]string, len(c.Mode))
-		for k, v := range c.Mode {
-			out.Mode[k] = v
-		}
-	}
-	if c.Base != nil {
-		out.Base = make(map[string]int, len(c.Base))
-		for k, v := range c.Base {
-			out.Base[k] = v
-		}
-	}
-	if c.Topology != nil {
-		out.Topology = make(map[string]string, len(c.Topology))
-		for k, v := range c.Topology {
-			out.Topology[k] = v
-		}
-	}
-	if c.Network != nil {
-		out.Network = make(map[string]NetworkMember, len(c.Network))
-		for k, v := range c.Network {
-			out.Network[k] = v
-		}
-	}
-	if c.Chinamap != nil {
-		out.Chinamap = make(map[string]map[string][]string, len(c.Chinamap))
-		for k, v := range c.Chinamap {
-			out.Chinamap[k] = v
-		}
-	}
-	return out
-}
-
 func cloneBoolMapForConfig(in map[string]bool) map[string]bool {
 	if in == nil {
 		return nil
@@ -61,7 +26,7 @@ func withGlobalConfigState(t *testing.T, fn func()) {
 	t.Helper()
 	oldRoot := Root
 	oldCfg := cloneConfig(Cfg)
-	oldSelf := SelfCfg
+	oldSelf := cloneNetworkMember(SelfCfg)
 	oldUser := cloneBoolMapForConfig(AuthUserIpMap)
 	oldAgent := cloneBoolMapForConfig(AuthAgentIpMap)
 	oldClient := HttpClient
@@ -142,6 +107,59 @@ func TestSetConfigUpdatesAuth(t *testing.T) {
 	})
 }
 
+func TestConfigStateDoesNotShareMutableReferences(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		input := Config{
+			Addr:     "127.0.0.1",
+			Mode:     map[string]string{"Type": "local"},
+			Base:     map[string]int{"Timeout": 5},
+			Topology: map[string]string{"Tline": "1"},
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {
+					Addr:     "127.0.0.1",
+					Ping:     []string{"192.0.2.1"},
+					Topology: []map[string]string{{"Addr": "192.0.2.1"}},
+				},
+			},
+			Chinamap: map[string]map[string][]string{
+				"ctcc": {"江苏": {"192.0.2.2"}},
+			},
+		}
+		SetConfig(input)
+
+		input.Base["Timeout"] = 30
+		input.Network["127.0.0.1"].Ping[0] = "198.51.100.1"
+		input.Chinamap["ctcc"]["江苏"][0] = "198.51.100.2"
+		if Cfg.Base["Timeout"] != 5 || Cfg.Network["127.0.0.1"].Ping[0] != "192.0.2.1" || Cfg.Chinamap["ctcc"]["江苏"][0] != "192.0.2.2" {
+			t.Fatalf("SetConfig retained references to caller-owned data: %#v", Cfg)
+		}
+
+		snapshot := ConfigSnapshot()
+		snapshot.Mode["Type"] = "cloud"
+		snapshot.Network["127.0.0.1"].Topology[0]["Addr"] = "203.0.113.1"
+		snapshot.Chinamap["ctcc"]["江苏"][0] = "203.0.113.2"
+		if Cfg.Mode["Type"] != "local" || Cfg.Network["127.0.0.1"].Topology[0]["Addr"] != "192.0.2.1" || Cfg.Chinamap["ctcc"]["江苏"][0] != "192.0.2.2" {
+			t.Fatalf("ConfigSnapshot exposed mutable global state: %#v", Cfg)
+		}
+	})
+}
+
+func TestCloneConfigPreservesEmptySlices(t *testing.T) {
+	config := Config{
+		Network: map[string]NetworkMember{
+			"127.0.0.1": {Ping: []string{}, Topology: []map[string]string{}},
+		},
+		Chinamap: map[string]map[string][]string{
+			"ctcc": {"江苏": []string{}},
+		},
+	}
+	cloned := cloneConfig(config)
+	member := cloned.Network["127.0.0.1"]
+	if member.Ping == nil || member.Topology == nil || cloned.Chinamap["ctcc"]["江苏"] == nil {
+		t.Fatalf("cloneConfig changed empty slices to nil: %#v", cloned)
+	}
+}
+
 func TestSaveCloudConfigSuccess(t *testing.T) {
 	withGlobalConfigState(t, func() {
 		Root = t.TempDir()
@@ -212,6 +230,54 @@ func TestSaveCloudConfigSuccess(t *testing.T) {
 		}
 		if SelfCfg.Addr != "127.0.0.1" {
 			t.Fatalf("SelfCfg should point to local addr, got %q", SelfCfg.Addr)
+		}
+	})
+}
+
+func TestSaveCloudConfigSkipsWriteWhenOnlyRuntimeStatusChanges(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		downloaded := Config{
+			Base: map[string]int{
+				"Timeout": 5,
+				"Refresh": 1,
+				"Archive": 30,
+			},
+			Topology: map[string]string{
+				"Tline":       "1",
+				"Tsymbolsize": "70",
+			},
+			Mode: map[string]string{"Type": "cloud"},
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "local", Addr: "127.0.0.1"},
+			},
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(downloaded)
+		}))
+		defer srv.Close()
+
+		current := cloneConfig(downloaded)
+		current.Name = "local"
+		current.Addr = "127.0.0.1"
+		current.Ver = "vtest"
+		current.Port = 8899
+		current.Password = "pwd"
+		current.Mode = map[string]string{
+			"Type":         "cloud",
+			"Endpoint":     srv.URL,
+			"Status":       "false",
+			"LastSuccTime": "2026-01-01 00:00:00",
+		}
+		SetConfig(current)
+		Root = filepath.Join(t.TempDir(), "missing")
+		HttpClient = srv.Client()
+
+		if _, err := SaveCloudConfig(srv.URL); err != nil {
+			t.Fatalf("unchanged cloud config should not require a writable config directory: %v", err)
+		}
+		got := ConfigSnapshot()
+		if got.Mode["Status"] != "true" || got.Mode["LastSuccTime"] == current.Mode["LastSuccTime"] {
+			t.Fatalf("runtime cloud status was not refreshed: %#v", got.Mode)
 		}
 	})
 }

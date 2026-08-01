@@ -6,6 +6,16 @@ import (
 	"time"
 )
 
+func TestWaiterKeyUsesIdentifierAndSequence(t *testing.T) {
+	base := waiterKey(100, 200)
+	if base == waiterKey(100, 201) {
+		t.Fatalf("waiterKey should distinguish different sequence values")
+	}
+	if base == waiterKey(101, 200) {
+		t.Fatalf("waiterKey should distinguish different identifier values")
+	}
+}
+
 func TestEvaluatePingResultRequiresFinalReply(t *testing.T) {
 	if _, err := evaluatePingResult(ICMP{RTT: time.Millisecond}); err == nil {
 		t.Fatalf("non-final ICMP response should not count as successful ping")

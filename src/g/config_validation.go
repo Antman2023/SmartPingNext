@@ -159,6 +159,9 @@ func validateTopologyRule(source string, rule map[string]string, network map[str
 		if err != nil || value < bounds[0] || value > bounds[1] {
 			return fmt.Errorf("Ping节点测试网络信息错误!(%s->%s 非法报警规则 %s)", source, target, key)
 		}
+		if key == "Thdchecksec" && value%60 != 0 {
+			return fmt.Errorf("Ping节点测试网络信息错误!(%s->%s 报警检查窗口必须为60秒的倍数)", source, target)
+		}
 	}
 	return nil
 }

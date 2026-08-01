@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -62,12 +63,11 @@ func ReadConfig(filename string) Config {
 }
 
 func GetRoot() string {
-	//return "D:\\gopath\\src\\github.com\\smartping\\smartping"
-	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	executable, err := os.Executable()
 	if err != nil {
 		log.Fatal("Get Root Path Error:", err)
 	}
-	return filepath.ToSlash(dir)
+	return filepath.ToSlash(filepath.Dir(executable))
 }
 
 func releaseDefaultFiles() {
@@ -202,11 +202,11 @@ func readCloudConfigBody(reader io.Reader) ([]byte, error) {
 func ConfigSnapshot() Config {
 	CfgLock.RLock()
 	defer CfgLock.RUnlock()
-	return Cfg
+	return cloneConfig(Cfg)
 }
 
 func SetConfig(config Config) {
-	config = normalizeConfig(config)
+	config = cloneConfig(normalizeConfig(config))
 	userIPs := make(map[string]bool)
 	agentIPs := make(map[string]bool)
 	for _, member := range config.Network {
@@ -221,11 +221,78 @@ func SetConfig(config Config) {
 	CfgLock.Lock()
 	AuthIpLock.Lock()
 	Cfg = config
-	SelfCfg = config.Network[config.Addr]
+	SelfCfg = cloneNetworkMember(config.Network[config.Addr])
 	AuthUserIpMap = userIPs
 	AuthAgentIpMap = agentIPs
 	AuthIpLock.Unlock()
 	CfgLock.Unlock()
+}
+
+func cloneConfig(config Config) Config {
+	cloned := config
+	cloned.Mode = cloneStringMap(config.Mode)
+	cloned.Base = cloneIntMap(config.Base)
+	cloned.Topology = cloneStringMap(config.Topology)
+
+	if config.Network != nil {
+		cloned.Network = make(map[string]NetworkMember, len(config.Network))
+		for key, member := range config.Network {
+			cloned.Network[key] = cloneNetworkMember(member)
+		}
+	}
+
+	if config.Chinamap != nil {
+		cloned.Chinamap = make(map[string]map[string][]string, len(config.Chinamap))
+		for carrier, provinces := range config.Chinamap {
+			clonedProvinces := make(map[string][]string, len(provinces))
+			for province, addresses := range provinces {
+				clonedProvinces[province] = cloneStringSlice(addresses)
+			}
+			cloned.Chinamap[carrier] = clonedProvinces
+		}
+	}
+	return cloned
+}
+
+func cloneNetworkMember(member NetworkMember) NetworkMember {
+	cloned := member
+	cloned.Ping = cloneStringSlice(member.Ping)
+	if member.Topology != nil {
+		cloned.Topology = make([]map[string]string, len(member.Topology))
+		for i, rule := range member.Topology {
+			cloned.Topology[i] = cloneStringMap(rule)
+		}
+	}
+	return cloned
+}
+
+func cloneStringSlice(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	return append(make([]string, 0, len(values)), values...)
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func cloneIntMap(values map[string]int) map[string]int {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]int, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func normalizeConfig(config Config) Config {
@@ -314,7 +381,21 @@ func applyCloudConfig(downloaded Config, endpoint string) error {
 	if err := ValidateConfig(published); err != nil {
 		return fmt.Errorf("invalid cloud config: %w", err)
 	}
+	if cloudConfigEqual(current, published) {
+		SetConfig(published)
+		return nil
+	}
 	return applyConfigLocked(published)
+}
+
+func cloudConfigEqual(left, right Config) bool {
+	left = cloneConfig(left)
+	right = cloneConfig(right)
+	for _, config := range []*Config{&left, &right} {
+		delete(config.Mode, "LastSuccTime")
+		delete(config.Mode, "Status")
+	}
+	return reflect.DeepEqual(left, right)
 }
 
 func applyConfigLocked(config Config) error {

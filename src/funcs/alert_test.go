@@ -3,9 +3,20 @@ package funcs
 import (
 	"database/sql"
 	"smartping/src/g"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestStartAlertSkipsOverlappingCheck(t *testing.T) {
+	atomic.StoreInt32(&alertRunning, 1)
+	defer atomic.StoreInt32(&alertRunning, 0)
+
+	StartAlert()
+	if got := atomic.LoadInt32(&alertRunning); got != 1 {
+		t.Fatalf("alertRunning = %d, want existing check to remain active", got)
+	}
+}
 
 func withFuncTestDB(t *testing.T, schema []string, fn func(db *sql.DB)) {
 	t.Helper()
@@ -148,7 +159,7 @@ func TestAlertWindowStartUsesMinuteSamples(t *testing.T) {
 
 func TestAlertStorage(t *testing.T) {
 	schema := []string{
-		`CREATE TABLE alertlog (logtime TEXT, targetip TEXT, targetname TEXT, tracert TEXT);`,
+		`CREATE TABLE alertlog (logtime TEXT, targetip TEXT, targetname TEXT, tracert TEXT, UNIQUE(logtime, targetip));`,
 	}
 
 	withFuncTestDB(t, schema, func(db *sql.DB) {
@@ -160,14 +171,21 @@ func TestAlertStorage(t *testing.T) {
 		}
 
 		AlertStorage(item)
+		item.Targetname = "updated-name"
+		item.Tracert = `[{"Host":"192.0.2.1"}]`
+		AlertStorage(item)
 
 		var cnt int
-		err := db.QueryRow(`SELECT count(1) FROM alertlog WHERE targetip = ? AND targetname = ?`, item.Targetip, item.Targetname).Scan(&cnt)
+		var targetname, tracert string
+		err := db.QueryRow(`SELECT count(1), targetname, tracert FROM alertlog WHERE targetip = ? GROUP BY targetname, tracert`, item.Targetip).Scan(&cnt, &targetname, &tracert)
 		if err != nil {
 			t.Fatalf("query inserted alert failed: %v", err)
 		}
 		if cnt != 1 {
 			t.Fatalf("inserted row count = %d, want 1", cnt)
+		}
+		if targetname != item.Targetname || tracert != item.Tracert {
+			t.Fatalf("duplicate alert was not updated: targetname=%q tracert=%q", targetname, tracert)
 		}
 	})
 }

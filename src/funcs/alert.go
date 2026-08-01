@@ -6,12 +6,21 @@ import (
 	"smartping/src/g"
 	"smartping/src/nettools"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
+var alertRunning int32
+
 func StartAlert() {
+	if !atomic.CompareAndSwapInt32(&alertRunning, 0, 1) {
+		logrus.Warn("[func:StartAlert] Previous alert check still running, skip")
+		return
+	}
+	defer atomic.StoreInt32(&alertRunning, 0)
+
 	logrus.Info("[func:StartAlert] ", "starting run AlertCheck ")
 	config := g.ConfigSnapshot()
 	selfConfig := config.Network[config.Addr]
@@ -38,7 +47,7 @@ func StartAlert() {
 				l := g.AlertLog{}
 				l.Fromname = selfConfig.Name
 				l.Fromip = selfConfig.Addr
-				l.Logtime = time.Unix(time.Now().Unix(), 0).Format("2006-01-02 15:04")
+				l.Logtime = time.Now().Format("2006-01-02 15:04")
 				l.Targetname = v["Name"]
 				l.Targetip = v["Addr"]
 				mtrString := ""
@@ -84,7 +93,7 @@ func CheckAlertStatus(v map[string]string) (bool, error) {
 }
 
 func alertWindowStart(now time.Time, windowSeconds int) time.Time {
-	samples := (windowSeconds + 59) / 60
+	samples := windowSeconds / 60
 	if samples < 1 {
 		samples = 1
 	}
@@ -93,7 +102,7 @@ func alertWindowStart(now time.Time, windowSeconds int) time.Time {
 
 func AlertStorage(t g.AlertLog) {
 	logrus.Info("[func:AlertStorage] ", "(", t.Logtime, ")Starting AlertStorage ", t.Targetname)
-	sql := "INSERT INTO [alertlog] (logtime, targetip, targetname, tracert) values(?, ?, ?, ?)"
+	sql := "INSERT INTO [alertlog] (logtime, targetip, targetname, tracert) values(?, ?, ?, ?) ON CONFLICT(logtime, targetip) DO UPDATE SET targetname=excluded.targetname, tracert=excluded.tracert"
 	g.DLock.Lock()
 	_, err := g.Db.Exec(sql, t.Logtime, t.Targetip, t.Targetname, t.Tracert)
 	if err != nil {
