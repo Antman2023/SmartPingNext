@@ -34,7 +34,7 @@ function getThemeConfig(isDark: boolean): ChartTheme {
 /**
  * 移除尾部未刷新的全零数据点
  * 最近1分钟的数据可能尚未采集完毕，各项值均为0，在图表上会造成末尾"掉底"的误导。
- * 从尾部向前扫描，连续截掉 avgdelay/maxdelay/mindelay 全为 0 的数据点。
+ * 从尾部向前扫描，仅截掉延迟和丢包率全部为 0 的数据点。
  */
 function trimTrailingZeros(data: PingLogData): PingLogData {
   const len = data.lastcheck.length
@@ -46,7 +46,8 @@ function trimTrailingZeros(data: PingLogData): PingLogData {
     const avg = parseFloat(data.avgdelay[i]) || 0
     const max = parseFloat(data.maxdelay[i]) || 0
     const min = parseFloat(data.mindelay[i]) || 0
-    if (avg === 0 && max === 0 && min === 0) {
+    const loss = parseFloat(data.losspk[i]) || 0
+    if (avg === 0 && max === 0 && min === 0 && loss === 0) {
       trimEnd--
     } else {
       break
