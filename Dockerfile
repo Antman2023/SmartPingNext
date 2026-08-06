@@ -1,8 +1,19 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
+# Frontend build stage
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
+
+WORKDIR /app/web
+
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web/ ./
+RUN npm run build
+
+# Backend build stage
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache git nodejs npm
+RUN apk add --no-cache git
 
 WORKDIR /app
 
@@ -13,13 +24,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build frontend
-WORKDIR /app/web
-RUN npm ci && npm run build
-
 # Copy frontend to embed directory
-WORKDIR /app
-RUN rm -rf src/static/html && mkdir -p src/static/html && cp -r web/dist/* src/static/html/
+COPY --from=frontend-builder /app/web/dist/ ./src/static/html/
 
 # Build arguments for cross-compilation
 ARG TARGETOS
