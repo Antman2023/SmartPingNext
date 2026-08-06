@@ -66,10 +66,12 @@ On first run, the app creates `conf/`, `db/`, and `logs/` automatically and extr
 
 ### Build from Source
 
+Requires Go 1.24+ and Node.js 20.19+ or 22.12+.
+
 ```bash
 # Frontend
 cd web
-npm install
+npm ci
 npm run build
 cp -r dist ../src/static/html
 

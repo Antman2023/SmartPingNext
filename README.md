@@ -66,10 +66,12 @@ tar -xzf smartping-*.tar.gz
 
 ### 从源码构建
 
+需要 Go 1.24+，以及 Node.js 20.19+ 或 22.12+。
+
 ```bash
 # 前端
 cd web
-npm install
+npm ci
 npm run build
 cp -r dist ../src/static/html
 

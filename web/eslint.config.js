@@ -2,6 +2,7 @@ import js from '@eslint/js'
 import pluginVue from 'eslint-plugin-vue'
 import * as parserVue from 'vue-eslint-parser'
 import configPrettier from 'eslint-config-prettier'
+import globals from 'globals'
 import * as parserTypeScript from '@typescript-eslint/parser'
 import pluginTypeScript from '@typescript-eslint/eslint-plugin'
 
@@ -10,6 +11,11 @@ export default [
     ignores: ['dist/', 'node_modules/', '*.d.ts', 'vite.config.js', 'tsconfig.node.tsbuildinfo']
   },
   js.configs.recommended,
+  {
+    languageOptions: {
+      globals: globals.browser
+    }
+  },
   ...pluginVue.configs['flat/recommended'],
   {
     files: ['**/*.vue', '**/*.ts', '**/*.tsx'],

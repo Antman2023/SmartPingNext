@@ -29,7 +29,7 @@ web/node_modules/
 web/dist/
 web/*.d.ts
 web/vite.config.js
-web/tsconfig.node.tsbuildinfo
+web/*.tsbuildinfo
 
 # Embedded static (generated from web/dist)
 src/static/html/

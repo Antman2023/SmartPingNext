@@ -8,6 +8,26 @@ export function useCharts() {
     return themeStore.theme === 'dark' ? 'dark' : 'light'
   }
 
+  const getAxisStyle = () => {
+    const isDark = themeStore.theme === 'dark'
+
+    return {
+      axisLine: {
+        lineStyle: {
+          color: isDark ? '#4c4d4f' : '#dcdfe6'
+        }
+      },
+      axisLabel: {
+        color: isDark ? '#a3a6ad' : '#606266'
+      },
+      splitLine: {
+        lineStyle: {
+          color: isDark ? '#363637' : '#ebeef5'
+        }
+      }
+    }
+  }
+
   const getBaseChartOption = (): EChartsOption => {
     const isDark = themeStore.theme === 'dark'
 
@@ -34,36 +54,8 @@ export function useCharts() {
           color: isDark ? '#a3a6ad' : '#606266'
         }
       },
-      xAxis: {
-        axisLine: {
-          lineStyle: {
-            color: isDark ? '#4c4d4f' : '#dcdfe6'
-          }
-        },
-        axisLabel: {
-          color: isDark ? '#a3a6ad' : '#606266'
-        },
-        splitLine: {
-          lineStyle: {
-            color: isDark ? '#363637' : '#ebeef5'
-          }
-        }
-      },
-      yAxis: {
-        axisLine: {
-          lineStyle: {
-            color: isDark ? '#4c4d4f' : '#dcdfe6'
-          }
-        },
-        axisLabel: {
-          color: isDark ? '#a3a6ad' : '#606266'
-        },
-        splitLine: {
-          lineStyle: {
-            color: isDark ? '#363637' : '#ebeef5'
-          }
-        }
-      }
+      xAxis: getAxisStyle(),
+      yAxis: getAxisStyle()
     }
   }
 
@@ -73,12 +65,12 @@ export function useCharts() {
     return {
       ...baseOption,
       xAxis: {
-        ...baseOption.xAxis,
+        ...getAxisStyle(),
         type: 'category',
         data: data.map(item => item.time)
       },
       yAxis: {
-        ...baseOption.yAxis,
+        ...getAxisStyle(),
         type: 'value',
         name: '延迟 (ms)'
       },
