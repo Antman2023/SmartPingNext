@@ -1,3 +1,5 @@
+
+
 <p align="center">
     <h3 align="center">SmartPingNext | 开源、高效、便捷的网络质量监控神器</h3>
     <p align="center">
@@ -73,7 +75,7 @@ tar -xzf smartping-*.tar.gz
 cd web
 npm ci
 npm run build
-cp -r dist ../src/static/html
+cp -r dist/* ../src/static/html/
 
 # 后端
 cd ..
