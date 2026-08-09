@@ -314,7 +314,12 @@ func configApiRoutes() {
 			RenderJson(w, preout)
 			return
 		}
-		target := strings.Replace(strings.Replace(form["t"][0], "https://", "", -1), "http://", "", -1)
+		target, err := normalizeToolTarget(form["t"][0])
+		if err != nil {
+			preout.Error = "Unable to resolve destination host"
+			RenderJson(w, preout)
+			return
+		}
 		preout.Ping = g.PingSt{}
 		preout.Ping.MinDelay = -1
 		lossPK := 0

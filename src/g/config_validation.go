@@ -154,6 +154,7 @@ func validateTopologyRule(source string, rule map[string]string, network map[str
 		"Thdavgdelay": {1, 60000},
 		"Thdoccnum":   {1, 10000},
 	}
+	parsedValues := make(map[string]int, len(limits))
 	for key, bounds := range limits {
 		value, err := strconv.Atoi(rule[key])
 		if err != nil || value < bounds[0] || value > bounds[1] {
@@ -162,6 +163,11 @@ func validateTopologyRule(source string, rule map[string]string, network map[str
 		if key == "Thdchecksec" && value%60 != 0 {
 			return fmt.Errorf("Ping节点测试网络信息错误!(%s->%s 报警检查窗口必须为60秒的倍数)", source, target)
 		}
+		parsedValues[key] = value
+	}
+	maxOccurrences := parsedValues["Thdchecksec"] / 60
+	if parsedValues["Thdoccnum"] > maxOccurrences {
+		return fmt.Errorf("Ping节点测试网络信息错误!(%s->%s 报警发生次数不能超过检查窗口内的样本数 %d)", source, target, maxOccurrences)
 	}
 	return nil
 }

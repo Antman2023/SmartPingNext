@@ -62,6 +62,42 @@ func TestParseRemoteIP(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		want    string
+		wantErr bool
+	}{
+		{name: "hostname", target: "example.com", want: "example.com"},
+		{name: "hostname and port", target: "example.com:443", want: "example.com"},
+		{name: "url with path", target: "https://example.com/status", want: "example.com"},
+		{name: "ipv4 with trailing slash", target: "http://127.0.0.1/", want: "127.0.0.1"},
+		{name: "ipv6", target: "2001:db8::1", want: "2001:db8::1"},
+		{name: "bracketed ipv6 and port", target: "[2001:db8::1]:443", want: "2001:db8::1"},
+		{name: "unsupported scheme", target: "ftp://example.com/file", wantErr: true},
+		{name: "empty", target: "  ", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeToolTarget(tt.target)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("normalizeToolTarget(%q) should fail", tt.target)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizeToolTarget(%q) returned error: %v", tt.target, err)
+			}
+			if got != tt.want {
+				t.Fatalf("normalizeToolTarget(%q) = %q, want %q", tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAuthUserIpSupportsIPv6(t *testing.T) {
 	withAuthMaps(
 		map[string]bool{"::1": true},

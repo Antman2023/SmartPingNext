@@ -67,12 +67,12 @@
           </el-table-column>
           <el-table-column :label="$t('tools.sent')" width="80" align="center">
             <template #default="{ row }">
-              {{ row.result?.ping?.SendPk || '-' }}
+              {{ row.result?.ping?.SendPk ?? '-' }}
             </template>
           </el-table-column>
           <el-table-column :label="$t('tools.received')" width="80" align="center">
             <template #default="{ row }">
-              {{ row.result?.ping?.RevcPk || '-' }}
+              {{ row.result?.ping?.RevcPk ?? '-' }}
             </template>
           </el-table-column>
           <el-table-column :label="$t('tools.packetLoss')" width="90" align="center">

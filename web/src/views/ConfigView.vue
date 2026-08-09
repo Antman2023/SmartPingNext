@@ -299,6 +299,12 @@
                 :step-strictly="true"
                 controls-position="right"
                 size="small"
+                @change="
+                  row.occurrenceCount = Math.min(
+                    row.occurrenceCount,
+                    maxOccurrenceCount(row.checkSeconds)
+                  )
+                "
               />
             </template>
           </el-table-column>
@@ -309,7 +315,7 @@
                 class="config-view__number-input"
                 :disabled="!row.enabled"
                 :min="1"
-                :max="10000"
+                :max="maxOccurrenceCount(row.checkSeconds)"
                 controls-position="right"
                 size="small"
               />
@@ -494,6 +500,10 @@ interface TopologyTargetItem {
 
 const topoConfigVisible = ref(false)
 const topoTargetList = ref<TopologyTargetItem[]>([])
+
+const maxOccurrenceCount = (checkSeconds: number) => {
+  return Math.max(Math.floor(checkSeconds / 60), 1)
+}
 
 const chinaMapVisible = ref(false)
 const chinaMapTab = ref('ctcc')
@@ -791,12 +801,16 @@ const editTopoConfig = (row: NetworkListItem) => {
     .filter(([addr]) => addr !== row.Addr)
     .map(([addr, network]) => {
       const current = currentTopologies.get(addr)
+      const checkSeconds = ruleNumber(current?.Thdchecksec, 900, 60, 86400)
       return {
         Name: network.Name,
         Addr: addr,
         enabled: !!current,
-        checkSeconds: ruleNumber(current?.Thdchecksec, 900, 60, 86400),
-        occurrenceCount: ruleNumber(current?.Thdoccnum, 3, 1, 10000),
+        checkSeconds,
+        occurrenceCount: Math.min(
+          ruleNumber(current?.Thdoccnum, 3, 1, 10000),
+          maxOccurrenceCount(checkSeconds)
+        ),
         avgDelay: ruleNumber(current?.Thdavgdelay, 200, 1, 60000),
         lossPercent: ruleNumber(current?.Thdloss, 30, 0, 100)
       }
@@ -816,7 +830,7 @@ const saveTopoConfig = () => {
       Name: item.Name,
       Addr: item.Addr,
       Thdchecksec: String(item.checkSeconds),
-      Thdoccnum: String(item.occurrenceCount),
+      Thdoccnum: String(Math.min(item.occurrenceCount, maxOccurrenceCount(item.checkSeconds))),
       Thdavgdelay: String(item.avgDelay),
       Thdloss: String(item.lossPercent)
     }))

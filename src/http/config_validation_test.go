@@ -137,3 +137,22 @@ func TestValidateConfigRejectsNonMinuteTopologyWindow(t *testing.T) {
 		t.Fatalf("validateConfig should reject a topology window that is not a multiple of 60 seconds")
 	}
 }
+
+func TestValidateConfigRejectsImpossibleTopologyOccurrenceCount(t *testing.T) {
+	config := validTestConfig()
+	config.Network["192.0.2.1"] = g.NetworkMember{Name: "remote", Addr: "192.0.2.1"}
+	member := config.Network["127.0.0.1"]
+	member.Topology = []map[string]string{{
+		"Name":        "remote",
+		"Addr":        "192.0.2.1",
+		"Thdchecksec": "120",
+		"Thdloss":     "30",
+		"Thdavgdelay": "200",
+		"Thdoccnum":   "3",
+	}}
+	config.Network["127.0.0.1"] = member
+
+	if err := validateConfig(config); err == nil {
+		t.Fatalf("validateConfig should reject an occurrence count greater than the window sample count")
+	}
+}

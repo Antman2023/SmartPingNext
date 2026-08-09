@@ -118,6 +118,35 @@ func parseRemoteIP(remoteAddr string) string {
 	return parsed.String()
 }
 
+func normalizeToolTarget(rawTarget string) (string, error) {
+	target := strings.TrimSpace(rawTarget)
+	if target == "" {
+		return "", errors.New("target empty")
+	}
+
+	if parsedIP := net.ParseIP(strings.Trim(target, "[]")); parsedIP != nil {
+		return parsedIP.String(), nil
+	}
+
+	parseTarget := target
+	if !strings.Contains(target, "://") {
+		parseTarget = "//" + target
+	}
+	parsedURL, err := url.Parse(parseTarget)
+	if err != nil {
+		return "", errors.New("invalid target")
+	}
+	if parsedURL.Scheme != "" && parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return "", errors.New("invalid target")
+	}
+
+	host := strings.TrimSuffix(parsedURL.Hostname(), ".")
+	if host == "" {
+		return "", errors.New("invalid target")
+	}
+	return host, nil
+}
+
 func resolvePingTimeRange(values url.Values, now time.Time, location *time.Location) (time.Time, time.Time, error) {
 	if location == nil {
 		location = time.Local
