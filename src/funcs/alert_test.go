@@ -51,7 +51,30 @@ func TestCheckAlertStatus(t *testing.T) {
 		`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay TEXT, losspk TEXT);`,
 	}
 
-	t.Run("true when count less or equal threshold", func(t *testing.T) {
+	t.Run("true when count less than threshold", func(t *testing.T) {
+		withFuncTestDB(t, schema, func(db *sql.DB) {
+			now := time.Now().Format("2006-01-02 15:04")
+			_, _ = db.Exec(`INSERT INTO pinglog(logtime,target,avgdelay,losspk) VALUES (?,?,?,?)`, now, "1.1.1.1", "250", "0")
+
+			v := map[string]string{
+				"Thdchecksec": "600",
+				"Addr":        "1.1.1.1",
+				"Thdavgdelay": "200",
+				"Thdloss":     "30",
+				"Thdoccnum":   "2",
+			}
+
+			healthy, err := CheckAlertStatus(v)
+			if err != nil {
+				t.Fatalf("CheckAlertStatus returned error: %v", err)
+			}
+			if !healthy {
+				t.Fatalf("CheckAlertStatus should return true when count < threshold")
+			}
+		})
+	})
+
+	t.Run("false when count equals threshold", func(t *testing.T) {
 		withFuncTestDB(t, schema, func(db *sql.DB) {
 			now := time.Now().Format("2006-01-02 15:04")
 			_, _ = db.Exec(`INSERT INTO pinglog(logtime,target,avgdelay,losspk) VALUES (?,?,?,?)`, now, "1.1.1.1", "250", "0")
@@ -68,8 +91,31 @@ func TestCheckAlertStatus(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CheckAlertStatus returned error: %v", err)
 			}
-			if !healthy {
-				t.Fatalf("CheckAlertStatus should return true when count <= threshold")
+			if healthy {
+				t.Fatalf("CheckAlertStatus should return false when count equals threshold")
+			}
+		})
+	})
+
+	t.Run("loss equal to threshold counts as an occurrence", func(t *testing.T) {
+		withFuncTestDB(t, schema, func(db *sql.DB) {
+			now := time.Now().Format("2006-01-02 15:04")
+			_, _ = db.Exec(`INSERT INTO pinglog(logtime,target,avgdelay,losspk) VALUES (?,?,?,?)`, now, "3.3.3.3", "20", "30")
+
+			v := map[string]string{
+				"Thdchecksec": "600",
+				"Addr":        "3.3.3.3",
+				"Thdavgdelay": "200",
+				"Thdloss":     "30",
+				"Thdoccnum":   "1",
+			}
+
+			healthy, err := CheckAlertStatus(v)
+			if err != nil {
+				t.Fatalf("CheckAlertStatus returned error: %v", err)
+			}
+			if healthy {
+				t.Fatalf("CheckAlertStatus should count loss equal to the configured threshold")
 			}
 		})
 	})
