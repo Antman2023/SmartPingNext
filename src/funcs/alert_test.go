@@ -203,6 +203,66 @@ func TestAlertWindowStartUsesMinuteSamples(t *testing.T) {
 	}
 }
 
+func TestCheckAlertStatusIncludesRoundThatFinishesAcrossMinuteBoundary(t *testing.T) {
+	schema := []string{
+		`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay TEXT, losspk TEXT);`,
+	}
+
+	withFuncTestDB(t, schema, func(db *sql.DB) {
+		_, _ = db.Exec(
+			`INSERT INTO pinglog(logtime,target,avgdelay,losspk) VALUES (?,?,?,?)`,
+			"2026-08-10 12:00", "1.1.1.1", "250", "0",
+		)
+		rule := map[string]string{
+			"Thdchecksec": "60",
+			"Addr":        "1.1.1.1",
+			"Thdavgdelay": "200",
+			"Thdloss":     "30",
+			"Thdoccnum":   "1",
+		}
+
+		healthy, err := checkAlertStatusAt(rule, time.Date(2026, 8, 10, 12, 1, 1, 0, time.Local))
+		if err != nil {
+			t.Fatalf("checkAlertStatusAt returned error: %v", err)
+		}
+		if healthy {
+			t.Fatalf("a failing round completed just after the minute boundary should trigger an alert")
+		}
+	})
+}
+
+func TestCheckAlertStatusGracePeriodDoesNotAddAnExtraSample(t *testing.T) {
+	schema := []string{
+		`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay TEXT, losspk TEXT);`,
+	}
+
+	withFuncTestDB(t, schema, func(db *sql.DB) {
+		_, _ = db.Exec(
+			`INSERT INTO pinglog(logtime,target,avgdelay,losspk) VALUES (?,?,?,?)`,
+			"2026-08-10 11:59", "1.1.1.1", "250", "0",
+		)
+		_, _ = db.Exec(
+			`INSERT INTO pinglog(logtime,target,avgdelay,losspk) VALUES (?,?,?,?)`,
+			"2026-08-10 12:00", "1.1.1.1", "20", "0",
+		)
+		rule := map[string]string{
+			"Thdchecksec": "60",
+			"Addr":        "1.1.1.1",
+			"Thdavgdelay": "200",
+			"Thdloss":     "30",
+			"Thdoccnum":   "1",
+		}
+
+		healthy, err := checkAlertStatusAt(rule, time.Date(2026, 8, 10, 12, 0, 30, 0, time.Local))
+		if err != nil {
+			t.Fatalf("checkAlertStatusAt returned error: %v", err)
+		}
+		if !healthy {
+			t.Fatalf("the boundary grace period should not count an extra stale sample")
+		}
+	})
+}
+
 func TestAlertStorage(t *testing.T) {
 	schema := []string{
 		`CREATE TABLE alertlog (logtime TEXT, targetip TEXT, targetname TEXT, tracert TEXT, UNIQUE(logtime, targetip));`,

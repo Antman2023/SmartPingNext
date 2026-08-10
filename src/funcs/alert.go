@@ -73,21 +73,46 @@ func StartAlert() {
 }
 
 func CheckAlertStatus(v map[string]string) (bool, error) {
+	return checkAlertStatusAt(v, time.Now())
+}
+
+func checkAlertStatusAt(v map[string]string, now time.Time) (bool, error) {
 	Thdchecksec, err := strconv.Atoi(v["Thdchecksec"])
 	if err != nil || Thdchecksec <= 0 {
 		return false, fmt.Errorf("invalid Thdchecksec %q", v["Thdchecksec"])
 	}
-	timeStartStr := alertWindowStart(time.Now(), Thdchecksec).Format("2006-01-02 15:04")
-	querysql := "SELECT count(1) cnt FROM `pinglog` where logtime >= ? and target = ? and (cast(avgdelay as double) > ? or cast(losspk as double) >= ?)"
-	var cnt int
-	err = g.Db.QueryRow(querysql, timeStartStr, v["Addr"], v["Thdavgdelay"], v["Thdloss"]).Scan(&cnt)
-	logrus.Debug("[func:StartAlert] ", querysql)
-	if err != nil {
-		return false, fmt.Errorf("query alert status for %s: %w", v["Addr"], err)
-	}
 	Thdoccnum, err := strconv.Atoi(v["Thdoccnum"])
 	if err != nil || Thdoccnum <= 0 {
 		return false, fmt.Errorf("invalid Thdoccnum %q", v["Thdoccnum"])
+	}
+
+	sampleCount := Thdchecksec / 60
+	if sampleCount < 1 {
+		sampleCount = 1
+	}
+	windowEnd := now.Truncate(time.Minute)
+	// A ping round is timestamped at its start but can finish just after the next
+	// minute begins. Include that boundary minute, then cap the query to the
+	// configured number of samples so the grace period cannot count stale data.
+	windowStart := alertWindowStart(now, Thdchecksec).Add(-time.Minute)
+	querysql := `SELECT count(1) FROM (
+		SELECT avgdelay, losspk FROM pinglog
+		WHERE target = ? AND logtime >= ? AND logtime <= ?
+		ORDER BY logtime DESC LIMIT ?
+	) WHERE cast(avgdelay as double) > ? OR cast(losspk as double) >= ?`
+	var cnt int
+	err = g.Db.QueryRow(
+		querysql,
+		v["Addr"],
+		windowStart.Format("2006-01-02 15:04"),
+		windowEnd.Format("2006-01-02 15:04"),
+		sampleCount,
+		v["Thdavgdelay"],
+		v["Thdloss"],
+	).Scan(&cnt)
+	logrus.Debug("[func:StartAlert] ", querysql)
+	if err != nil {
+		return false, fmt.Errorf("query alert status for %s: %w", v["Addr"], err)
 	}
 	return cnt < Thdoccnum, nil
 }
