@@ -206,7 +206,7 @@ func ConfigSnapshot() Config {
 }
 
 func SetConfig(config Config) {
-	config = cloneConfig(normalizeConfig(config))
+	config = normalizeConfig(cloneConfig(config))
 	userIPs := make(map[string]bool)
 	agentIPs := make(map[string]bool)
 	for _, member := range config.Network {
@@ -296,6 +296,22 @@ func cloneIntMap(values map[string]int) map[string]int {
 }
 
 func normalizeConfig(config Config) Config {
+	if config.Mode == nil {
+		config.Mode = map[string]string{}
+	}
+	if config.Chinamap == nil {
+		config.Chinamap = map[string]map[string][]string{}
+	}
+	for addr, member := range config.Network {
+		if member.Ping == nil {
+			member.Ping = []string{}
+		}
+		if member.Topology == nil {
+			member.Topology = []map[string]string{}
+		}
+		config.Network[addr] = member
+	}
+
 	normalizedAuthIPs := make([]string, 0)
 	for _, rawIP := range strings.Split(strings.ReplaceAll(config.Authiplist, " ", ""), ",") {
 		if rawIP != "" {
@@ -389,8 +405,8 @@ func applyCloudConfig(downloaded Config, endpoint string) error {
 }
 
 func cloudConfigEqual(left, right Config) bool {
-	left = cloneConfig(left)
-	right = cloneConfig(right)
+	left = normalizeConfig(cloneConfig(left))
+	right = normalizeConfig(cloneConfig(right))
 	for _, config := range []*Config{&left, &right} {
 		delete(config.Mode, "LastSuccTime")
 		delete(config.Mode, "Status")
@@ -399,7 +415,7 @@ func cloudConfigEqual(left, right Config) bool {
 }
 
 func applyConfigLocked(config Config) error {
-	config = normalizeConfig(config)
+	config = normalizeConfig(cloneConfig(config))
 	if err := saveConfigFile(config); err != nil {
 		return err
 	}

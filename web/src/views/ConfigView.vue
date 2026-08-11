@@ -526,6 +526,75 @@ const loadConfig = async () => {
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null => {
+  if (
+    !isRecord(value) ||
+    !isRecord(value.Base) ||
+    !isRecord(value.Topology) ||
+    !isRecord(value.Network) ||
+    (value.Mode !== undefined && value.Mode !== null && !isRecord(value.Mode)) ||
+    (value.Chinamap !== undefined && value.Chinamap !== null && !isRecord(value.Chinamap))
+  ) {
+    return null
+  }
+
+  const network: Record<string, unknown> = {}
+  for (const [addr, rawMember] of Object.entries(value.Network)) {
+    if (
+      !isRecord(rawMember) ||
+      typeof rawMember.Name !== 'string' ||
+      typeof rawMember.Addr !== 'string' ||
+      (rawMember.Ping !== undefined &&
+        (!Array.isArray(rawMember.Ping) ||
+          rawMember.Ping.some((target) => typeof target !== 'string'))) ||
+      (rawMember.Topology !== undefined &&
+        (!Array.isArray(rawMember.Topology) || rawMember.Topology.some((rule) => !isRecord(rule))))
+    ) {
+      return null
+    }
+    network[addr] = {
+      ...rawMember,
+      Ping: Array.isArray(rawMember.Ping) ? rawMember.Ping : [],
+      Topology: Array.isArray(rawMember.Topology) ? rawMember.Topology : []
+    }
+  }
+
+  const chinaMap: Record<string, unknown> = {}
+  if (isRecord(value.Chinamap)) {
+    for (const [province, rawProviders] of Object.entries(value.Chinamap)) {
+      if (!isRecord(rawProviders)) {
+        return null
+      }
+      for (const provider of ['ctcc', 'cucc', 'cmcc']) {
+        const addresses = rawProviders[provider]
+        if (
+          addresses !== undefined &&
+          (!Array.isArray(addresses) || addresses.some((address) => typeof address !== 'string'))
+        ) {
+          return null
+        }
+      }
+      chinaMap[province] = {
+        ...rawProviders,
+        ctcc: Array.isArray(rawProviders.ctcc) ? rawProviders.ctcc : [],
+        cucc: Array.isArray(rawProviders.cucc) ? rawProviders.cucc : [],
+        cmcc: Array.isArray(rawProviders.cmcc) ? rawProviders.cmcc : []
+      }
+    }
+  }
+
+  return {
+    ...value,
+    Mode: isRecord(value.Mode) ? value.Mode : {},
+    Network: network,
+    Chinamap: chinaMap
+  }
+}
+
 const handleSave = async () => {
   if (!password.value) {
     ElMessage.warning(t('common.pleaseEnterPassword'))
@@ -604,9 +673,9 @@ const handleImportFile = async (file: { raw: File }) => {
   const reader = new FileReader()
   reader.onload = (event) => {
     try {
-      const importedConfig = JSON.parse(event.target?.result as string)
+      const importedConfig = normalizeImportedConfig(JSON.parse(event.target?.result as string))
 
-      if (!importedConfig.Name || !importedConfig.Addr || !importedConfig.Network) {
+      if (!importedConfig || !importedConfig.Name || !importedConfig.Addr) {
         ElMessage.error(t('config.configInvalid'))
         return
       }

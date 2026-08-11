@@ -107,6 +107,38 @@ func TestSetConfigUpdatesAuth(t *testing.T) {
 	})
 }
 
+func TestSetConfigNormalizesOptionalCollections(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		input := Config{
+			Addr: "127.0.0.1",
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "local", Addr: "127.0.0.1"},
+			},
+		}
+		SetConfig(input)
+
+		inputMember := input.Network["127.0.0.1"]
+		if inputMember.Ping != nil || inputMember.Topology != nil {
+			t.Fatal("SetConfig mutated caller-owned network members")
+		}
+
+		snapshot := ConfigSnapshot()
+		if snapshot.Mode == nil {
+			t.Fatal("SetConfig left Mode nil")
+		}
+		if snapshot.Chinamap == nil {
+			t.Fatal("SetConfig left Chinamap nil")
+		}
+		member := snapshot.Network["127.0.0.1"]
+		if member.Ping == nil {
+			t.Fatal("SetConfig left NetworkMember.Ping nil")
+		}
+		if member.Topology == nil {
+			t.Fatal("SetConfig left NetworkMember.Topology nil")
+		}
+	})
+}
+
 func TestConfigStateDoesNotShareMutableReferences(t *testing.T) {
 	withGlobalConfigState(t, func() {
 		input := Config{
