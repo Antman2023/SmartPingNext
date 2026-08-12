@@ -3,7 +3,6 @@ package funcs
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"net"
 	"smartping/src/g"
 	"smartping/src/nettools"
@@ -109,36 +108,40 @@ func MappingTask(tel string, prov string, ips []string, probeCount int, wg *sync
 			statMap = append(statMap, stat)
 		}
 	}
-	fStatDetail := g.PingSt{}
-	fT := 0
-	effCnt := 0
-	for _, stat := range statMap {
-		if len(statMap) > 1 && fT < int(math.Ceil(float64(len(statMap)))/4) {
-			if stat.LossPk == 100 || stat.RevcPk == 0 {
-				fT = fT + 1
-				continue
-			}
-		}
-		fStatDetail.MaxDelay = fStatDetail.MaxDelay + stat.MaxDelay
-		fStatDetail.MinDelay = fStatDetail.MinDelay + stat.MinDelay
-		fStatDetail.AvgDelay = fStatDetail.AvgDelay + stat.AvgDelay
-		fStatDetail.SendPk = fStatDetail.SendPk + stat.SendPk
-		fStatDetail.RevcPk = fStatDetail.RevcPk + stat.RevcPk
-		fStatDetail.LossPk = fStatDetail.SendPk - fStatDetail.RevcPk
-		effCnt = effCnt + 1
-	}
 	gMapVal := g.MapVal{}
 	gMapVal.Name = tel
-	if effCnt == 0 {
-		effCnt = 1
-		fStatDetail.AvgDelay = 2000
-	}
-	value, _ := strconv.ParseFloat(fmt.Sprintf("%.2f", fStatDetail.AvgDelay/float64(effCnt)), 64)
-	gMapVal.Value = value
+	gMapVal.Value = aggregateMappingDelay(statMap)
 	MapLock.Lock()
 	MapStatus[prov] = append(MapStatus[prov], gMapVal)
 	MapLock.Unlock()
 	logrus.Info("Finish MappingTask " + tel + " " + prov + "..")
+}
+
+func aggregateMappingDelay(stats []g.PingSt) float64 {
+	if len(stats) == 0 {
+		return 2000
+	}
+
+	// Ignore up to one quarter of failed probes before applying the 2000ms
+	// failure penalty. Integer arithmetic keeps the intended ceil(n/4).
+	failureAllowance := (len(stats) + 3) / 4
+	failuresIgnored := 0
+	totalDelay := 0.0
+	effectiveCount := 0
+	for _, stat := range stats {
+		if (stat.LossPk == 100 || stat.RevcPk == 0) && failuresIgnored < failureAllowance {
+			failuresIgnored++
+			continue
+		}
+		totalDelay += stat.AvgDelay
+		effectiveCount++
+	}
+
+	if effectiveCount == 0 {
+		return 2000
+	}
+	value, _ := strconv.ParseFloat(fmt.Sprintf("%.2f", totalDelay/float64(effectiveCount)), 64)
+	return value
 }
 
 func MapPingStorage() {
