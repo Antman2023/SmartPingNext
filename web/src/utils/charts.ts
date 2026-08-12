@@ -32,42 +32,33 @@ function getThemeConfig(isDark: boolean): ChartTheme {
 }
 
 /**
- * 移除尾部未刷新的全零数据点
- * 最近1分钟的数据可能尚未采集完毕，各项值均为0，在图表上会造成末尾"掉底"的误导。
- * 从尾部向前扫描，仅截掉延迟和丢包率全部为 0 的数据点。
+ * 移除尾部尚未刷新的当前分钟数据点。
+ * API 会为缺失分钟填充全零值，但只有最后一分钟可能仍在采集中；更早的连续
+ * 零值必须保留在时间轴上，否则会掩盖节点停止上报的时间范围。
  */
-function trimTrailingZeros(data: PingLogData): PingLogData {
+export function trimIncompleteTrailingPoint(data: PingLogData): PingLogData {
   const len = data.lastcheck.length
   if (len === 0) return data
 
-  let trimEnd = len
-  while (trimEnd > 0) {
-    const i = trimEnd - 1
-    const avg = parseFloat(data.avgdelay[i]) || 0
-    const max = parseFloat(data.maxdelay[i]) || 0
-    const min = parseFloat(data.mindelay[i]) || 0
-    const loss = parseFloat(data.losspk[i]) || 0
-    if (avg === 0 && max === 0 && min === 0 && loss === 0) {
-      trimEnd--
-    } else {
-      break
-    }
-  }
-
-  if (trimEnd === len) return data
+  const lastIndex = len - 1
+  const avg = parseFloat(data.avgdelay[lastIndex]) || 0
+  const max = parseFloat(data.maxdelay[lastIndex]) || 0
+  const min = parseFloat(data.mindelay[lastIndex]) || 0
+  const loss = parseFloat(data.losspk[lastIndex]) || 0
+  if (avg !== 0 || max !== 0 || min !== 0 || loss !== 0) return data
 
   return {
-    lastcheck: data.lastcheck.slice(0, trimEnd),
-    maxdelay: data.maxdelay.slice(0, trimEnd),
-    mindelay: data.mindelay.slice(0, trimEnd),
-    avgdelay: data.avgdelay.slice(0, trimEnd),
-    losspk: data.losspk.slice(0, trimEnd)
+    lastcheck: data.lastcheck.slice(0, lastIndex),
+    maxdelay: data.maxdelay.slice(0, lastIndex),
+    mindelay: data.mindelay.slice(0, lastIndex),
+    avgdelay: data.avgdelay.slice(0, lastIndex),
+    losspk: data.losspk.slice(0, lastIndex)
   }
 }
 
 export function getPingChartOption(data: PingLogData | null, isDark: boolean, showDataZoom = false): EChartsOption {
   const theme = getThemeConfig(isDark)
-  const trimmed = data ? trimTrailingZeros(data) : null
+  const trimmed = data ? trimIncompleteTrailingPoint(data) : null
   let lastRenderedIndex = -1
   let lastRenderedDate = ''
 
@@ -281,7 +272,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
 
 export function getPingMiniChartOption(data: PingLogData | null, isDark: boolean): EChartsOption {
   const labelColor = isDark ? '#6c6e72' : '#909399'
-  const trimmed = data ? trimTrailingZeros(data) : null
+  const trimmed = data ? trimIncompleteTrailingPoint(data) : null
 
   return {
     backgroundColor: 'transparent',
