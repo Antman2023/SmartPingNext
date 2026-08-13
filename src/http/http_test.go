@@ -266,6 +266,45 @@ func TestResolvePingTimeRange(t *testing.T) {
 	}
 }
 
+func TestCompletedPingTimelineSize(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, 8, 13, 6, 25, 30, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		lastcheck  []string
+		populated  []bool
+		wantLength int
+	}{
+		{
+			name:       "removes missing current minute in server timezone",
+			lastcheck:  []string{"2026-08-13 14:24", "2026-08-13 14:25"},
+			populated:  []bool{true, false},
+			wantLength: 1,
+		},
+		{
+			name:       "keeps populated current minute even when values may be zero",
+			lastcheck:  []string{"2026-08-13 14:25"},
+			populated:  []bool{true},
+			wantLength: 1,
+		},
+		{
+			name:       "keeps a missing historical minute",
+			lastcheck:  []string{"2026-08-13 14:23", "2026-08-13 14:24"},
+			populated:  []bool{true, false},
+			wantLength: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := completedPingTimelineSize(tt.lastcheck, tt.populated, now, location); got != tt.wantLength {
+				t.Fatalf("completedPingTimelineSize() = %d, want %d", got, tt.wantLength)
+			}
+		})
+	}
+}
+
 func TestAllowToolRequestUsesClientIPAndCleansExpiredEntries(t *testing.T) {
 	g.ToolLimitLock.Lock()
 	oldToolLimit := g.ToolLimit

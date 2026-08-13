@@ -53,7 +53,8 @@ func configApiRoutes() {
 		}
 		var tableip string
 		tableip = form["ip"][0]
-		timeStartValue, timeEndValue, err := resolvePingTimeRange(form, time.Now(), g.LocalTimezone)
+		requestTime := time.Now()
+		timeStartValue, timeEndValue, err := resolvePingTimeRange(form, requestTime, g.LocalTimezone)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotAcceptable)
 			return
@@ -69,6 +70,7 @@ func configApiRoutes() {
 		mindelay := make([]string, size)
 		avgdelay := make([]string, size)
 		losspk := make([]string, size)
+		populated := make([]bool, size)
 		cursor := timeStart
 		for i := 0; i < size; i++ {
 			ntime := time.Unix(cursor, 0).Format("2006-01-02 15:04")
@@ -109,6 +111,7 @@ func configApiRoutes() {
 					mindelay[idx] = l.Mindelay
 					avgdelay[idx] = l.Avgdelay
 					losspk[idx] = l.Losspk
+					populated[idx] = true
 				}
 			}
 			if err := rows.Err(); err != nil {
@@ -121,6 +124,12 @@ func configApiRoutes() {
 			logrus.Info("[func:/api/ping.json] Query ", elapsed)
 			rows.Close()
 		}
+		completedSize := completedPingTimelineSize(lastcheck, populated, requestTime, g.LocalTimezone)
+		lastcheck = lastcheck[:completedSize]
+		maxdelay = maxdelay[:completedSize]
+		mindelay = mindelay[:completedSize]
+		avgdelay = avgdelay[:completedSize]
+		losspk = losspk[:completedSize]
 		preout := map[string][]string{
 			"lastcheck": lastcheck,
 			"maxdelay":  maxdelay,

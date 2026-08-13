@@ -177,6 +177,21 @@ func resolvePingTimeRange(values url.Values, now time.Time, location *time.Locat
 	return parsedStart, parsedEnd, nil
 }
 
+func completedPingTimelineSize(lastcheck []string, populated []bool, now time.Time, location *time.Location) int {
+	size := len(lastcheck)
+	if size == 0 || len(populated) < size {
+		return size
+	}
+	if location == nil {
+		location = time.Local
+	}
+	currentMinute := now.In(location).Format("2006-01-02 15:04")
+	if lastcheck[size-1] == currentMinute && !populated[size-1] {
+		return size - 1
+	}
+	return size
+}
+
 func allowToolRequest(remoteAddr string, now int, limit int) bool {
 	if limit <= 0 {
 		return true

@@ -31,34 +31,8 @@ function getThemeConfig(isDark: boolean): ChartTheme {
   }
 }
 
-/**
- * 移除尾部尚未刷新的当前分钟数据点。
- * API 会为缺失分钟填充全零值，但只有最后一分钟可能仍在采集中；更早的连续
- * 零值必须保留在时间轴上，否则会掩盖节点停止上报的时间范围。
- */
-export function trimIncompleteTrailingPoint(data: PingLogData): PingLogData {
-  const len = data.lastcheck.length
-  if (len === 0) return data
-
-  const lastIndex = len - 1
-  const avg = parseFloat(data.avgdelay[lastIndex]) || 0
-  const max = parseFloat(data.maxdelay[lastIndex]) || 0
-  const min = parseFloat(data.mindelay[lastIndex]) || 0
-  const loss = parseFloat(data.losspk[lastIndex]) || 0
-  if (avg !== 0 || max !== 0 || min !== 0 || loss !== 0) return data
-
-  return {
-    lastcheck: data.lastcheck.slice(0, lastIndex),
-    maxdelay: data.maxdelay.slice(0, lastIndex),
-    mindelay: data.mindelay.slice(0, lastIndex),
-    avgdelay: data.avgdelay.slice(0, lastIndex),
-    losspk: data.losspk.slice(0, lastIndex)
-  }
-}
-
 export function getPingChartOption(data: PingLogData | null, isDark: boolean, showDataZoom = false): EChartsOption {
   const theme = getThemeConfig(isDark)
-  const trimmed = data ? trimIncompleteTrailingPoint(data) : null
   let lastRenderedIndex = -1
   let lastRenderedDate = ''
 
@@ -154,7 +128,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
     }] : undefined,
     xAxis: {
       type: 'category',
-      data: trimmed?.lastcheck || [],
+      data: data?.lastcheck || [],
       axisLine: {
         lineStyle: { color: theme.borderColor }
       },
@@ -232,7 +206,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
       {
         name: '最大延迟',
         type: 'line',
-        data: trimmed?.maxdelay || [],
+        data: data?.maxdelay || [],
         animation: false,
         lineStyle: { width: 1 },
         itemStyle: { color: '#e6a23c' },
@@ -241,7 +215,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
       {
         name: '平均延迟',
         type: 'line',
-        data: trimmed?.avgdelay || [],
+        data: data?.avgdelay || [],
         animation: false,
         lineStyle: { width: 2 },
         itemStyle: { color: '#00CC66' },
@@ -250,7 +224,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
       {
         name: '最小延迟',
         type: 'line',
-        data: trimmed?.mindelay || [],
+        data: data?.mindelay || [],
         animation: false,
         lineStyle: { width: 1 },
         itemStyle: { color: '#409eff' },
@@ -260,7 +234,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
         name: '丢包率',
         type: 'line',
         yAxisIndex: 1,
-        data: trimmed?.losspk || [],
+        data: data?.losspk || [],
         animation: false,
         lineStyle: { width: 2 },
         itemStyle: { color: '#f56c6c' },
@@ -272,7 +246,6 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
 
 export function getPingMiniChartOption(data: PingLogData | null, isDark: boolean): EChartsOption {
   const labelColor = isDark ? '#6c6e72' : '#909399'
-  const trimmed = data ? trimIncompleteTrailingPoint(data) : null
 
   return {
     backgroundColor: 'transparent',
@@ -285,7 +258,7 @@ export function getPingMiniChartOption(data: PingLogData | null, isDark: boolean
     },
     xAxis: {
       type: 'category',
-      data: trimmed?.lastcheck || [],
+      data: data?.lastcheck || [],
       axisLine: { show: false },
       axisTick: { show: false },
       axisLabel: {
@@ -348,7 +321,7 @@ export function getPingMiniChartOption(data: PingLogData | null, isDark: boolean
     series: [
       {
         type: 'line',
-        data: trimmed?.avgdelay || [],
+        data: data?.avgdelay || [],
         yAxisIndex: 0,
         smooth: false,
         symbol: 'none',
@@ -372,7 +345,7 @@ export function getPingMiniChartOption(data: PingLogData | null, isDark: boolean
       },
       {
         type: 'line',
-        data: trimmed?.losspk || [],
+        data: data?.losspk || [],
         yAxisIndex: 1,
         smooth: false,
         symbol: 'none',
