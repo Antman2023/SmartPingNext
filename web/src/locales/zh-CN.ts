@@ -1,8 +1,9 @@
 export default {
   // 主题
   theme: {
-    lightMode: '浅色模式',
-    darkMode: '深色模式'
+    lightMode: '浅色',
+    darkMode: '深色',
+    systemMode: '跟随系统'
   },
   // 默认节点名翻译（中文模式保持原样）
   nodeName: {} as Record<string, string>,
@@ -63,6 +64,7 @@ export default {
     tools: '检测工具',
     alerts: '报警记录',
     config: '系统配置',
+    theme: '主题',
     language: '语言',
     zhCN: '简体中文',
     enUS: 'English',

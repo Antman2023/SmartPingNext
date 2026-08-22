@@ -1,8 +1,9 @@
 export default {
   // Theme
   theme: {
-    lightMode: 'Light Mode',
-    darkMode: 'Dark Mode'
+    lightMode: 'Light',
+    darkMode: 'Dark',
+    systemMode: 'System'
   },
   // Default node name translations
   nodeName: {
@@ -65,6 +66,7 @@ export default {
     tools: 'Tools',
     alerts: 'Alerts',
     config: 'Settings',
+    theme: 'Theme',
     language: 'Language',
     zhCN: '简体中文',
     enUS: 'English',

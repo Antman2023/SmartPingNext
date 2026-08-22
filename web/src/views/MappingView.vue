@@ -100,9 +100,11 @@ import { ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
+import chinaMap from 'china-map-geojson/lib/china'
 import { fetchConfig } from '@/api/config'
 import { getMapping, getProxyMapping } from '@/api/mapping'
 import { useSidebarStore } from '@/stores/sidebar'
+import { useThemeStore } from '@/stores/theme'
 import { displayName } from '@/utils/format'
 import type { ChinaMapData, Config } from '@/types'
 
@@ -114,10 +116,11 @@ const currentBaseUrl = ref('')
 const currentAgent = ref('')
 const chartRef = ref<HTMLDivElement>()
 const sidebarStore = useSidebarStore()
+const themeStore = useThemeStore()
 const isMapReady = ref(false)
 let chart: echarts.ECharts | null = null
 let isUnmounted = false
-const mapAbortController = new AbortController()
+let latestData: ChinaMapData | null = null
 
 const currentAgentName = computed(() => {
   if (!currentAgent.value) {
@@ -159,6 +162,7 @@ const loadMappingData = async () => {
       return
     }
 
+    latestData = data
     updateChart(data)
   } catch (error) {
     console.error('加载地图数据失败', error)
@@ -179,6 +183,11 @@ const updateChart = (data: ChinaMapData) => {
     return
   }
 
+  const styles = window.getComputedStyle(document.documentElement)
+  const textColor = styles.getPropertyValue('--color-text-primary').trim() || '#303133'
+  const secondaryTextColor =
+    styles.getPropertyValue('--color-text-secondary').trim() || '#606266'
+
   const option: EChartsOption = {
     backgroundColor: 'transparent',
     title: {
@@ -186,12 +195,12 @@ const updateChart = (data: ChinaMapData) => {
       subtext: data.subtext,
       left: 'center',
       textStyle: {
-        color: 'var(--color-text-primary)',
+        color: textColor,
         fontWeight: 700,
         fontSize: 20
       },
       subtextStyle: {
-        color: 'var(--color-text-secondary)'
+        color: secondaryTextColor
       }
     },
     tooltip: {
@@ -209,7 +218,7 @@ const updateChart = (data: ChinaMapData) => {
       top: 80,
       data: [t('mapping.telecom'), t('mapping.unicom'), t('mapping.mobile')],
       textStyle: {
-        color: 'var(--color-text-secondary)'
+        color: secondaryTextColor
       }
     },
     visualMap: {
@@ -219,7 +228,7 @@ const updateChart = (data: ChinaMapData) => {
       bottom: 24,
       text: [t('common.high'), t('common.low')],
       textStyle: {
-        color: 'var(--color-text-secondary)'
+        color: secondaryTextColor
       },
       pieces: [
         { gt: 200, color: '#dc5c65' },
@@ -262,45 +271,14 @@ const updateChart = (data: ChinaMapData) => {
   chart.setOption(option)
 }
 
-const mapUrlCandidates = [
-  import.meta.env.VITE_MAP_URL?.trim(),
-  'https://cdn.jsdelivr.net/npm/echarts-map@3.0.1/json/china.json',
-  'https://fastly.jsdelivr.net/npm/echarts-map@3.0.1/json/china.json',
-  'https://unpkg.com/echarts-map@3.0.1/json/china.json',
-  'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json'
-].filter((url, index, arr): url is string => !!url && arr.indexOf(url) === index)
-
-const initChart = async () => {
+const initChart = () => {
   if (!chartRef.value) {
     return
   }
 
   chart = echarts.init(chartRef.value)
-
-  const loadErrors: string[] = []
-  for (const mapUrl of mapUrlCandidates) {
-    try {
-      const response = await fetch(mapUrl, { signal: mapAbortController.signal })
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-      const chinaJson = await response.json()
-      if (isUnmounted) {
-        return
-      }
-      echarts.registerMap('china', chinaJson)
-      isMapReady.value = true
-      return
-    } catch (error) {
-      if (mapAbortController.signal.aborted) {
-        return
-      }
-      loadErrors.push(`${mapUrl} -> ${String(error)}`)
-    }
-  }
-
-  console.error('加载地图失败', loadErrors)
-  ElMessage.error('加载地图资源失败，请配置可访问的 VITE_MAP_URL')
+  echarts.registerMap('china', chinaMap)
+  isMapReady.value = true
 }
 
 const handleResize = () => {
@@ -311,6 +289,15 @@ watch(
   () => sidebarStore.isCollapsed,
   () => {
     setTimeout(() => handleResize(), 400)
+  }
+)
+
+watch(
+  () => themeStore.theme,
+  () => {
+    if (latestData) {
+      updateChart(latestData)
+    }
   }
 )
 
@@ -332,7 +319,7 @@ const saveMapImage = () => {
 
 onMounted(async () => {
   window.addEventListener('resize', handleResize)
-  await initChart()
+  initChart()
   if (isUnmounted) {
     return
   }
@@ -341,8 +328,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true
-  mapAbortController.abort()
   isMapReady.value = false
+  latestData = null
   chart?.dispose()
   chart = null
   window.removeEventListener('resize', handleResize)

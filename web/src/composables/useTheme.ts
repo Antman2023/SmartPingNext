@@ -1,11 +1,12 @@
-import { useThemeStore } from '@/stores/theme'
+import { useThemeStore, type ThemePreference } from '@/stores/theme'
 
 export function useTheme() {
   const themeStore = useThemeStore()
 
   return {
     theme: themeStore.theme,
+    preference: themeStore.preference,
     toggleTheme: () => themeStore.toggleTheme(),
-    setTheme: (theme: 'light' | 'dark') => themeStore.setTheme(theme)
+    setTheme: (theme: ThemePreference) => themeStore.setTheme(theme)
   }
 }
