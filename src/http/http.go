@@ -147,6 +147,14 @@ func normalizeToolTarget(rawTarget string) (string, error) {
 	return host, nil
 }
 
+func resolveToolIPAddr(target string) (*net.IPAddr, error) {
+	ipaddr, err := net.ResolveIPAddr("ip4", target)
+	if err != nil || ipaddr == nil || ipaddr.IP.To4() == nil {
+		return nil, errors.New("unable to resolve IPv4 destination host")
+	}
+	return ipaddr, nil
+}
+
 func resolvePingTimeRange(values url.Values, now time.Time, location *time.Location) (time.Time, time.Time, error) {
 	if location == nil {
 		location = time.Local

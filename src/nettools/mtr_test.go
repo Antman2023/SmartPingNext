@@ -31,6 +31,26 @@ func TestRunMtrZeroTTL(t *testing.T) {
 	}
 }
 
+func TestIsTerminalMtrResponse(t *testing.T) {
+	tests := []struct {
+		name     string
+		response ICMP
+		want     bool
+	}{
+		{name: "intermediate hop", response: ICMP{}, want: false},
+		{name: "echo reply", response: ICMP{Final: true}, want: true},
+		{name: "destination unreachable", response: ICMP{Down: true}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTerminalMtrResponse(tt.response); got != tt.want {
+				t.Fatalf("isTerminalMtrResponse() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSummarizeMtrInitializesBestFromFirstSuccessfulResponse(t *testing.T) {
 	got := summarizeMtr([]ICMP{
 		{Timeout: true},

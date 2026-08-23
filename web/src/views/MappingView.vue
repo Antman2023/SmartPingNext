@@ -121,6 +121,7 @@ const isMapReady = ref(false)
 let chart: echarts.ECharts | null = null
 let isUnmounted = false
 let latestData: ChinaMapData | null = null
+let mappingRequestId = 0
 
 const currentAgentName = computed(() => {
   if (!currentAgent.value) {
@@ -153,18 +154,22 @@ const loadMappingData = async () => {
     return
   }
 
+  const requestId = ++mappingRequestId
+  const baseUrl = currentBaseUrl.value
+  const date = selectedDate.value
   try {
-    const data = currentBaseUrl.value
-      ? await getProxyMapping(currentBaseUrl.value, selectedDate.value)
-      : await getMapping(selectedDate.value)
+    const data = baseUrl ? await getProxyMapping(baseUrl, date) : await getMapping(date)
 
-    if (!isMapReady.value) {
+    if (isUnmounted || requestId !== mappingRequestId || !isMapReady.value) {
       return
     }
 
     latestData = data
     updateChart(data)
   } catch (error) {
+    if (isUnmounted || requestId !== mappingRequestId) {
+      return
+    }
     console.error('加载地图数据失败', error)
     ElMessage.error('加载地图数据失败')
   }
@@ -328,6 +333,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true
+  mappingRequestId++
   isMapReady.value = false
   latestData = null
   chart?.dispose()

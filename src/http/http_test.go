@@ -98,6 +98,20 @@ func TestNormalizeToolTarget(t *testing.T) {
 	}
 }
 
+func TestResolveToolIPAddrUsesIPv4(t *testing.T) {
+	ipaddr, err := resolveToolIPAddr("127.0.0.1")
+	if err != nil {
+		t.Fatalf("resolveToolIPAddr returned error: %v", err)
+	}
+	if got := ipaddr.IP.String(); got != "127.0.0.1" {
+		t.Fatalf("resolveToolIPAddr IP = %q, want 127.0.0.1", got)
+	}
+
+	if _, err := resolveToolIPAddr("2001:db8::1"); err == nil {
+		t.Fatalf("resolveToolIPAddr should reject an IPv6-only target")
+	}
+}
+
 func TestAuthUserIpSupportsIPv6(t *testing.T) {
 	withAuthMaps(
 		map[string]bool{"::1": true},

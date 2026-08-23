@@ -96,7 +96,7 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 				}
 			}
 		}(ttl)
-		if next.Final {
+		if isTerminalMtrResponse(next) {
 			break
 		}
 	}
@@ -110,6 +110,10 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 
 	}
 	return result, nil
+}
+
+func isTerminalMtrResponse(response ICMP) bool {
+	return response.Final || response.Down
 }
 
 func summarizeMtr(vals []ICMP) Mtr {

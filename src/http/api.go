@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"smartping/src/funcs"
 	"smartping/src/g"
@@ -332,7 +331,7 @@ func configApiRoutes() {
 		preout.Ping = g.PingSt{}
 		preout.Ping.MinDelay = -1
 		lossPK := 0
-		ipaddr, err := net.ResolveIPAddr("ip", target)
+		ipaddr, err := resolveToolIPAddr(target)
 		if err != nil {
 			preout.Error = "Unable to resolve destination host"
 			RenderJson(w, preout)

@@ -7,10 +7,22 @@ export type ThemePreference = ThemeMode | 'system'
 const VALID_PREFERENCES: ThemePreference[] = ['system', 'light', 'dark']
 
 function getStoredPreference(): ThemePreference {
-  const stored = localStorage.getItem('theme')
-  return VALID_PREFERENCES.includes(stored as ThemePreference)
-    ? (stored as ThemePreference)
-    : 'system'
+  try {
+    const stored = localStorage.getItem('theme')
+    return VALID_PREFERENCES.includes(stored as ThemePreference)
+      ? (stored as ThemePreference)
+      : 'system'
+  } catch {
+    return 'system'
+  }
+}
+
+function storePreference(preference: ThemePreference): void {
+  try {
+    localStorage.setItem('theme', preference)
+  } catch {
+    // The resolved theme still works when browser storage is unavailable.
+  }
 }
 
 function getSystemTheme(mediaQuery?: MediaQueryList): ThemeMode {
@@ -57,7 +69,7 @@ export const useThemeStore = defineStore('theme', () => {
   })
 
   watch(preference, (newPreference) => {
-    localStorage.setItem('theme', newPreference)
+    storePreference(newPreference)
   })
 
   return {
