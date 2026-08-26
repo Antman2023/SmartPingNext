@@ -1,5 +1,9 @@
 <template>
-  <div class="page-shell config-view">
+  <div
+    v-loading="loadingConfig || saving"
+    :element-loading-text="saving ? $t('common.saving') : $t('common.loading')"
+    class="page-shell config-view"
+  >
     <div class="page-header">
       <div class="page-heading">
         <span class="page-eyebrow">{{ $t('config.title') }}</span>
@@ -33,14 +37,29 @@
               <h2 class="surface-panel__title">{{ $t('config.saveConfig') }}</h2>
               <p class="surface-panel__description">{{ $t('config.subtitle') }}</p>
             </div>
-            <el-link type="primary" href="/api/config.json" target="_blank">
-              <el-icon><Document /></el-icon>
-            </el-link>
+            <el-tooltip :content="$t('config.viewRawConfig')">
+              <el-link type="primary" href="/api/config.json" target="_blank">
+                <el-icon><Document /></el-icon>
+              </el-link>
+            </el-tooltip>
           </div>
 
           <div class="control-row">
-            <el-input v-model="password" type="password" :placeholder="$t('common.password')" />
-            <el-button type="primary" @click="handleSave">{{ $t('common.save') }}</el-button>
+            <el-input
+              v-model="password"
+              type="password"
+              :disabled="saving || importExportBusy"
+              :placeholder="$t('common.password')"
+              @keyup.enter="handleSave"
+            />
+            <el-button
+              type="primary"
+              :loading="saving"
+              :disabled="importExportBusy"
+              @click="handleSave"
+            >{{
+              $t('common.save')
+            }}</el-button>
           </div>
         </section>
 
@@ -48,7 +67,7 @@
           <div class="surface-panel__header">
             <div>
               <h2 class="surface-panel__title">{{ $t('config.importExport') }}</h2>
-              <p class="surface-panel__description">{{ $t('config.configImported') }}</p>
+              <p class="surface-panel__description">{{ $t('config.importExportHint') }}</p>
             </div>
           </div>
 
@@ -56,17 +75,27 @@
             <el-input
               v-model="importExportPassword"
               type="password"
+              :disabled="importExportBusy || saving"
               :placeholder="$t('common.password')"
             />
             <div class="control-row">
-              <el-button @click="handleExport">{{ $t('config.exportConfig') }}</el-button>
+              <el-button
+                :loading="exporting"
+                :disabled="importing || saving"
+                @click="handleExport"
+              >{{
+                $t('config.exportConfig')
+              }}</el-button>
               <el-upload
                 :auto-upload="false"
                 :show-file-list="false"
+                :disabled="importExportBusy || saving"
                 accept=".json"
                 :on-change="handleImportFile"
               >
-                <el-button>{{ $t('config.importConfig') }}</el-button>
+                <el-button :loading="importing" :disabled="exporting || saving">{{
+                  $t('config.importConfig')
+                }}</el-button>
               </el-upload>
             </div>
           </div>
@@ -154,20 +183,20 @@
               <el-table-column :label="$t('common.operation')" min-width="260">
                 <template #default="{ row }">
                   <div class="control-row">
-                    <el-button size="small" @click="showEditNode(row)">{{
+                    <el-button size="small" @click="showEditNode(row as NetworkListItem)">{{
                       $t('common.edit')
                     }}</el-button>
                     <el-button
                       size="small"
                       :disabled="!row.isSelf && !row._original.Smartping"
-                      @click="editPingConfig(row)"
+                      @click="editPingConfig(row as NetworkListItem)"
                     >
                       {{ $t('config.pingConfig') }}
                     </el-button>
                     <el-button
                       size="small"
                       :disabled="!row.isSelf && !row._original.Smartping"
-                      @click="editTopoConfig(row)"
+                      @click="editTopoConfig(row as NetworkListItem)"
                     >
                       {{ $t('config.topoConfig') }}
                     </el-button>
@@ -182,7 +211,7 @@
                     size="small"
                     :icon="Delete"
                     circle
-                    @click="deleteNode(row)"
+                    @click="deleteNode(row as NetworkListItem)"
                   />
                 </template>
               </el-table-column>
@@ -365,7 +394,7 @@
       width="640px"
     >
       <el-tabs v-model="chinaMapTab">
-        <el-tab-pane label="电信(CTCC)" name="ctcc">
+        <el-tab-pane :label="`${$t('mapping.telecom')} (CTCC)`" name="ctcc">
           <div class="config-view__ip-editor">
             <el-input
               v-model="chinaMapIps.ctcc"
@@ -375,7 +404,7 @@
             />
           </div>
         </el-tab-pane>
-        <el-tab-pane label="联通(CUCC)" name="cucc">
+        <el-tab-pane :label="`${$t('mapping.unicom')} (CUCC)`" name="cucc">
           <div class="config-view__ip-editor">
             <el-input
               v-model="chinaMapIps.cucc"
@@ -385,7 +414,7 @@
             />
           </div>
         </el-tab-pane>
-        <el-tab-pane label="移动(CMCC)" name="cmcc">
+        <el-tab-pane :label="`${$t('mapping.mobile')} (CMCC)`" name="cmcc">
           <div class="config-view__ip-editor">
             <el-input
               v-model="chinaMapIps.cmcc"
@@ -420,17 +449,40 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Delete, Document } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
-import { fetchConfig, saveConfig } from '@/api/config'
+import {
+  ElCheckbox,
+  ElDialog,
+  ElForm,
+  ElFormItem,
+  ElInput,
+  ElInputNumber,
+  ElLink,
+  ElMessage,
+  ElTabPane,
+  ElTable,
+  ElTableColumn,
+  ElTabs,
+  ElTooltip,
+  ElUpload,
+  type UploadFile
+} from 'element-plus'
+import { useConfigStore } from '@/stores/config'
 import type { Config, NetworkMember, TopologyConfig } from '@/types'
 
 const { t } = useI18n()
-const config = ref<Config | null>(null)
+const configStore = useConfigStore()
 const password = ref('')
 const importExportPassword = ref('')
+const loadingConfig = ref(false)
+const saving = ref(false)
+const exporting = ref(false)
+const importing = ref(false)
+const importExportBusy = computed(() => exporting.value || importing.value)
+let isUnmounted = false
+let configRequestId = 0
 
 const formConfig = reactive<Config>({
   Ver: '',
@@ -517,13 +569,20 @@ const addProvinceVisible = ref(false)
 const newProvinceName = ref('')
 
 const loadConfig = async () => {
-  try {
-    const cfg = await fetchConfig()
-    config.value = cfg
-    Object.assign(formConfig, cfg)
-  } catch (error) {
-    console.error('加载配置失败', error)
+  const requestId = ++configRequestId
+  loadingConfig.value = true
+  const cfg = await configStore.loadConfig()
+  if (isUnmounted || requestId !== configRequestId) {
+    return
   }
+
+  loadingConfig.value = false
+  if (!cfg) {
+    ElMessage.error(t('common.configLoadFailedNetwork'))
+    return
+  }
+
+  Object.assign(formConfig, JSON.parse(JSON.stringify(cfg)) as Config)
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -533,11 +592,22 @@ const isRecord = (value: unknown): value is Record<string, unknown> => {
 const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null => {
   if (
     !isRecord(value) ||
+    typeof value.Name !== 'string' ||
+    typeof value.Addr !== 'string' ||
     !isRecord(value.Base) ||
+    Object.values(value.Base).some(
+      (item) => typeof item !== 'number' || !Number.isFinite(item)
+    ) ||
     !isRecord(value.Topology) ||
+    Object.values(value.Topology).some((item) => typeof item !== 'string') ||
     !isRecord(value.Network) ||
-    (value.Mode !== undefined && value.Mode !== null && !isRecord(value.Mode)) ||
-    (value.Chinamap !== undefined && value.Chinamap !== null && !isRecord(value.Chinamap))
+    (value.Mode !== undefined &&
+      value.Mode !== null &&
+      (!isRecord(value.Mode) || Object.values(value.Mode).some((item) => typeof item !== 'string'))) ||
+    (value.Chinamap !== undefined && value.Chinamap !== null && !isRecord(value.Chinamap)) ||
+    (value.Toollimit !== undefined &&
+      (typeof value.Toollimit !== 'number' || !Number.isFinite(value.Toollimit))) ||
+    (value.Authiplist !== undefined && typeof value.Authiplist !== 'string')
   ) {
     return null
   }
@@ -548,11 +618,16 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
       !isRecord(rawMember) ||
       typeof rawMember.Name !== 'string' ||
       typeof rawMember.Addr !== 'string' ||
+      (rawMember.Smartping !== undefined && typeof rawMember.Smartping !== 'boolean') ||
       (rawMember.Ping !== undefined &&
         (!Array.isArray(rawMember.Ping) ||
           rawMember.Ping.some((target) => typeof target !== 'string'))) ||
       (rawMember.Topology !== undefined &&
-        (!Array.isArray(rawMember.Topology) || rawMember.Topology.some((rule) => !isRecord(rule))))
+        (!Array.isArray(rawMember.Topology) ||
+          rawMember.Topology.some(
+            (rule) =>
+              !isRecord(rule) || Object.values(rule).some((item) => typeof item !== 'string')
+          )))
     ) {
       return null
     }
@@ -588,92 +663,143 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
   }
 
   return {
-    ...value,
+    Name: value.Name,
+    Addr: value.Addr,
+    Base: { ...value.Base },
+    Topology: { ...value.Topology },
     Mode: isRecord(value.Mode) ? value.Mode : {},
     Network: network,
-    Chinamap: chinaMap
+    Chinamap: chinaMap,
+    Toollimit: typeof value.Toollimit === 'number' ? value.Toollimit : 0,
+    Authiplist: typeof value.Authiplist === 'string' ? value.Authiplist : ''
   }
 }
 
 const handleSave = async () => {
+  if (saving.value || importExportBusy.value) {
+    return
+  }
   if (!password.value) {
     ElMessage.warning(t('common.pleaseEnterPassword'))
     return
   }
 
+  saving.value = true
   try {
-    const result = await saveConfig(formConfig, password.value)
-    if (result.status === 'true') {
+    await configStore.saveConfig(formConfig, password.value)
+    if (!isUnmounted) {
       ElMessage.success(t('common.saveSuccess'))
-    } else {
-      ElMessage.error(result.info || t('common.saveFailed'))
-      console.error('保存失败:', result.info)
     }
   } catch (error: unknown) {
-    ElMessage.error(t('common.saveFailed') + ': ' + (error instanceof Error ? error.message : ''))
+    if (!isUnmounted) {
+      ElMessage.error(t('common.saveFailed') + ': ' + (error instanceof Error ? error.message : ''))
+    }
     console.error('保存失败', error)
+  } finally {
+    if (!isUnmounted) {
+      saving.value = false
+    }
   }
 }
 
 const verifyPassword = async (pwd: string): Promise<boolean> => {
-  try {
-    const response = await fetch('/api/verify-password.json', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `password=${encodeURIComponent(pwd)}`
-    })
-    const result = await response.json()
-    return result.status === 'true'
-  } catch {
-    return false
+  const response = await fetch('/api/verify-password.json', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ password: pwd })
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
   }
+  const result: unknown = await response.json()
+  return isRecord(result) && result.status === 'true'
 }
 
 const handleExport = async () => {
+  if (importExportBusy.value || saving.value) {
+    return
+  }
   if (!importExportPassword.value) {
     ElMessage.warning(t('common.pleaseEnterPassword'))
     return
   }
 
-  const valid = await verifyPassword(importExportPassword.value)
-  if (!valid) {
-    ElMessage.error(t('common.passwordError'))
-    return
+  exporting.value = true
+  try {
+    const valid = await verifyPassword(importExportPassword.value)
+    if (isUnmounted) {
+      return
+    }
+    if (!valid) {
+      ElMessage.error(t('common.passwordError'))
+      return
+    }
+
+    const exportConfig = JSON.parse(JSON.stringify(formConfig)) as Record<string, unknown>
+    delete exportConfig.Password
+    delete exportConfig.Ver
+
+    const blob = new Blob([JSON.stringify(exportConfig, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `smartping-config-${new Date().toISOString().slice(0, 10)}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+
+    ElMessage.success(t('config.configExported'))
+  } catch (error) {
+    if (!isUnmounted) {
+      ElMessage.error(t('config.passwordVerifyFailed'))
+    }
+    console.error('密码验证失败', error)
+  } finally {
+    if (!isUnmounted) {
+      exporting.value = false
+    }
   }
-
-  const exportConfig = {
-    ...formConfig,
-    Password: undefined,
-    Ver: undefined
-  }
-
-  const blob = new Blob([JSON.stringify(exportConfig, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `smartping-config-${new Date().toISOString().slice(0, 10)}.json`
-  link.click()
-  URL.revokeObjectURL(url)
-
-  ElMessage.success(t('config.configExported'))
 }
 
-const handleImportFile = async (file: { raw: File }) => {
+const handleImportFile = async (file: UploadFile) => {
+  if (importExportBusy.value || saving.value) {
+    return
+  }
+  if (!file.raw) {
+    ElMessage.error(t('config.configInvalid'))
+    return
+  }
+  const rawFile = file.raw
   if (!importExportPassword.value) {
     ElMessage.warning(t('common.pleaseEnterPassword'))
     return
   }
 
-  const valid = await verifyPassword(importExportPassword.value)
-  if (!valid) {
-    ElMessage.error(t('common.passwordError'))
-    return
-  }
-
-  const reader = new FileReader()
-  reader.onload = (event) => {
+  importing.value = true
+  try {
+    let valid: boolean
     try {
-      const importedConfig = normalizeImportedConfig(JSON.parse(event.target?.result as string))
+      valid = await verifyPassword(importExportPassword.value)
+    } catch (error) {
+      if (!isUnmounted) {
+        ElMessage.error(t('config.passwordVerifyFailed'))
+      }
+      console.error('密码验证失败', error)
+      return
+    }
+
+    if (isUnmounted) {
+      return
+    }
+    if (!valid) {
+      ElMessage.error(t('common.passwordError'))
+      return
+    }
+
+    try {
+      const importedConfig = normalizeImportedConfig(JSON.parse(await rawFile.text()))
+      if (isUnmounted) {
+        return
+      }
 
       if (!importedConfig || !importedConfig.Name || !importedConfig.Addr) {
         ElMessage.error(t('config.configInvalid'))
@@ -691,11 +817,15 @@ const handleImportFile = async (file: { raw: File }) => {
       })
 
       ElMessage.success(t('config.configImported'))
-    } catch {
+    } catch (error) {
       ElMessage.error(t('config.configParseFailed'))
+      console.error('配置文件解析失败', error)
+    }
+  } finally {
+    if (!isUnmounted) {
+      importing.value = false
     }
   }
-  reader.readAsText(file.raw)
 }
 
 const showAddNode = () => {
@@ -985,6 +1115,11 @@ const addProvince = () => {
 
 onMounted(() => {
   loadConfig()
+})
+
+onUnmounted(() => {
+  isUnmounted = true
+  configRequestId++
 })
 </script>
 

@@ -28,7 +28,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { ElDatePicker } from 'element-plus'
 
 const props = defineProps<{
   modelValue?: { start: string; end: string }
@@ -42,21 +44,23 @@ const emit = defineEmits<{
   'update:modelValue': [{ start: string; end: string }]
 }>()
 
+const { t } = useI18n()
+
 const format = props.format || 'YYYY-MM-DD HH:mm'
 const valueFormat = props.valueFormat || 'YYYY-MM-DD HH:mm'
 
 const startTime = ref(props.modelValue?.start || '')
 const endTime = ref(props.modelValue?.end || '')
 
-const ranges = [
-  { label: '1小时', hours: 1 },
-  { label: '3小时', hours: 3 },
-  { label: '6小时', hours: 6 },
-  { label: '12小时', hours: 12 },
-  { label: '1天', hours: 24 },
-  { label: '3天', hours: 72 },
-  { label: '7天', hours: 168 }
-]
+const ranges = computed(() => [
+  { label: t('dashboard.timeRanges.hour1'), hours: 1 },
+  { label: t('dashboard.timeRanges.hour3'), hours: 3 },
+  { label: t('dashboard.timeRanges.hour6'), hours: 6 },
+  { label: t('dashboard.timeRanges.hour12'), hours: 12 },
+  { label: t('dashboard.timeRanges.day1'), hours: 24 },
+  { label: t('dashboard.timeRanges.day3'), hours: 72 },
+  { label: t('dashboard.timeRanges.day7'), hours: 168 }
+])
 
 const setRange = (hours: number) => {
   const end = new Date()

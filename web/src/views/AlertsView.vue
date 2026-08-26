@@ -23,6 +23,10 @@
               selectedDate || '--'
             }}</strong>
           </div>
+          <div class="page-kpi">
+            <span class="page-kpi__label">{{ $t('common.issues') }}</span>
+            <strong class="page-kpi__value">{{ failedNodes }}</strong>
+          </div>
         </div>
       </div>
     </div>
@@ -66,7 +70,7 @@
           </div>
 
           <div class="table-scroll">
-            <el-table :data="alerts" stripe style="width: 100%">
+            <el-table v-loading="alertsLoading" :data="alerts" stripe style="width: 100%">
               <el-table-column prop="Logtime" :label="$t('alerts.alertDate')" min-width="170" />
               <el-table-column prop="Fromname" :label="$t('alerts.sourceNode')" min-width="120" />
               <el-table-column prop="Fromip" :label="$t('alerts.sourceIP')" min-width="140" />
@@ -74,9 +78,19 @@
               <el-table-column prop="Targetip" :label="$t('alerts.targetIP')" min-width="140" />
               <el-table-column :label="$t('common.operation')" width="100">
                 <template #default="{ row }">
-                  <el-button size="small" @click="showMtr(row)">MTR</el-button>
+                  <el-button size="small" @click="showMtr(row as AlertLog)">MTR</el-button>
                 </template>
               </el-table-column>
+              <template #empty>
+                <div class="empty-state alerts-view__empty">
+                  <span>{{
+                    alertsLoadError ? $t('alerts.loadFailed') : $t('alerts.noRecords')
+                  }}</span>
+                  <el-button v-if="alertsLoadError" size="small" @click="retryAlerts">
+                    {{ $t('common.retry') }}
+                  </el-button>
+                </div>
+              </template>
             </el-table>
           </div>
         </section>
@@ -109,6 +123,13 @@
             <div v-for="node in nodes" :key="node.addr" class="list-row">
               <div class="list-row__meta">
                 <el-icon v-if="node.loading" class="is-loading"><Loading /></el-icon>
+                <el-icon
+                  v-else-if="node.error"
+                  class="alerts-view__node-error"
+                  :title="$t('alerts.sourceLoadFailed')"
+                >
+                  <Warning />
+                </el-icon>
                 <div v-else class="alerts-view__node-dot"></div>
                 <div class="list-row__text">
                   <span class="list-row__title">{{ displayName(node.name) }}</span>
@@ -127,31 +148,38 @@
           <el-table-column prop="Host" :label="$t('alerts.host')" min-width="150" />
           <el-table-column :label="$t('alerts.packetLossRate')" width="90">
             <template #default="{ row }">
-              {{ ((row.Loss / row.Send) * 100).toFixed(2) }}%
+              {{ formatLossRate(row as MtrResult) }}
             </template>
           </el-table-column>
           <el-table-column prop="Send" :label="$t('tools.sent')" width="70" />
           <el-table-column :label="$t('alerts.latest')" width="80">
             <template #default="{ row }">
-              {{ (row.Last / 1000000).toFixed(2) }}
+              {{ formatMtrDuration(row.Last) }}
             </template>
           </el-table-column>
           <el-table-column :label="$t('alerts.average')" width="80">
             <template #default="{ row }">
-              {{ (row.Avg / 1000000).toFixed(2) }}
+              {{ formatMtrDuration(row.Avg) }}
             </template>
           </el-table-column>
           <el-table-column :label="$t('alerts.best')" width="80">
             <template #default="{ row }">
-              {{ (row.Best / 1000000).toFixed(2) }}
+              {{ formatMtrDuration(row.Best) }}
             </template>
           </el-table-column>
           <el-table-column :label="$t('alerts.worst')" width="80">
             <template #default="{ row }">
-              {{ (row.Wrst / 1000000).toFixed(2) }}
+              {{ formatMtrDuration(row.Wrst) }}
             </template>
           </el-table-column>
-          <el-table-column prop="StDev" :label="$t('alerts.standardDeviation')" width="90" />
+          <el-table-column :label="$t('alerts.standardDeviation')" width="90">
+            <template #default="{ row }">
+              {{ formatMtrValue(row.StDev) }}
+            </template>
+          </el-table-column>
+          <template #empty>
+            <span>{{ $t('alerts.noMtrData') }}</span>
+          </template>
         </el-table>
       </div>
     </el-dialog>
@@ -159,26 +187,39 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Loading } from '@element-plus/icons-vue'
+import { ElDialog, ElMessage, ElTable, ElTableColumn } from 'element-plus'
+import { ArrowLeft, Loading, Warning } from '@element-plus/icons-vue'
 import { fetchConfig } from '@/api/config'
 import { getAlerts } from '@/api/alert'
 import { displayName } from '@/utils/format'
-import type { AlertLog, Config, MtrResult } from '@/types'
+import type { AlertData, AlertLog, Config, MtrResult } from '@/types'
+
+interface AlertNode {
+  name: string
+  addr: string
+  loading: boolean
+  error: boolean
+}
 
 const router = useRouter()
+const { t } = useI18n()
 const config = ref<Config | null>(null)
 const dates = ref<string[]>([])
 const selectedDate = ref('')
 const alerts = ref<AlertLog[]>([])
-const nodes = ref<Array<{ name: string; addr: string; loading: boolean }>>([])
+const nodes = ref<AlertNode[]>([])
+const alertsLoading = ref(false)
+const alertsLoadError = ref(false)
 
 const mtrVisible = ref(false)
 const mtrData = ref<MtrResult[]>([])
 let isUnmounted = false
 let configRequestId = 0
 let alertsRequestId = 0
+const failedNodes = computed(() => nodes.value.filter((node) => node.error).length)
 
 const loadConfig = async () => {
   const requestId = ++configRequestId
@@ -191,7 +232,7 @@ const loadConfig = async () => {
 
     nodes.value = Object.values(cfg.Network)
       .filter((node) => node.Topology && node.Topology.length > 0)
-      .map((node) => ({ name: node.Name, addr: node.Addr, loading: false }))
+      .map((node) => ({ name: node.Name, addr: node.Addr, loading: false, error: false }))
 
     await loadAllAlerts()
   } catch (error) {
@@ -199,10 +240,12 @@ const loadConfig = async () => {
       return
     }
     console.error('加载配置失败', error)
+    alertsLoadError.value = true
+    ElMessage.error(t('common.configLoadFailedNetwork'))
   }
 }
 
-const loadAllAlerts = async () => {
+const loadAlerts = async (date?: string) => {
   if (!config.value) {
     return
   }
@@ -210,15 +253,21 @@ const loadAllAlerts = async () => {
   const requestId = ++alertsRequestId
   const port = config.value.Port
   const requestNodes = nodes.value
-  requestNodes.forEach((node) => (node.loading = true))
+  alertsLoading.value = true
+  alertsLoadError.value = false
+  requestNodes.forEach((node) => {
+    node.loading = true
+    node.error = false
+  })
   try {
     const results = await Promise.all(
       requestNodes.map(async (node) => {
         try {
-          return await getAlerts(`http://${node.addr}:${port}`)
+          const data = await getAlerts(`http://${node.addr}:${port}`, date)
+          return { node, data, error: false }
         } catch (error) {
           console.error(`获取 ${node.name} 报警记录失败`, error)
-          return null
+          return { node, data: null, error: true }
         }
       })
     )
@@ -226,65 +275,91 @@ const loadAllAlerts = async () => {
       return
     }
 
-    const allDates = new Set<string>()
-    const allAlerts: AlertLog[] = []
-    results.forEach((data) => {
-      data?.dates.forEach((date) => allDates.add(date))
-      if (data) allAlerts.push(...data.logs)
+    results.forEach((result) => {
+      result.node.error = result.error
     })
-    dates.value = Array.from(allDates).sort().reverse()
-    alerts.value = allAlerts.sort((a, b) => b.Logtime.localeCompare(a.Logtime))
-  } finally {
-    if (!isUnmounted && requestId === alertsRequestId) {
-      requestNodes.forEach((node) => (node.loading = false))
-    }
-  }
-}
+    const successfulData = results
+      .map((result) => result.data)
+      .filter((data): data is AlertData => data !== null)
+    alertsLoadError.value = requestNodes.length > 0 && successfulData.length === 0
 
-const loadAlertsByDate = async (date: string) => {
-  selectedDate.value = date
-
-  if (!config.value) {
-    return
-  }
-
-  const requestId = ++alertsRequestId
-  const port = config.value.Port
-  const requestNodes = nodes.value
-  requestNodes.forEach((node) => (node.loading = true))
-  try {
-    const results = await Promise.all(
-      requestNodes.map(async (node) => {
-        try {
-          return await getAlerts(`http://${node.addr}:${port}`, date)
-        } catch (error) {
-          console.error(`获取 ${node.name} 报警记录失败`, error)
-          return null
-        }
-      })
-    )
-    if (isUnmounted || requestId !== alertsRequestId || selectedDate.value !== date) {
-      return
+    if (date === undefined) {
+      const allDates = new Set<string>()
+      successfulData.forEach((data) => data.dates.forEach((item) => allDates.add(item)))
+      dates.value = Array.from(allDates).sort().reverse()
     }
 
-    alerts.value = results
-      .flatMap((data) => data?.logs || [])
+    alerts.value = successfulData
+      .flatMap((data) => data.logs)
       .sort((a, b) => b.Logtime.localeCompare(a.Logtime))
   } finally {
     if (!isUnmounted && requestId === alertsRequestId) {
       requestNodes.forEach((node) => (node.loading = false))
+      alertsLoading.value = false
     }
   }
 }
 
+const loadAllAlerts = () => loadAlerts()
+
+const loadAlertsByDate = (date: string) => {
+  selectedDate.value = date
+  return loadAlerts(date)
+}
+
+const retryAlerts = () => {
+  if (!config.value) {
+    return loadConfig()
+  }
+  return selectedDate.value ? loadAlertsByDate(selectedDate.value) : loadAllAlerts()
+}
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value)
+
+const isMtrResult = (value: unknown): value is MtrResult => {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const item = value as Record<string, unknown>
+  return (
+    typeof item.Host === 'string' &&
+    isFiniteNumber(item.Send) &&
+    isFiniteNumber(item.Loss) &&
+    isFiniteNumber(item.Last) &&
+    isFiniteNumber(item.Avg) &&
+    isFiniteNumber(item.Best) &&
+    isFiniteNumber(item.Wrst) &&
+    isFiniteNumber(item.StDev)
+  )
+}
+
 const showMtr = (row: AlertLog) => {
   try {
-    mtrData.value = JSON.parse(row.Tracert)
+    const data: unknown = JSON.parse(row.Tracert)
+    if (!Array.isArray(data) || !data.every(isMtrResult)) {
+      throw new Error('Invalid MTR data')
+    }
+    mtrData.value = data
     mtrVisible.value = true
   } catch (error) {
     console.error('解析MTR数据失败', error)
+    ElMessage.error(t('alerts.mtrUnavailable'))
   }
 }
+
+const formatLossRate = (row: MtrResult): string => {
+  if (!Number.isFinite(row.Send) || row.Send <= 0 || !Number.isFinite(row.Loss)) {
+    return '--'
+  }
+  return `${((row.Loss / row.Send) * 100).toFixed(2)}%`
+}
+
+const formatMtrDuration = (value: number): string =>
+  Number.isFinite(value) ? (value / 1_000_000).toFixed(2) : '--'
+
+const formatMtrValue = (value: number): string =>
+  Number.isFinite(value) ? value.toFixed(2) : '--'
 
 onMounted(() => {
   loadConfig()
@@ -348,5 +423,13 @@ onUnmounted(() => {
   border-radius: 999px;
   background: var(--color-primary);
   animation: subtle-pulse 2.4s ease infinite;
+}
+
+.alerts-view__node-error {
+  color: var(--color-danger);
+}
+
+.alerts-view__empty {
+  min-height: 220px;
 }
 </style>

@@ -96,19 +96,20 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElDatePicker, ElMessage } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
-import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
+import type { EChartsType } from 'echarts/core'
 import chinaMap from 'china-map-geojson/lib/china'
 import { fetchConfig } from '@/api/config'
 import { getMapping, getProxyMapping } from '@/api/mapping'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useThemeStore } from '@/stores/theme'
 import { displayName } from '@/utils/format'
+import { echarts } from '@/utils/echartsMap'
 import type { ChinaMapData, Config } from '@/types'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const config = ref<Config | null>(null)
 const agents = ref<Array<{ name: string; addr: string; loading: boolean }>>([])
 const selectedDate = ref('')
@@ -118,10 +119,12 @@ const chartRef = ref<HTMLDivElement>()
 const sidebarStore = useSidebarStore()
 const themeStore = useThemeStore()
 const isMapReady = ref(false)
-let chart: echarts.ECharts | null = null
+let chart: EChartsType | null = null
 let isUnmounted = false
 let latestData: ChinaMapData | null = null
+let configRequestId = 0
 let mappingRequestId = 0
+let resizeTimer: number | null = null
 
 const currentAgentName = computed(() => {
   if (!currentAgent.value) {
@@ -133,8 +136,12 @@ const currentAgentName = computed(() => {
 })
 
 const loadConfig = async () => {
+  const requestId = ++configRequestId
   try {
     const cfg = await fetchConfig()
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     config.value = cfg
     currentAgent.value = cfg.Addr
 
@@ -144,8 +151,11 @@ const loadConfig = async () => {
 
     await loadMappingData()
   } catch (error) {
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     console.error('加载配置失败', error)
-    ElMessage.error('加载配置失败，请检查网络连接')
+    ElMessage.error(t('common.configLoadFailedNetwork'))
   }
 }
 
@@ -171,16 +181,24 @@ const loadMappingData = async () => {
       return
     }
     console.error('加载地图数据失败', error)
-    ElMessage.error('加载地图数据失败')
+    ElMessage.error(t('common.dataLoadFailed'))
+  } finally {
+    if (!isUnmounted && requestId === mappingRequestId) {
+      agents.value.forEach((agent) => {
+        agent.loading = false
+      })
+    }
   }
 }
 
 const switchAgent = async (agent: { name: string; addr: string; loading: boolean }) => {
+  agents.value.forEach((item) => {
+    item.loading = false
+  })
   agent.loading = true
   currentAgent.value = agent.addr
   currentBaseUrl.value = `http://${agent.addr}:${config.value?.Port}`
   await loadMappingData()
-  agent.loading = false
 }
 
 const updateChart = (data: ChinaMapData) => {
@@ -243,9 +261,6 @@ const updateChart = (data: ChinaMapData) => {
         { lte: 50, color: '#1f9f6a' }
       ]
     },
-    toolbox: {
-      show: false
-    },
     series: [
       {
         name: t('mapping.telecom'),
@@ -293,7 +308,15 @@ const handleResize = () => {
 watch(
   () => sidebarStore.isCollapsed,
   () => {
-    setTimeout(() => handleResize(), 400)
+    if (resizeTimer !== null) {
+      window.clearTimeout(resizeTimer)
+    }
+    resizeTimer = window.setTimeout(() => {
+      resizeTimer = null
+      if (!isUnmounted) {
+        handleResize()
+      }
+    }, 400)
   }
 )
 
@@ -305,6 +328,12 @@ watch(
     }
   }
 )
+
+watch(locale, () => {
+  if (latestData) {
+    updateChart(latestData)
+  }
+})
 
 const saveMapImage = () => {
   if (!chart) {
@@ -333,7 +362,12 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true
+  configRequestId++
   mappingRequestId++
+  if (resizeTimer !== null) {
+    window.clearTimeout(resizeTimer)
+    resizeTimer = null
+  }
   isMapReady.value = false
   latestData = null
   chart?.dispose()

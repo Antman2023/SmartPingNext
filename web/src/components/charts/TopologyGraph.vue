@@ -4,11 +4,12 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import * as echarts from 'echarts'
 import type { EChartsOption } from 'echarts'
+import type { EChartsType } from 'echarts/core'
 import { useThemeStore } from '@/stores/theme'
 import { useSidebarStore } from '@/stores/sidebar'
 import { debounce } from '@/utils/debounce'
+import { echarts } from '@/utils/echartsGraph'
 
 interface Node {
   id: string
@@ -34,7 +35,7 @@ const props = defineProps<{
 const chartRef = ref<HTMLDivElement>()
 const themeStore = useThemeStore()
 const sidebarStore = useSidebarStore()
-let chart: echarts.ECharts | null = null
+let chart: EChartsType | null = null
 let isUnmounted = false
 const resizeTimers: number[] = []
 

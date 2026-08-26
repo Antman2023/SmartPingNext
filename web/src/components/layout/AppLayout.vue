@@ -41,15 +41,16 @@ onMounted(() => {
 }
 
 .app-layout__body {
-  display: flex;
+  display: block;
   flex: 1;
   padding-top: var(--app-navbar-height);
   min-height: 100vh;
 }
 
 .app-main {
-  flex: 1;
   margin-left: var(--app-sidebar-width);
+  width: calc(100% - var(--app-sidebar-width));
+  min-width: 0;
   min-height: calc(100vh - var(--app-navbar-height));
   transition: margin-left 0.3s ease;
   padding: 28px 28px 36px;
@@ -57,6 +58,7 @@ onMounted(() => {
 
   &.is-collapsed {
     margin-left: var(--app-sidebar-collapsed-width);
+    width: calc(100% - var(--app-sidebar-collapsed-width));
   }
 }
 

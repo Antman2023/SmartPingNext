@@ -108,6 +108,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { Bell, Loading, Warning } from '@element-plus/icons-vue'
 import TopologyGraph from '@/components/charts/TopologyGraph.vue'
 import { fetchConfig } from '@/api/config'
@@ -122,6 +123,9 @@ const loadingNodes = ref(new Set<string>())
 const failedNodes = ref(new Set<string>())
 const topologyStatus = ref<Record<string, Record<string, string>>>({})
 const graphHeight = ref(Math.max(window.innerHeight - 300, 420))
+let isUnmounted = false
+let configRequestId = 0
+let topologyRequestId = 0
 
 interface TopoNode {
   id: string
@@ -199,12 +203,20 @@ const degradedLinks = computed(
 )
 
 const loadConfig = async () => {
+  const requestId = ++configRequestId
   try {
     const cfg = await fetchConfig()
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     config.value = cfg
     await loadTopologyStatus()
   } catch (error) {
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     console.error('加载配置失败', error)
+    ElMessage.error(t('common.configLoadFailedNetwork'))
   }
 }
 
@@ -213,22 +225,35 @@ const loadTopologyStatus = async () => {
     return
   }
 
-  const networkWithTopology = Object.entries(config.value.Network).filter(
+  const requestId = ++topologyRequestId
+  const cfg = config.value
+  const networkWithTopology = Object.entries(cfg.Network).filter(
     ([, network]) => network.Topology && network.Topology.length > 0
   )
 
+  loadingNodes.value = new Set(networkWithTopology.map(([addr]) => addr))
+  failedNodes.value = new Set()
+  topologyStatus.value = {}
+
   const promises = networkWithTopology.map(async ([addr, network]) => {
-    loadingNodes.value.add(addr)
-    failedNodes.value.delete(addr)
-    delete topologyStatus.value[addr]
     try {
-      const status = await getTopology(addr, config.value!.Port, config.value!.Addr)
-      topologyStatus.value[addr] = status
+      const status = await getTopology(addr, cfg.Port, cfg.Addr)
+      if (isUnmounted || requestId !== topologyRequestId) {
+        return
+      }
+      topologyStatus.value = { ...topologyStatus.value, [addr]: status }
     } catch (error) {
-      failedNodes.value.add(addr)
+      if (isUnmounted || requestId !== topologyRequestId) {
+        return
+      }
+      failedNodes.value = new Set(failedNodes.value).add(addr)
       console.error(`获取 ${network.Name} 拓扑状态失败`, error)
     } finally {
-      loadingNodes.value.delete(addr)
+      if (!isUnmounted && requestId === topologyRequestId) {
+        const nextLoadingNodes = new Set(loadingNodes.value)
+        nextLoadingNodes.delete(addr)
+        loadingNodes.value = nextLoadingNodes
+      }
     }
   })
 
@@ -258,6 +283,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  isUnmounted = true
+  configRequestId++
+  topologyRequestId++
   window.removeEventListener('resize', handleResize)
 })
 </script>

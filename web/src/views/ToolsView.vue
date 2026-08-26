@@ -110,7 +110,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import {
+  ElCheckbox,
+  ElInput,
+  ElMessage,
+  ElOption,
+  ElSelect,
+  ElTable,
+  ElTableColumn
+} from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { Loading, SuccessFilled, Warning } from '@element-plus/icons-vue'
 import { fetchConfig } from '@/api/config'
@@ -133,6 +142,9 @@ const toolType = ref('ping')
 const target = ref('')
 const checking = ref(false)
 const results = ref<ResultRow[]>([])
+let isUnmounted = false
+let configRequestId = 0
+let checkRequestId = 0
 
 const checkedCount = computed(() => results.value.filter((row) => row.checked).length)
 const successCount = computed(
@@ -143,8 +155,12 @@ const errorCount = computed(
 )
 
 const loadConfig = async () => {
+  const requestId = ++configRequestId
   try {
     const cfg = await fetchConfig()
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     config.value = cfg
     target.value = cfg.Addr
 
@@ -160,17 +176,33 @@ const loadConfig = async () => {
         error: null
       }))
   } catch (error) {
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     console.error('加载配置失败', error)
+    ElMessage.error(t('common.configLoadFailedNetwork'))
   }
 }
 
 const runCheck = async () => {
-  if (!target.value) {
+  const normalizedTarget = target.value.trim()
+  if (!normalizedTarget) {
+    ElMessage.warning(t('tools.enterTarget'))
     return
   }
 
-  checking.value = true
   const checkedRows = results.value.filter((row) => row.checked)
+  if (checkedRows.length === 0) {
+    ElMessage.warning(t('tools.selectProbe'))
+    return
+  }
+
+  const requestId = ++checkRequestId
+  target.value = normalizedTarget
+  checking.value = true
+  results.value.forEach((row) => {
+    row.loading = false
+  })
 
   await Promise.all(
     checkedRows.map(async (row) => {
@@ -179,21 +211,37 @@ const runCheck = async () => {
       row.error = null
 
       try {
-        const result = await runTools(`${row.addr}:${row.port}`, target.value)
+        const result = await runTools(`${row.addr}:${row.port}`, normalizedTarget)
+        if (isUnmounted || requestId !== checkRequestId) {
+          return
+        }
         row.result = result
       } catch (error: unknown) {
+        if (isUnmounted || requestId !== checkRequestId) {
+          return
+        }
         row.error = error instanceof Error ? error.message : t('tools.requestFailed')
       } finally {
-        row.loading = false
+        if (!isUnmounted && requestId === checkRequestId) {
+          row.loading = false
+        }
       }
     })
   )
 
-  checking.value = false
+  if (!isUnmounted && requestId === checkRequestId) {
+    checking.value = false
+  }
 }
 
 onMounted(() => {
   loadConfig()
+})
+
+onUnmounted(() => {
+  isUnmounted = true
+  configRequestId++
+  checkRequestId++
 })
 </script>
 

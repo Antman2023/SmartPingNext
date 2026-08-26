@@ -15,8 +15,10 @@ export default {
     cancel: 'Cancel',
     confirm: 'Confirm',
     loading: 'Loading...',
+    saving: 'Saving...',
     loadFailed: 'Load Failed',
     query: 'Query',
+    retry: 'Retry',
     saveImage: 'Save Image',
     delete: 'Delete',
     add: 'Add',
@@ -44,6 +46,18 @@ export default {
     configLoadFailedNetwork: 'Failed to load config, please check network connection',
     chartLoadFailed: 'Failed to load chart data',
     dataLoadFailed: 'Failed to load data',
+    componentError: 'Component error: {message}',
+    badRequest: 'Invalid request',
+    unauthorized: 'Authentication required',
+    forbidden: 'Access denied',
+    notFound: 'Resource not found',
+    serverError: 'Internal server error',
+    gatewayError: 'Gateway error',
+    serviceUnavailable: 'Service unavailable',
+    gatewayTimeout: 'Gateway timeout',
+    networkFailed: 'Network connection failed. Check the network.',
+    requestFailed: 'Request failed',
+    requestFailedWithStatus: 'Request failed ({status})',
     autoRefresh: 'Auto Refresh',
     targets: 'Targets',
     probes: 'Probe Nodes',
@@ -56,6 +70,14 @@ export default {
     issues: 'Issues',
     active: 'Active',
     alert: 'Alert'
+  },
+  charts: {
+    maxDelay: 'Max Delay',
+    averageDelay: 'Avg Delay',
+    minDelay: 'Min Delay',
+    lossRate: 'Loss Rate',
+    latency: 'Latency',
+    loss: 'Loss'
   },
   // Navigation menu
   nav: {
@@ -86,12 +108,14 @@ export default {
       day7: '7 Days'
     },
     startTime: 'Start Time',
-    endTime: 'End Time'
+    endTime: 'End Time',
+    openDetail: 'Open monitoring details for {name}'
   },
   // Reverse page
   reverse: {
     title: 'Reverse Monitor',
-    subtitle: 'Inspect return-path quality from remote nodes back to the current node.'
+    subtitle: 'Inspect return-path quality from remote nodes back to the current node.',
+    openDetail: 'Open monitoring details from {name}'
   },
   // Topology page
   topology: {
@@ -120,6 +144,7 @@ export default {
     received: 'Received',
     packetLoss: 'Loss',
     latency: 'Latency',
+    selectProbe: 'Select at least one probe node',
     requestFailed: 'Request failed'
   },
   // Alerts page
@@ -141,7 +166,12 @@ export default {
     average: 'Avg',
     best: 'Best',
     worst: 'Worst',
-    standardDeviation: 'StdDev'
+    standardDeviation: 'StdDev',
+    noRecords: 'No alert records for this selection',
+    loadFailed: 'Failed to load alert records',
+    sourceLoadFailed: 'Failed to load alerts from this node',
+    mtrUnavailable: 'MTR data is unavailable or corrupted',
+    noMtrData: 'No MTR data to display'
   },
   // Config page
   config: {
@@ -149,6 +179,7 @@ export default {
     subtitle: 'Manage nodes, topology policy, and map measurement sources from one surface.',
     saveConfig: 'Save Config',
     importExport: 'Import/Export',
+    importExportHint: 'Verify the password to download config or stage a config file for saving.',
     exportConfig: 'Export',
     importConfig: 'Import',
     baseConfig: 'Basic Config',
@@ -194,6 +225,8 @@ export default {
     eachLineOneIP: 'One IP per line',
     delayConfigUpdated: 'Latency config updated',
     configExported: 'Config exported',
+    passwordVerifyFailed: 'Password verification failed. Check the network connection.',
+    viewRawConfig: 'View raw config',
     configImported: 'Config imported, please save to apply',
     configInvalid: 'Invalid config file format',
     configParseFailed: 'Config file parse failed',

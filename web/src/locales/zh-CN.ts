@@ -13,8 +13,10 @@ export default {
     cancel: '取消',
     confirm: '确定',
     loading: '加载中...',
+    saving: '保存中...',
     loadFailed: '加载失败',
     query: '查询',
+    retry: '重试',
     saveImage: '保存图片',
     delete: '删除',
     add: '添加',
@@ -42,6 +44,18 @@ export default {
     configLoadFailedNetwork: '加载配置失败，请检查网络连接',
     chartLoadFailed: '加载图表数据失败',
     dataLoadFailed: '加载数据失败',
+    componentError: '组件错误：{message}',
+    badRequest: '请求参数错误',
+    unauthorized: '未授权，请登录',
+    forbidden: '拒绝访问',
+    notFound: '请求资源不存在',
+    serverError: '服务器内部错误',
+    gatewayError: '网关错误',
+    serviceUnavailable: '服务不可用',
+    gatewayTimeout: '网关超时',
+    networkFailed: '网络连接失败，请检查网络',
+    requestFailed: '请求失败',
+    requestFailedWithStatus: '请求失败 ({status})',
     autoRefresh: '自动刷新',
     targets: '目标',
     probes: '探测节点',
@@ -54,6 +68,14 @@ export default {
     issues: '异常',
     active: '正常',
     alert: '告警'
+  },
+  charts: {
+    maxDelay: '最大延迟',
+    averageDelay: '平均延迟',
+    minDelay: '最小延迟',
+    lossRate: '丢包率',
+    latency: '延迟',
+    loss: '丢包'
   },
   // 导航菜单
   nav: {
@@ -84,12 +106,14 @@ export default {
       day7: '7天'
     },
     startTime: '开始时间',
-    endTime: '结束时间'
+    endTime: '结束时间',
+    openDetail: '查看 {name} 的监控详情'
   },
   // 反向监控页面
   reverse: {
     title: '反向监控',
-    subtitle: '查看其他节点回探当前节点的链路质量。'
+    subtitle: '查看其他节点回探当前节点的链路质量。',
+    openDetail: '查看来自 {name} 的监控详情'
   },
   // 拓扑图页面
   topology: {
@@ -118,6 +142,7 @@ export default {
     received: '接收',
     packetLoss: '丢包',
     latency: '延迟',
+    selectProbe: '请至少选择一个探测节点',
     requestFailed: '请求失败'
   },
   // 报警记录页面
@@ -139,7 +164,12 @@ export default {
     average: '平均',
     best: '最好',
     worst: '最差',
-    standardDeviation: '标准差'
+    standardDeviation: '标准差',
+    noRecords: '当前没有报警记录',
+    loadFailed: '报警记录加载失败',
+    sourceLoadFailed: '该节点的报警记录加载失败',
+    mtrUnavailable: 'MTR 数据不可用或已损坏',
+    noMtrData: '没有可显示的 MTR 数据'
   },
   // 系统配置页面
   config: {
@@ -147,6 +177,7 @@ export default {
     subtitle: '统一管理节点、拓扑策略与全国延迟测试来源。',
     saveConfig: '保存配置',
     importExport: '导入/导出',
+    importExportHint: '验证密码后下载配置，或载入配置文件等待保存。',
     exportConfig: '导出配置',
     importConfig: '导入配置',
     baseConfig: '基础配置',
@@ -192,6 +223,8 @@ export default {
     eachLineOneIP: '每行一个IP地址',
     delayConfigUpdated: '延迟配置已更新',
     configExported: '配置已导出',
+    passwordVerifyFailed: '密码验证失败，请检查网络连接',
+    viewRawConfig: '查看原始配置',
     configImported: '配置已导入，请点击保存按钮保存配置',
     configInvalid: '配置文件格式无效',
     configParseFailed: '配置文件解析失败',

@@ -1,4 +1,5 @@
 import { ElMessage } from 'element-plus'
+import i18n from '@/locales'
 
 export class ApiError extends Error {
   constructor(
@@ -26,7 +27,7 @@ function isAxiosError(error: unknown): error is AxiosError {
   return typeof error === 'object' && error !== null && ('response' in error || 'request' in error)
 }
 
-export function handleError(error: unknown, defaultMessage = '操作失败'): void {
+export function handleError(error: unknown, defaultMessage = i18n.global.t('common.failed')): void {
   let message = defaultMessage
 
   if (error instanceof ApiError) {
@@ -49,31 +50,40 @@ export function handleNetworkError(error: unknown): ApiError {
 
       switch (status) {
         case 400:
-          return new ApiError(data?.info || data?.message || '请求参数错误', status)
+          return new ApiError(data?.info || data?.message || i18n.global.t('common.badRequest'), status)
         case 401:
-          return new ApiError('未授权，请登录', status)
+          return new ApiError(i18n.global.t('common.unauthorized'), status)
         case 403:
-          return new ApiError('拒绝访问', status)
+          return new ApiError(i18n.global.t('common.forbidden'), status)
         case 404:
-          return new ApiError('请求资源不存在', status)
+          return new ApiError(i18n.global.t('common.notFound'), status)
         case 500:
-          return new ApiError(data?.info || data?.message || '服务器内部错误', status)
+          return new ApiError(
+            data?.info || data?.message || i18n.global.t('common.serverError'),
+            status
+          )
         case 502:
-          return new ApiError('网关错误', status)
+          return new ApiError(i18n.global.t('common.gatewayError'), status)
         case 503:
-          return new ApiError('服务不可用', status)
+          return new ApiError(i18n.global.t('common.serviceUnavailable'), status)
         case 504:
-          return new ApiError('网关超时', status)
+          return new ApiError(i18n.global.t('common.gatewayTimeout'), status)
         default:
           return new ApiError(
-            data?.info || data?.message || data?.error || `请求失败 (${status})`,
+            data?.info ||
+              data?.message ||
+              data?.error ||
+              i18n.global.t('common.requestFailedWithStatus', { status }),
             status
           )
       }
     } else if (error.request) {
-      return new ApiError('网络连接失败，请检查网络', 0)
+      return new ApiError(i18n.global.t('common.networkFailed'), 0)
     }
   }
 
-  return new ApiError(error instanceof Error ? error.message || '请求失败' : '请求失败', 0)
+  return new ApiError(
+    error instanceof Error ? error.message || i18n.global.t('common.requestFailed') : i18n.global.t('common.requestFailed'),
+    0
+  )
 }

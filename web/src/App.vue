@@ -11,8 +11,10 @@ import { onErrorCaptured } from 'vue'
 import { ElMessage } from 'element-plus'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useLocale } from '@/composables/useLocale'
+import { useI18n } from 'vue-i18n'
 
 const { elementLocale } = useLocale()
+const { t } = useI18n()
 
 // 全局错误边界
 onErrorCaptured((error: Error, instance, info) => {
@@ -20,7 +22,7 @@ onErrorCaptured((error: Error, instance, info) => {
   console.error('Component:', instance)
   console.error('Error Info:', info)
 
-  ElMessage.error(`组件错误: ${error.message}`)
+  ElMessage.error(t('common.componentError', { message: error.message }))
 
   // 返回 false 阻止错误继续向上传播
   return false

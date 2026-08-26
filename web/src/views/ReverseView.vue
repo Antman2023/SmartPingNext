@@ -59,7 +59,12 @@
               v-for="target in reverseTargets"
               :key="target.fromAddr"
               class="monitor-tile reverse-view__tile"
+              role="button"
+              tabindex="0"
+              :aria-label="$t('reverse.openDetail', { name: displayName(target.fromName) })"
               @click="showDetail(target)"
+              @keydown.enter.prevent="showDetail(target)"
+              @keydown.space.prevent="showDetail(target)"
             >
               <div class="monitor-tile__header">
                 <div>
@@ -139,8 +144,12 @@
             format="YYYY-MM-DD HH:mm"
             value-format="YYYY-MM-DD HH:mm"
           />
-          <el-button type="primary" @click="loadDetailData">{{ $t('common.query') }}</el-button>
-          <el-button @click="saveChartImage">{{ $t('common.saveImage') }}</el-button>
+          <el-button type="primary" :loading="detailLoading" @click="loadDetailData">
+            {{ $t('common.query') }}
+          </el-button>
+          <el-button :disabled="!detailData" @click="saveChartImage">
+            {{ $t('common.saveImage') }}
+          </el-button>
           <el-button-group>
             <el-button
               v-for="range in timeRanges"
@@ -154,8 +163,13 @@
           <el-switch v-model="detailAutoRefresh" size="small" />
         </div>
 
-        <section class="surface-panel reverse-view__detail-panel">
+        <section v-loading="detailLoading" class="surface-panel reverse-view__detail-panel">
           <PingChart v-if="detailData" ref="pingChartRef" :data="detailData" :height="400" />
+          <div v-else-if="detailError" class="empty-state reverse-view__detail-error">
+            <el-icon><Warning /></el-icon>
+            <span>{{ $t('common.dataLoadFailed') }}</span>
+            <el-button size="small" @click="loadDetailData">{{ $t('common.retry') }}</el-button>
+          </div>
           <div v-else class="empty-state">
             <span>{{ $t('common.loading') }}</span>
           </div>
@@ -168,6 +182,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ElDatePicker, ElDialog, ElSwitch } from 'element-plus'
 import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
@@ -194,6 +209,8 @@ const reverseTargets = ref<ReverseTarget[]>([])
 const detailVisible = ref(false)
 const detailTitle = ref('')
 const detailData = ref<PingLogData | null>(null)
+const detailLoading = ref(false)
+const detailError = ref(false)
 const startTime = ref('')
 const endTime = ref('')
 const currentTarget = ref<ReverseTarget | null>(null)
@@ -307,6 +324,10 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
 }
 
 const showDetail = async (target: ReverseTarget) => {
+  detailRequestId++
+  detailData.value = null
+  detailLoading.value = false
+  detailError.value = false
   detailTitle.value = `${displayName(target.fromName)} -> ${displayName(config.value?.Name || '')}`
   currentTarget.value = target
   setTimeRange(6, false)
@@ -324,6 +345,8 @@ const loadDetailData = async () => {
   const baseUrl = `http://${target.fromAddr}:${target.fromPort}`
   const start = startTime.value
   const end = endTime.value
+  detailLoading.value = true
+  detailError.value = false
   try {
     const data = await getProxyPingData(baseUrl, target.targetIp, start, end)
     if (isUnmounted || requestId !== detailRequestId || !detailVisible.value) {
@@ -331,11 +354,16 @@ const loadDetailData = async () => {
     }
     detailData.value = data
   } catch (error) {
-    if (isUnmounted || requestId !== detailRequestId) {
+    if (isUnmounted || requestId !== detailRequestId || !detailVisible.value) {
       return
     }
     console.error('加载数据失败', error)
     detailData.value = null
+    detailError.value = true
+  } finally {
+    if (!isUnmounted && requestId === detailRequestId && detailVisible.value) {
+      detailLoading.value = false
+    }
   }
 }
 
@@ -408,6 +436,8 @@ watch(detailVisible, (visible) => {
   if (!visible) {
     detailRequestId++
     detailAutoRefresh.value = false
+    detailLoading.value = false
+    detailError.value = false
   }
 })
 
@@ -481,6 +511,11 @@ onUnmounted(() => {
 
 .reverse-view__detail-panel {
   padding: 16px 16px 12px;
+}
+
+.reverse-view__detail-error .el-icon {
+  font-size: 24px;
+  color: var(--color-danger);
 }
 
 .reverse-view__refresh-label {

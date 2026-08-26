@@ -72,6 +72,7 @@
 
 .page-actions {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: flex-start;
@@ -80,6 +81,8 @@
 
 .page-kpis {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   flex-wrap: wrap;
   gap: 12px;
 }
@@ -260,6 +263,12 @@
     transform: translateY(-4px);
     border-color: color-mix(in srgb, var(--color-primary) 26%, transparent);
     box-shadow: var(--shadow-md);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+    border-color: color-mix(in srgb, var(--color-primary) 32%, transparent);
   }
 
   &:nth-child(2n) {
@@ -580,9 +589,24 @@
     padding: 12px;
   }
 
+  .monitor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .grid-4,
   .grid-3,
   .grid-2 {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .detail-toolbar .el-date-editor {
+    width: 100% !important;
+  }
+
+  .detail-toolbar .el-button-group {
+    max-width: 100%;
+    overflow-x: auto;
   }
 }

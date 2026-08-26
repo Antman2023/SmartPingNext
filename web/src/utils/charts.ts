@@ -20,6 +20,15 @@ interface ChartTheme {
   backgroundColor: string
 }
 
+export interface PingChartLabels {
+  maxDelay: string
+  averageDelay: string
+  minDelay: string
+  lossRate: string
+  latency: string
+  loss: string
+}
+
 function getThemeConfig(isDark: boolean): ChartTheme {
   return {
     isDark,
@@ -31,7 +40,13 @@ function getThemeConfig(isDark: boolean): ChartTheme {
   }
 }
 
-export function getPingChartOption(data: PingLogData | null, isDark: boolean, showDataZoom = false): EChartsOption {
+export function getPingChartOption(
+  data: PingLogData | null,
+  isDark: boolean,
+  labels: PingChartLabels,
+  showDataZoom = false,
+  compact = false
+): EChartsOption {
   const theme = getThemeConfig(isDark)
   let lastRenderedIndex = -1
   let lastRenderedDate = ''
@@ -58,7 +73,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
         let result = items[0].name + '<br/>'
         items.forEach((item) => {
           let value = item.value
-          if (item.seriesName === '丢包率') {
+          if (item.seriesName === labels.lossRate) {
             value = parseFloat(String(value)).toFixed(0) + '%'
           } else {
             value = parseFloat(String(value)).toFixed(2) + 'ms'
@@ -69,20 +84,27 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
       }
     },
     legend: {
-      data: ['最大延迟', '平均延迟', '最小延迟', '丢包率'],
+      type: compact ? 'scroll' : 'plain',
+      data: [labels.maxDelay, labels.averageDelay, labels.minDelay, labels.lossRate],
       selected: {
-        '最大延迟': false,
-        '最小延迟': false
+        [labels.maxDelay]: false,
+        [labels.minDelay]: false
       },
       top: 0,
+      left: compact ? 0 : 'center',
+      right: compact ? 0 : undefined,
+      itemWidth: compact ? 12 : 25,
+      itemHeight: compact ? 8 : 14,
+      itemGap: compact ? 8 : 10,
       textStyle: {
-        color: theme.textColorSecondary
+        color: theme.textColorSecondary,
+        fontSize: compact ? 10 : 12
       }
     },
     grid: {
-      left: '3%',
-      right: '3%',
-      top: 30,
+      left: compact ? 0 : '3%',
+      right: compact ? 0 : '3%',
+      top: compact ? 48 : 30,
       bottom: showDataZoom ? 50 : 50,
       containLabel: true
     },
@@ -172,14 +194,15 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
     yAxis: [
       {
         type: 'value',
-        name: '延迟 (ms)',
+        name: compact ? '' : `${labels.latency} (ms)`,
         position: 'left',
         nameTextStyle: { color: theme.textColorSecondary },
         axisLine: {
           lineStyle: { color: theme.borderColor }
         },
         axisLabel: {
-          color: theme.textColorSecondary
+          color: theme.textColorSecondary,
+          fontSize: compact ? 10 : 12
         },
         splitLine: {
           lineStyle: { color: theme.splitLineColor }
@@ -187,7 +210,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
       },
       {
         type: 'value',
-        name: '丢包率 (%)',
+        name: compact ? '' : `${labels.lossRate} (%)`,
         min: 0,
         max: 100,
         position: 'right',
@@ -197,6 +220,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
         },
         axisLabel: {
           color: theme.textColorSecondary,
+          fontSize: compact ? 10 : 12,
           formatter: '{value}%'
         },
         splitLine: { show: false }
@@ -204,7 +228,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
     ],
     series: [
       {
-        name: '最大延迟',
+        name: labels.maxDelay,
         type: 'line',
         data: data?.maxdelay || [],
         animation: false,
@@ -213,7 +237,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
         areaStyle: { opacity: 0.1 }
       },
       {
-        name: '平均延迟',
+        name: labels.averageDelay,
         type: 'line',
         data: data?.avgdelay || [],
         animation: false,
@@ -222,7 +246,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
         areaStyle: { opacity: 0.2 }
       },
       {
-        name: '最小延迟',
+        name: labels.minDelay,
         type: 'line',
         data: data?.mindelay || [],
         animation: false,
@@ -231,7 +255,7 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
         areaStyle: { opacity: 0.1 }
       },
       {
-        name: '丢包率',
+        name: labels.lossRate,
         type: 'line',
         yAxisIndex: 1,
         data: data?.losspk || [],
@@ -244,7 +268,11 @@ export function getPingChartOption(data: PingLogData | null, isDark: boolean, sh
   }
 }
 
-export function getPingMiniChartOption(data: PingLogData | null, isDark: boolean): EChartsOption {
+export function getPingMiniChartOption(
+  data: PingLogData | null,
+  isDark: boolean,
+  labels: PingChartLabels
+): EChartsOption {
   const labelColor = isDark ? '#6c6e72' : '#909399'
 
   return {
@@ -276,7 +304,7 @@ export function getPingMiniChartOption(data: PingLogData | null, isDark: boolean
       {
         type: 'value',
         position: 'left',
-        name: '延迟',
+        name: labels.latency,
         nameTextStyle: {
           color: labelColor,
           fontSize: 10
@@ -299,7 +327,7 @@ export function getPingMiniChartOption(data: PingLogData | null, isDark: boolean
       {
         type: 'value',
         position: 'right',
-        name: '丢包',
+        name: labels.loss,
         nameTextStyle: {
           color: labelColor,
           fontSize: 10

@@ -59,7 +59,12 @@
               v-for="target in pingTargets"
               :key="target.addr"
               class="monitor-tile dashboard-view__tile"
+              role="button"
+              tabindex="0"
+              :aria-label="$t('dashboard.openDetail', { name: displayName(target.name) })"
               @click="showDetail(target)"
+              @keydown.enter.prevent="showDetail(target)"
+              @keydown.space.prevent="showDetail(target)"
             >
               <div class="monitor-tile__header">
                 <div>
@@ -139,8 +144,12 @@
             format="YYYY-MM-DD HH:mm"
             value-format="YYYY-MM-DD HH:mm"
           />
-          <el-button type="primary" @click="loadDetailData">{{ $t('common.query') }}</el-button>
-          <el-button @click="saveChartImage">{{ $t('common.saveImage') }}</el-button>
+          <el-button type="primary" :loading="detailLoading" @click="loadDetailData">
+            {{ $t('common.query') }}
+          </el-button>
+          <el-button :disabled="!detailData" @click="saveChartImage">
+            {{ $t('common.saveImage') }}
+          </el-button>
           <el-button-group>
             <el-button
               v-for="range in timeRanges"
@@ -154,8 +163,13 @@
           <el-switch v-model="detailAutoRefresh" size="small" />
         </div>
 
-        <section class="surface-panel dashboard-view__detail-panel">
+        <section v-loading="detailLoading" class="surface-panel dashboard-view__detail-panel">
           <PingChart v-if="detailData" ref="pingChartRef" :data="detailData" :height="400" />
+          <div v-else-if="detailError" class="empty-state dashboard-view__detail-error">
+            <el-icon><Warning /></el-icon>
+            <span>{{ $t('common.dataLoadFailed') }}</span>
+            <el-button size="small" @click="loadDetailData">{{ $t('common.retry') }}</el-button>
+          </div>
           <div v-else class="empty-state">
             <span>{{ $t('common.loading') }}</span>
           </div>
@@ -168,7 +182,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElMessage } from 'element-plus'
+import { ElDatePicker, ElDialog, ElMessage, ElSwitch } from 'element-plus'
 import { Loading, Warning } from '@element-plus/icons-vue'
 import PingChart from '@/components/charts/PingChart.vue'
 import PingMiniChart from '@/components/charts/PingMiniChart.vue'
@@ -195,6 +209,8 @@ const pingTargets = ref<PingTarget[]>([])
 const detailVisible = ref(false)
 const detailTitle = ref('')
 const detailData = ref<PingLogData | null>(null)
+const detailLoading = ref(false)
+const detailError = ref(false)
 const startTime = ref('')
 const endTime = ref('')
 const currentTargetIp = ref('')
@@ -319,6 +335,10 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
 const DEFAULT_TIME_RANGE_HOURS = Number(import.meta.env.VITE_DEFAULT_TIME_RANGE) || 6
 
 const showDetail = async (target: PingTarget) => {
+  detailRequestId++
+  detailData.value = null
+  detailLoading.value = false
+  detailError.value = false
   detailTitle.value = `${displayName(config.value?.Name || '')} -> ${displayName(target.name)}`
   currentTargetIp.value = target.targetIp
   setTimeRange(DEFAULT_TIME_RANGE_HOURS, false)
@@ -336,6 +356,8 @@ const loadDetailData = async () => {
   const targetIp = currentTargetIp.value
   const start = startTime.value
   const end = endTime.value
+  detailLoading.value = true
+  detailError.value = false
   try {
     const data = baseUrl
       ? await getProxyPingData(baseUrl, targetIp, start, end)
@@ -345,11 +367,16 @@ const loadDetailData = async () => {
     }
     detailData.value = data
   } catch (error) {
-    if (isUnmounted || requestId !== detailRequestId) {
+    if (isUnmounted || requestId !== detailRequestId || !detailVisible.value) {
       return
     }
     console.error('加载数据失败', error)
-    ElMessage.error(t('common.loadFailed'))
+    detailData.value = null
+    detailError.value = true
+  } finally {
+    if (!isUnmounted && requestId === detailRequestId && detailVisible.value) {
+      detailLoading.value = false
+    }
   }
 }
 
@@ -423,6 +450,8 @@ watch(detailVisible, (visible) => {
   if (!visible) {
     detailRequestId++
     detailAutoRefresh.value = false
+    detailLoading.value = false
+    detailError.value = false
   }
 })
 
@@ -496,6 +525,11 @@ onUnmounted(() => {
 
 .dashboard-view__detail-panel {
   padding: 16px 16px 12px;
+}
+
+.dashboard-view__detail-error .el-icon {
+  font-size: 24px;
+  color: var(--color-danger);
 }
 
 .dashboard-view__refresh-label {

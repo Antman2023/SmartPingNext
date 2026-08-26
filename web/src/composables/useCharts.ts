@@ -1,8 +1,10 @@
 import { useThemeStore } from '@/stores/theme'
 import type { EChartsOption } from 'echarts'
+import { useI18n } from 'vue-i18n'
 
 export function useCharts() {
   const themeStore = useThemeStore()
+  const { t } = useI18n()
 
   const getChartTheme = () => {
     return themeStore.theme === 'dark' ? 'dark' : 'light'
@@ -72,10 +74,10 @@ export function useCharts() {
       yAxis: {
         ...getAxisStyle(),
         type: 'value',
-        name: '延迟 (ms)'
+        name: `${t('charts.latency')} (ms)`
       },
       series: [{
-        name: '延迟',
+        name: t('charts.latency'),
         type: 'line',
         smooth: true,
         data: data.map(item => item.value),

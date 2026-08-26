@@ -125,6 +125,7 @@ select {
 
 .el-dialog {
   --el-dialog-bg-color: color-mix(in srgb, var(--color-bg-primary) 92%, #ffffff 8%);
+  max-width: calc(100vw - 32px);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);

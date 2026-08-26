@@ -4,13 +4,15 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import * as echarts from 'echarts'
+import { useI18n } from 'vue-i18n'
 import type { EChartsOption } from 'echarts'
+import type { EChartsType } from 'echarts/core'
 import type { PingLogData } from '@/types'
 import { useThemeStore } from '@/stores/theme'
 import { useSidebarStore } from '@/stores/sidebar'
 import { getPingMiniChartOption } from '@/utils/charts'
 import { debounce } from '@/utils/debounce'
+import { echarts } from '@/utils/echartsLine'
 
 const props = defineProps<{
   data: PingLogData | null
@@ -18,9 +20,10 @@ const props = defineProps<{
 }>()
 
 const chartRef = ref<HTMLDivElement>()
+const { t, locale } = useI18n()
 const themeStore = useThemeStore()
 const sidebarStore = useSidebarStore()
-let chart: echarts.ECharts | null = null
+let chart: EChartsType | null = null
 let isUnmounted = false
 const resizeTimers: number[] = []
 
@@ -41,7 +44,14 @@ const clearAllTimers = () => {
 
 const getChartOption = (): EChartsOption => {
   const isDark = themeStore.theme === 'dark'
-  return getPingMiniChartOption(props.data, isDark)
+  return getPingMiniChartOption(props.data, isDark, {
+    maxDelay: t('charts.maxDelay'),
+    averageDelay: t('charts.averageDelay'),
+    minDelay: t('charts.minDelay'),
+    lossRate: t('charts.lossRate'),
+    latency: t('charts.latency'),
+    loss: t('charts.loss')
+  })
 }
 
 const initChart = () => {
@@ -61,6 +71,7 @@ const handleResize = debounce(() => {
 
 watch(() => props.data?.lastcheck, updateChart)
 watch(() => themeStore.theme, updateChart)
+watch(locale, updateChart)
 watch(() => sidebarStore.isCollapsed, () => {
   safeSetTimeout(() => handleResize(), 500)
 })
