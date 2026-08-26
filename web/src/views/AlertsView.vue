@@ -159,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Loading } from '@element-plus/icons-vue'
 import { fetchConfig } from '@/api/config'
@@ -176,10 +176,17 @@ const nodes = ref<Array<{ name: string; addr: string; loading: boolean }>>([])
 
 const mtrVisible = ref(false)
 const mtrData = ref<MtrResult[]>([])
+let isUnmounted = false
+let configRequestId = 0
+let alertsRequestId = 0
 
 const loadConfig = async () => {
+  const requestId = ++configRequestId
   try {
     const cfg = await fetchConfig()
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     config.value = cfg
 
     nodes.value = Object.values(cfg.Network)
@@ -188,6 +195,9 @@ const loadConfig = async () => {
 
     await loadAllAlerts()
   } catch (error) {
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     console.error('加载配置失败', error)
   }
 }
@@ -197,26 +207,38 @@ const loadAllAlerts = async () => {
     return
   }
 
-  const allDates = new Set<string>()
-  const allAlerts: AlertLog[] = []
+  const requestId = ++alertsRequestId
+  const port = config.value.Port
+  const requestNodes = nodes.value
+  requestNodes.forEach((node) => (node.loading = true))
+  try {
+    const results = await Promise.all(
+      requestNodes.map(async (node) => {
+        try {
+          return await getAlerts(`http://${node.addr}:${port}`)
+        } catch (error) {
+          console.error(`获取 ${node.name} 报警记录失败`, error)
+          return null
+        }
+      })
+    )
+    if (isUnmounted || requestId !== alertsRequestId) {
+      return
+    }
 
-  await Promise.all(
-    nodes.value.map(async (node) => {
-      node.loading = true
-      try {
-        const data = await getAlerts(`http://${node.addr}:${config.value!.Port}`)
-        data.dates.forEach((date) => allDates.add(date))
-        allAlerts.push(...data.logs)
-      } catch (error) {
-        console.error(`获取 ${node.name} 报警记录失败`, error)
-      } finally {
-        node.loading = false
-      }
+    const allDates = new Set<string>()
+    const allAlerts: AlertLog[] = []
+    results.forEach((data) => {
+      data?.dates.forEach((date) => allDates.add(date))
+      if (data) allAlerts.push(...data.logs)
     })
-  )
-
-  dates.value = Array.from(allDates).sort().reverse()
-  alerts.value = allAlerts.sort((a, b) => b.Logtime.localeCompare(a.Logtime))
+    dates.value = Array.from(allDates).sort().reverse()
+    alerts.value = allAlerts.sort((a, b) => b.Logtime.localeCompare(a.Logtime))
+  } finally {
+    if (!isUnmounted && requestId === alertsRequestId) {
+      requestNodes.forEach((node) => (node.loading = false))
+    }
+  }
 }
 
 const loadAlertsByDate = async (date: string) => {
@@ -226,20 +248,33 @@ const loadAlertsByDate = async (date: string) => {
     return
   }
 
-  const allAlerts: AlertLog[] = []
+  const requestId = ++alertsRequestId
+  const port = config.value.Port
+  const requestNodes = nodes.value
+  requestNodes.forEach((node) => (node.loading = true))
+  try {
+    const results = await Promise.all(
+      requestNodes.map(async (node) => {
+        try {
+          return await getAlerts(`http://${node.addr}:${port}`, date)
+        } catch (error) {
+          console.error(`获取 ${node.name} 报警记录失败`, error)
+          return null
+        }
+      })
+    )
+    if (isUnmounted || requestId !== alertsRequestId || selectedDate.value !== date) {
+      return
+    }
 
-  await Promise.all(
-    nodes.value.map(async (node) => {
-      try {
-        const data = await getAlerts(`http://${node.addr}:${config.value!.Port}`, date)
-        allAlerts.push(...data.logs)
-      } catch (error) {
-        console.error(`获取 ${node.name} 报警记录失败`, error)
-      }
-    })
-  )
-
-  alerts.value = allAlerts.sort((a, b) => b.Logtime.localeCompare(a.Logtime))
+    alerts.value = results
+      .flatMap((data) => data?.logs || [])
+      .sort((a, b) => b.Logtime.localeCompare(a.Logtime))
+  } finally {
+    if (!isUnmounted && requestId === alertsRequestId) {
+      requestNodes.forEach((node) => (node.loading = false))
+    }
+  }
 }
 
 const showMtr = (row: AlertLog) => {
@@ -253,6 +288,12 @@ const showMtr = (row: AlertLog) => {
 
 onMounted(() => {
   loadConfig()
+})
+
+onUnmounted(() => {
+  isUnmounted = true
+  configRequestId++
+  alertsRequestId++
 })
 </script>
 

@@ -203,6 +203,10 @@ const autoRefresh = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 const detailAutoRefresh = ref(false)
 let detailRefreshTimer: ReturnType<typeof setInterval> | null = null
+let isUnmounted = false
+let configRequestId = 0
+let chartRequestId = 0
+let detailRequestId = 0
 const refreshInterval = computed(() => Math.max(config.value?.Base.Refresh || 1, 1) * 60 * 1000)
 
 const timeRanges = computed(() => [
@@ -223,8 +227,14 @@ const failedTargets = computed(
 )
 
 const loadConfig = async (proxyUrl?: string) => {
+  const requestId = ++configRequestId
   try {
     const cfg = proxyUrl ? await fetchProxyConfig(proxyUrl) : await fetchConfig()
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
+
+    chartRequestId++
     config.value = cfg
     currentAgent.value = cfg.Addr
 
@@ -252,33 +262,45 @@ const loadConfig = async (proxyUrl?: string) => {
 
     await loadAllCharts()
   } catch (error) {
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
     console.error('加载配置失败', error)
   }
 }
 
 const loadAllCharts = async () => {
-  await Promise.all(reverseTargets.value.map((target) => loadChartData(target)))
+  const requestId = ++chartRequestId
+  const targets = reverseTargets.value
+  await Promise.all(targets.map((target) => loadChartData(target, requestId)))
 }
 
-const loadChartData = async (target: ReverseTarget) => {
+const loadChartData = async (target: ReverseTarget, requestId: number) => {
   target.loading = true
+  const baseUrl = `http://${target.fromAddr}:${target.fromPort}`
+  const targetIp = target.targetIp
   try {
-    target.chartData = await getProxyPingData(
-      `http://${target.fromAddr}:${target.fromPort}`,
-      target.targetIp
-    )
+    const data = await getProxyPingData(baseUrl, targetIp)
+    if (isUnmounted || requestId !== chartRequestId) {
+      return
+    }
+    target.chartData = data
   } catch (error) {
+    if (isUnmounted || requestId !== chartRequestId) {
+      return
+    }
     console.error('加载图表数据失败', error)
     target.chartData = null
   } finally {
-    target.loading = false
+    if (!isUnmounted && requestId === chartRequestId) {
+      target.loading = false
+    }
   }
 }
 
 const switchAgent = async (agent: { name: string; addr: string; loading: boolean }) => {
   agent.loading = true
   detailVisible.value = false
-  currentAgent.value = agent.addr
   const proxyUrl = `http://${agent.addr}:${config.value?.Port}`
   await loadConfig(proxyUrl)
   agent.loading = false
@@ -297,14 +319,21 @@ const loadDetailData = async () => {
     return
   }
 
+  const requestId = ++detailRequestId
+  const target = currentTarget.value
+  const baseUrl = `http://${target.fromAddr}:${target.fromPort}`
+  const start = startTime.value
+  const end = endTime.value
   try {
-    detailData.value = await getProxyPingData(
-      `http://${currentTarget.value.fromAddr}:${currentTarget.value.fromPort}`,
-      currentTarget.value.targetIp,
-      startTime.value,
-      endTime.value
-    )
+    const data = await getProxyPingData(baseUrl, target.targetIp, start, end)
+    if (isUnmounted || requestId !== detailRequestId || !detailVisible.value) {
+      return
+    }
+    detailData.value = data
   } catch (error) {
+    if (isUnmounted || requestId !== detailRequestId) {
+      return
+    }
     console.error('加载数据失败', error)
     detailData.value = null
   }
@@ -377,11 +406,16 @@ watch([detailAutoRefresh, refreshInterval], ([enabled, interval]) => {
 
 watch(detailVisible, (visible) => {
   if (!visible) {
+    detailRequestId++
     detailAutoRefresh.value = false
   }
 })
 
 onUnmounted(() => {
+  isUnmounted = true
+  configRequestId++
+  chartRequestId++
+  detailRequestId++
   if (refreshTimer) {
     clearInterval(refreshTimer)
     refreshTimer = null
