@@ -1,6 +1,11 @@
 <template>
   <el-dropdown trigger="click" popper-class="settings-dropdown">
-    <el-button circle :icon="Setting" />
+    <el-button
+      circle
+      :icon="Setting"
+      :aria-label="$t('nav.interfaceSettings')"
+      :title="$t('nav.interfaceSettings')"
+    />
     <template #dropdown>
       <el-dropdown-menu>
         <el-dropdown-item>

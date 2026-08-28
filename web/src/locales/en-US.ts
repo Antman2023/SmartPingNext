@@ -90,6 +90,13 @@ export default {
     config: 'Settings',
     theme: 'Theme',
     language: 'Language',
+    interfaceSettings: 'Interface Settings',
+    applicationHeader: 'Application Header',
+    primaryNavigation: 'Primary Navigation',
+    openNavigation: 'Open Navigation',
+    closeNavigation: 'Close Navigation',
+    expandNavigation: 'Expand Navigation',
+    collapseNavigation: 'Collapse Navigation',
     zhCN: '简体中文',
     enUS: 'English',
     consoleLabel: 'Network Console'

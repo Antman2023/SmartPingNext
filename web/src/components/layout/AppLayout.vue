@@ -3,7 +3,7 @@
     <AppNavbar />
     <div class="app-layout__body">
       <AppSidebar />
-      <main class="app-main" :class="{ 'is-collapsed': isSidebarCondensed }">
+      <main class="app-main" :class="{ 'is-collapsed': isDesktopSidebarCollapsed }">
         <div class="app-main__inner">
           <slot />
         </div>
@@ -23,7 +23,7 @@ import { useViewportCompact } from '@/composables/useViewportCompact'
 const sidebarStore = useSidebarStore()
 const configStore = useConfigStore()
 const { isCompact } = useViewportCompact()
-const isSidebarCondensed = computed(() => sidebarStore.isCollapsed || isCompact.value)
+const isDesktopSidebarCollapsed = computed(() => !isCompact.value && sidebarStore.isCollapsed)
 
 onMounted(() => {
   if (!configStore.config) {
@@ -68,8 +68,10 @@ onMounted(() => {
   min-height: 100%;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 960px) {
   .app-main {
+    width: 100%;
+    margin-left: 0;
     padding: 20px 16px 28px;
   }
 }

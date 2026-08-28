@@ -1,27 +1,51 @@
 <template>
-  <aside class="app-sidebar" :class="{ 'is-collapsed': isSidebarCondensed }">
-    <div v-if="!isSidebarCondensed" class="app-sidebar__summary">
-      <span class="app-sidebar__eyebrow">{{ $t('nav.consoleLabel') }}</span>
-      <strong class="app-sidebar__node">{{ currentNode }}</strong>
-      <p class="app-sidebar__meta">{{ smartpingCount }} {{ $t('common.probes') }}</p>
-    </div>
-    <el-menu
-      :default-active="currentRoute"
-      class="app-sidebar__menu"
-      :router="true"
-      :collapse="isSidebarCondensed"
-      :collapse-transition="false"
+  <Transition name="sidebar-backdrop">
+    <button
+      v-if="isCompact && sidebarStore.isMobileOpen"
+      type="button"
+      class="app-sidebar__backdrop"
+      :aria-label="$t('nav.closeNavigation')"
+      @click="sidebarStore.closeMobile"
+    />
+  </Transition>
+  <Transition name="sidebar-drawer">
+    <aside
+      v-if="!isCompact || sidebarStore.isMobileOpen"
+      id="app-sidebar"
+      class="app-sidebar"
+      :class="{ 'is-collapsed': isDesktopCollapsed, 'is-mobile': isCompact }"
+      :aria-label="$t('nav.primaryNavigation')"
     >
-      <el-menu-item v-for="item in menuItems" :key="item.index" :index="item.index">
-        <el-icon><component :is="item.icon" /></el-icon>
-        <template #title>{{ $t(item.label) }}</template>
-      </el-menu-item>
-    </el-menu>
-  </aside>
+      <div v-if="!isDesktopCollapsed" class="app-sidebar__summary">
+        <span class="app-sidebar__eyebrow">{{ $t('nav.consoleLabel') }}</span>
+        <strong class="app-sidebar__node">{{ currentNode }}</strong>
+        <p class="app-sidebar__meta">{{ smartpingCount }} {{ $t('common.probes') }}</p>
+      </div>
+      <el-menu
+        :default-active="currentRoute"
+        class="app-sidebar__menu"
+        :router="true"
+        :collapse="isDesktopCollapsed"
+        :collapse-transition="false"
+        :aria-label="$t('nav.primaryNavigation')"
+        @select="handleSelect"
+      >
+        <el-menu-item
+          v-for="item in menuItems"
+          :key="item.index"
+          :index="item.index"
+          :aria-label="$t(item.label)"
+        >
+          <el-icon><component :is="item.icon" /></el-icon>
+          <template #title>{{ $t(item.label) }}</template>
+        </el-menu-item>
+      </el-menu>
+    </aside>
+  </Transition>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   DataLine,
@@ -62,7 +86,42 @@ const smartpingCount = computed(() => {
   return Object.values(configStore.config?.Network || {}).filter((node) => node.Smartping).length
 })
 
-const isSidebarCondensed = computed(() => sidebarStore.isCollapsed || isCompact.value)
+const isDesktopCollapsed = computed(() => !isCompact.value && sidebarStore.isCollapsed)
+
+const handleSelect = () => {
+  if (isCompact.value) {
+    sidebarStore.closeMobile()
+  }
+}
+
+const handleEscape = (event: KeyboardEvent) => {
+  if (event.key === 'Escape' && sidebarStore.isMobileOpen) {
+    sidebarStore.closeMobile()
+  }
+}
+
+watch(
+  () => route.path,
+  () => sidebarStore.closeMobile()
+)
+
+watch(
+  [isCompact, () => sidebarStore.isMobileOpen],
+  ([compact, open]) => {
+    document.documentElement.classList.toggle('sidebar-open', compact && open)
+    if (!compact && open) {
+      sidebarStore.closeMobile()
+    }
+  },
+  { immediate: true }
+)
+
+onMounted(() => window.addEventListener('keydown', handleEscape))
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleEscape)
+  document.documentElement.classList.remove('sidebar-open')
+})
 </script>
 
 <style scoped lang="scss">
@@ -81,11 +140,23 @@ const isSidebarCondensed = computed(() => sidebarStore.isCollapsed || isCompact.
     background-color 0.3s ease;
   border-right: 1px solid var(--color-border-light);
   backdrop-filter: blur(22px);
+  z-index: 950;
 
   &.is-collapsed {
     width: var(--app-sidebar-collapsed-width);
     padding-inline: 10px;
   }
+}
+
+.app-sidebar__backdrop {
+  position: fixed;
+  inset: var(--app-navbar-height) 0 0;
+  z-index: 900;
+  border: 0;
+  padding: 0;
+  background: rgba(2, 8, 18, 0.54);
+  backdrop-filter: blur(3px);
+  cursor: pointer;
 }
 
 .app-sidebar__summary {
@@ -168,9 +239,30 @@ const isSidebarCondensed = computed(() => sidebarStore.isCollapsed || isCompact.
   }
 }
 
-@media (max-width: 900px) {
-  .app-sidebar {
+@media (max-width: 960px) {
+  .app-sidebar.is-mobile {
+    width: min(296px, calc(100vw - 56px));
     padding-top: 14px;
+    box-shadow: var(--shadow-lg);
   }
+}
+
+.sidebar-drawer-enter-active,
+.sidebar-drawer-leave-active,
+.sidebar-backdrop-enter-active,
+.sidebar-backdrop-leave-active {
+  transition:
+    transform 0.24s ease,
+    opacity 0.24s ease;
+}
+
+.sidebar-drawer-enter-from,
+.sidebar-drawer-leave-to {
+  transform: translateX(-100%);
+}
+
+.sidebar-backdrop-enter-from,
+.sidebar-backdrop-leave-to {
+  opacity: 0;
 }
 </style>

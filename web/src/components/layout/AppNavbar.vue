@@ -1,14 +1,20 @@
 <template>
-  <nav class="app-navbar">
+  <nav class="app-navbar" :aria-label="$t('nav.applicationHeader')">
     <div class="app-navbar__left">
       <button
         type="button"
         class="app-navbar__toggle"
-        :class="{ 'is-collapsed': isSidebarCondensed }"
-        @click="sidebarStore.toggleCollapse"
+        :class="{ 'is-collapsed': !isSidebarExpanded }"
+        :aria-label="sidebarToggleLabel"
+        :title="sidebarToggleLabel"
+        aria-controls="app-sidebar"
+        :aria-expanded="isSidebarExpanded"
+        @click="handleSidebarToggle"
       >
         <el-icon>
-          <DArrowLeft v-if="!isSidebarCondensed" />
+          <Close v-if="isCompact && sidebarStore.isMobileOpen" />
+          <Menu v-else-if="isCompact" />
+          <DArrowLeft v-else-if="isSidebarExpanded" />
           <DArrowRight v-else />
         </el-icon>
       </button>
@@ -41,7 +47,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Monitor, DArrowLeft, DArrowRight } from '@element-plus/icons-vue'
+import { Monitor, DArrowLeft, DArrowRight, Menu, Close } from '@element-plus/icons-vue'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useConfigStore } from '@/stores/config'
@@ -64,7 +70,23 @@ const currentTitle = computed(() => {
   const titleKey = route.meta.titleKey
   return titleKey ? t(titleKey) : 'SmartPingNext'
 })
-const isSidebarCondensed = computed(() => sidebarStore.isCollapsed || isCompact.value)
+const isSidebarExpanded = computed(() =>
+  isCompact.value ? sidebarStore.isMobileOpen : !sidebarStore.isCollapsed
+)
+const sidebarToggleLabel = computed(() => {
+  if (isCompact.value) {
+    return t(sidebarStore.isMobileOpen ? 'nav.closeNavigation' : 'nav.openNavigation')
+  }
+  return t(sidebarStore.isCollapsed ? 'nav.expandNavigation' : 'nav.collapseNavigation')
+})
+
+const handleSidebarToggle = () => {
+  if (isCompact.value) {
+    sidebarStore.toggleMobile()
+    return
+  }
+  sidebarStore.toggleCollapse()
+}
 </script>
 
 <style scoped lang="scss">

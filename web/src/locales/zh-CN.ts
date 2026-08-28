@@ -88,6 +88,13 @@ export default {
     config: '系统配置',
     theme: '主题',
     language: '语言',
+    interfaceSettings: '界面设置',
+    applicationHeader: '应用标题栏',
+    primaryNavigation: '主导航',
+    openNavigation: '打开导航',
+    closeNavigation: '关闭导航',
+    expandNavigation: '展开导航',
+    collapseNavigation: '收起导航',
     zhCN: '简体中文',
     enUS: 'English',
     consoleLabel: '网络控制台'

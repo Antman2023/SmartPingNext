@@ -32,7 +32,7 @@
             <span class="page-eyebrow">{{ $t('common.autoRefresh') }}</span>
             <strong>{{ autoRefresh ? $t('common.loaded') : $t('common.status') }}</strong>
           </div>
-          <el-switch v-model="autoRefresh" size="small" />
+          <el-switch v-model="autoRefresh" size="small" :aria-label="$t('common.autoRefresh')" />
         </section>
       </div>
     </div>
@@ -61,7 +61,6 @@
               class="monitor-tile dashboard-view__tile"
               role="button"
               tabindex="0"
-              :aria-label="$t('dashboard.openDetail', { name: displayName(target.name) })"
               @click="showDetail(target)"
               @keydown.enter.prevent="showDetail(target)"
               @keydown.space.prevent="showDetail(target)"
@@ -88,6 +87,9 @@
                   <span>{{ $t('common.loadFailed') }}</span>
                 </div>
               </div>
+              <span class="sr-only">{{
+                $t('dashboard.openDetail', { name: displayName(target.name) })
+              }}</span>
             </article>
           </div>
         </section>
@@ -160,7 +162,11 @@
             </el-button>
           </el-button-group>
           <span class="dashboard-view__refresh-label">{{ $t('common.autoRefresh') }}</span>
-          <el-switch v-model="detailAutoRefresh" size="small" />
+          <el-switch
+            v-model="detailAutoRefresh"
+            size="small"
+            :aria-label="$t('common.autoRefresh')"
+          />
         </div>
 
         <section v-loading="detailLoading" class="surface-panel dashboard-view__detail-panel">

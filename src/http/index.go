@@ -7,6 +7,24 @@ import (
 	"strings"
 )
 
+const (
+	immutableAssetCacheControl = "public, max-age=31536000, immutable"
+	staticFileCacheControl     = "public, max-age=3600"
+	indexCacheControl          = "no-cache"
+)
+
+func setStaticCacheHeaders(w http.ResponseWriter, path string, spaFallback bool) {
+	if spaFallback || path == "/" || path == "/index.html" {
+		w.Header().Set("Cache-Control", indexCacheControl)
+		return
+	}
+	if strings.HasPrefix(path, "/assets/") {
+		w.Header().Set("Cache-Control", immutableAssetCacheControl)
+		return
+	}
+	w.Header().Set("Cache-Control", staticFileCacheControl)
+}
+
 func configIndexRoutes() {
 
 	// 使用嵌入的前端文件系统
@@ -35,11 +53,13 @@ func configIndexRoutes() {
 
 		// 静态资源文件（有扩展名）直接服务
 		if strings.Contains(r.URL.Path, ".") {
+			setStaticCacheHeaders(w, r.URL.Path, false)
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
 		// SPA 路由：所有其他路径返回 index.html
+		setStaticCacheHeaders(w, r.URL.Path, true)
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})

@@ -7,14 +7,26 @@
 </template>
 
 <script setup lang="ts">
-import { onErrorCaptured } from 'vue'
+import { onErrorCaptured, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import { useLocale } from '@/composables/useLocale'
 import { useI18n } from 'vue-i18n'
 
-const { elementLocale } = useLocale()
+const { elementLocale, locale } = useLocale()
 const { t } = useI18n()
+const route = useRoute()
+
+watch(
+  [locale, () => route.meta.titleKey],
+  () => {
+    const titleKey = route.meta.titleKey
+    const title = titleKey ? t(titleKey) : 'SmartPingNext'
+    document.title = `${title} - SmartPingNext`
+  },
+  { immediate: true }
+)
 
 // 全局错误边界
 onErrorCaptured((error: Error, instance, info) => {

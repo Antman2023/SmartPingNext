@@ -202,6 +202,31 @@ func TestRequireMethod(t *testing.T) {
 	}
 }
 
+func TestSetStaticCacheHeaders(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		spaFallback bool
+		want        string
+	}{
+		{name: "hashed asset", path: "/assets/index-AbCd1234.js", want: immutableAssetCacheControl},
+		{name: "regular static file", path: "/favicon.ico", want: staticFileCacheControl},
+		{name: "index file", path: "/index.html", want: indexCacheControl},
+		{name: "root", path: "/", want: indexCacheControl},
+		{name: "SPA route", path: "/topology", spaFallback: true, want: indexCacheControl},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			setStaticCacheHeaders(recorder, tt.path, tt.spaFallback)
+			if got := recorder.Header().Get("Cache-Control"); got != tt.want {
+				t.Fatalf("Cache-Control = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseFormLimited(t *testing.T) {
 	t.Run("accepts form within limit", func(t *testing.T) {
 		recorder := httptest.NewRecorder()
