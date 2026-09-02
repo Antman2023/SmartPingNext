@@ -1,9 +1,22 @@
 package funcs
 
 import (
+	"context"
 	"smartping/src/g"
+	"sync/atomic"
 	"testing"
 )
+
+func TestMappingContextDoesNotStartCanceledRound(t *testing.T) {
+	atomic.StoreInt32(&mappingRunning, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	MappingContext(ctx)
+	if got := atomic.LoadInt32(&mappingRunning); got != 0 {
+		t.Fatalf("mappingRunning = %d after canceled call, want 0", got)
+	}
+}
 
 func TestAggregateMappingDelayIgnoresQuarterOfFailedProbes(t *testing.T) {
 	stats := []g.PingSt{

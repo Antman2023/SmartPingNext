@@ -19,6 +19,13 @@ var alertRunning int32
 const alertTraceConcurrency = 4
 
 func StartAlert() {
+	StartAlertContext(context.Background())
+}
+
+func StartAlertContext(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	if !atomic.CompareAndSwapInt32(&alertRunning, 0, 1) {
 		logrus.Warn("[func:StartAlert] Previous alert check still running, skip")
 		return
@@ -30,9 +37,15 @@ func StartAlert() {
 	selfConfig := config.Network[config.Addr]
 	pendingAlerts := make([]g.AlertLog, 0)
 	for _, v := range selfConfig.Topology {
+		if ctx.Err() != nil {
+			return
+		}
 		if v["Addr"] != selfConfig.Addr {
-			sFlag, err := CheckAlertStatus(v)
+			sFlag, err := CheckAlertStatusContext(ctx, v)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				logrus.Error("[func:StartAlert] Check status error ", err)
 				continue
 			}
@@ -60,31 +73,54 @@ func StartAlert() {
 
 		}
 	}
-	runAlertTraceJobs(pendingAlerts, alertTraceConcurrency, traceAndStoreAlert)
+	runAlertTraceJobsContext(ctx, pendingAlerts, alertTraceConcurrency, traceAndStoreAlertContext)
+	if ctx.Err() != nil {
+		logrus.Info("[func:StartAlert] canceled")
+		return
+	}
 	logrus.Info("[func:StartAlert] ", "AlertCheck finish ")
 }
 
 func runAlertTraceJobs(alerts []g.AlertLog, concurrency int, process func(g.AlertLog)) {
+	runAlertTraceJobsContext(context.Background(), alerts, concurrency, func(_ context.Context, item g.AlertLog) {
+		process(item)
+	})
+}
+
+func runAlertTraceJobsContext(ctx context.Context, alerts []g.AlertLog, concurrency int, process func(context.Context, g.AlertLog)) {
 	if concurrency < 1 {
 		concurrency = 1
 	}
 	semaphore := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
+loop:
 	for _, alert := range alerts {
-		semaphore <- struct{}{}
 		wg.Add(1)
+		select {
+		case semaphore <- struct{}{}:
+		case <-ctx.Done():
+			wg.Done()
+			break loop
+		}
 		go func(item g.AlertLog) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
-			process(item)
+			process(ctx, item)
 		}(alert)
 	}
 	wg.Wait()
 }
 
 func traceAndStoreAlert(alert g.AlertLog) {
-	hops, err := nettools.RunMtr(alert.Targetip, time.Second, 64, 6)
+	traceAndStoreAlertContext(context.Background(), alert)
+}
+
+func traceAndStoreAlertContext(ctx context.Context, alert g.AlertLog) {
+	hops, err := nettools.RunMtrContext(ctx, alert.Targetip, time.Second, 64, 6)
 	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		logrus.Error("[func:StartAlert] Traceroute error ", err)
 		alert.Tracert = err.Error()
 	} else if encoded, marshalErr := json.Marshal(hops); marshalErr != nil {
@@ -92,7 +128,7 @@ func traceAndStoreAlert(alert g.AlertLog) {
 	} else {
 		alert.Tracert = string(encoded)
 	}
-	AlertStorage(alert)
+	AlertStorageContext(ctx, alert)
 }
 
 func CheckAlertStatus(v map[string]string) (bool, error) {
@@ -158,10 +194,21 @@ func alertWindowStart(now time.Time, windowSeconds int) time.Time {
 }
 
 func AlertStorage(t g.AlertLog) {
+	AlertStorageContext(context.Background(), t)
+}
+
+func AlertStorageContext(ctx context.Context, t g.AlertLog) {
+	if ctx.Err() != nil {
+		return
+	}
 	logrus.Info("[func:AlertStorage] ", "(", t.Logtime, ")Starting AlertStorage ", t.Targetname)
 	sql := "INSERT INTO [alertlog] (logtime, targetip, targetname, tracert) values(?, ?, ?, ?) ON CONFLICT(logtime, targetip) DO UPDATE SET targetname=excluded.targetname, tracert=excluded.tracert"
 	g.DLock.Lock()
-	_, err := g.Db.Exec(sql, t.Logtime, t.Targetip, t.Targetname, t.Tracert)
+	if ctx.Err() != nil {
+		g.DLock.Unlock()
+		return
+	}
+	_, err := g.Db.ExecContext(ctx, sql, t.Logtime, t.Targetip, t.Targetname, t.Tracert)
 	if err != nil {
 		logrus.Error("[func:AlertStorage] Sql Error ", err)
 	}

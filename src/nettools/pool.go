@@ -68,7 +68,7 @@ func (p *icmpPool) init() error {
 	}
 	p.conn = conn
 	p.ipconn = ipv4.NewPacketConn(conn)
-	go p.readLoop()
+	go p.readLoop(conn)
 	return nil
 }
 
@@ -106,10 +106,10 @@ func (p *icmpPool) dispatch(key uint32, resp icmpResponse) {
 }
 
 // readLoop 持续读取所有 ICMP 报文并按 (ID, Seq) 分发
-func (p *icmpPool) readLoop() {
+func (p *icmpPool) readLoop(conn net.PacketConn) {
 	buf := make([]byte, 1500)
 	for {
-		n, addr, err := p.conn.ReadFrom(buf)
+		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
@@ -159,6 +159,24 @@ func (p *icmpPool) readLoop() {
 	}
 }
 
+func CloseICMPPool() error {
+	return pool.close()
+}
+
+func (p *icmpPool) close() error {
+	p.initMu.Lock()
+	defer p.initMu.Unlock()
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
+	if p.conn == nil {
+		return nil
+	}
+	err := p.conn.Close()
+	p.conn = nil
+	p.ipconn = nil
+	return err
+}
+
 // sendICMP 发送 ICMP 报文并等待响应
 func (p *icmpPool) sendICMP(id, seq, ttl int, msg []byte, dest net.Addr, timeout time.Duration) ICMP {
 	return p.sendICMPContext(context.Background(), id, seq, ttl, msg, dest, timeout)
@@ -181,6 +199,10 @@ func (p *icmpPool) sendICMPContext(ctx context.Context, id, seq, ttl int, msg []
 
 	// SetTTL + WriteTo 必须原子执行
 	p.sendMu.Lock()
+	if p.conn == nil || p.ipconn == nil {
+		p.sendMu.Unlock()
+		return ICMP{Error: net.ErrClosed}
+	}
 	if err := ctx.Err(); err != nil {
 		p.sendMu.Unlock()
 		return ICMP{Error: err}

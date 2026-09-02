@@ -6,6 +6,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"golang.org/x/net/ipv4"
 )
 
 func TestWaiterKeyUsesIdentifierAndSequence(t *testing.T) {
@@ -126,5 +128,23 @@ func TestICMPPoolRetriesInitializationAfterFailure(t *testing.T) {
 	}
 	if pool.conn != nil || pool.ipconn != nil {
 		t.Fatalf("failed initialization retained partial connection state")
+	}
+}
+
+func TestICMPPoolCloseReleasesAndResetsConnection(t *testing.T) {
+	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("create packet connection: %v", err)
+	}
+	localPool := &icmpPool{conn: conn, ipconn: ipv4.NewPacketConn(conn)}
+
+	if err := localPool.close(); err != nil {
+		t.Fatalf("close returned error: %v", err)
+	}
+	if localPool.conn != nil || localPool.ipconn != nil {
+		t.Fatalf("close retained connection state: %#v", localPool)
+	}
+	if err := localPool.close(); err != nil {
+		t.Fatalf("second close should be idempotent, got: %v", err)
 	}
 }

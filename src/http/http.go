@@ -372,13 +372,16 @@ func allowToolRequest(remoteAddr string, now int, limit int) bool {
 }
 
 func StartHttp() {
+	server := NewServer()
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Println("[StartHttp]", err)
+	}
+}
+
+func NewServer() *http.Server {
 	config := g.ConfigSnapshot()
 	logrus.Info("[func:StartHttp] starting to listen on ", config.Port)
-	server := newHTTPServer(fmt.Sprintf(":%d", config.Port), newAppHandler())
-	err := server.ListenAndServe()
-	if err != nil {
-		log.Fatalln("[StartHttp]", err)
-	}
+	return newHTTPServer(fmt.Sprintf(":%d", config.Port), newAppHandler())
 }
 
 func newAppHandler() http.Handler {

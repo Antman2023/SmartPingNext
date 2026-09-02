@@ -1,6 +1,7 @@
 package funcs
 
 import (
+	"context"
 	"smartping/src/g"
 	"sync/atomic"
 	"time"
@@ -14,6 +15,13 @@ var archiveRunning int32
 
 // clear timeout alert table
 func ClearArchive() {
+	ClearArchiveContext(context.Background())
+}
+
+func ClearArchiveContext(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	if !atomic.CompareAndSwapInt32(&archiveRunning, 0, 1) {
 		logrus.Warn("[func:ClearArchive] Previous archive cleanup still running, skip")
 		return
@@ -26,8 +34,12 @@ func ClearArchive() {
 		archiveDays = 30
 	}
 	cutoffDate := time.Now().AddDate(0, 0, -archiveDays).Format("2006-01-02")
-	err := clearArchiveBefore(cutoffDate)
+	err := clearArchiveBeforeContext(ctx, cutoffDate)
 	if err != nil {
+		if ctx.Err() != nil {
+			logrus.Info("[func:ClearArchive] canceled")
+			return
+		}
 		logrus.Error("[func:ClearArchive] ", err)
 		return
 	}
@@ -35,8 +47,12 @@ func ClearArchive() {
 }
 
 func clearArchiveBefore(cutoffDate string) error {
+	return clearArchiveBeforeContext(context.Background(), cutoffDate)
+}
+
+func clearArchiveBeforeContext(ctx context.Context, cutoffDate string) error {
 	for _, table := range []string{"alertlog", "mappinglog", "pinglog"} {
-		if err := clearArchiveTableBefore(table, cutoffDate); err != nil {
+		if err := clearArchiveTableBeforeContext(ctx, table, cutoffDate); err != nil {
 			return err
 		}
 	}
@@ -44,10 +60,17 @@ func clearArchiveBefore(cutoffDate string) error {
 }
 
 func clearArchiveTableBefore(table, cutoffDate string) error {
+	return clearArchiveTableBeforeContext(context.Background(), table, cutoffDate)
+}
+
+func clearArchiveTableBeforeContext(ctx context.Context, table, cutoffDate string) error {
 	query := "delete from " + table + " where rowid in (select rowid from " + table + " where logtime < ? order by logtime limit ?)"
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		g.DLock.Lock()
-		result, err := g.Db.Exec(query, cutoffDate, archiveDeleteBatchSize)
+		result, err := g.Db.ExecContext(ctx, query, cutoffDate, archiveDeleteBatchSize)
 		g.DLock.Unlock()
 		if err != nil {
 			return err

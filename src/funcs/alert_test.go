@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+func TestStartAlertContextDoesNotStartWhenCanceled(t *testing.T) {
+	atomic.StoreInt32(&alertRunning, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	StartAlertContext(ctx)
+	if got := atomic.LoadInt32(&alertRunning); got != 0 {
+		t.Fatalf("alertRunning = %d after canceled call, want 0", got)
+	}
+}
+
 func TestStartAlertSkipsOverlappingCheck(t *testing.T) {
 	atomic.StoreInt32(&alertRunning, 1)
 	defer atomic.StoreInt32(&alertRunning, 0)

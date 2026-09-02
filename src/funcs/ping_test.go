@@ -1,11 +1,23 @@
 package funcs
 
 import (
+	"context"
 	"smartping/src/g"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestPingContextDoesNotStartCanceledRound(t *testing.T) {
+	atomic.StoreInt32(&pingRunning, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	PingContext(ctx)
+	if got := atomic.LoadInt32(&pingRunning); got != 0 {
+		t.Fatalf("pingRunning = %d after canceled call, want 0", got)
+	}
+}
 
 func TestPingSkipsOverlappingRound(t *testing.T) {
 	atomic.StoreInt32(&pingRunning, 1)

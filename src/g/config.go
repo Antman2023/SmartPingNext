@@ -1,6 +1,7 @@
 package g
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -196,8 +197,16 @@ func ensureDatabaseIndexes(db *sql.DB) error {
 }
 
 func SaveCloudConfig(url string) (Config, error) {
+	return SaveCloudConfigContext(context.Background(), url)
+}
+
+func SaveCloudConfigContext(ctx context.Context, url string) (Config, error) {
 	config := Config{}
-	resp, err := HttpClient.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return config, err
+	}
+	resp, err := HttpClient.Do(req)
 	if err != nil {
 		return config, err
 	}
@@ -216,6 +225,9 @@ func SaveCloudConfig(url string) (Config, error) {
 	}
 	if config.Mode == nil {
 		config.Mode = map[string]string{}
+	}
+	if err := ctx.Err(); err != nil {
+		return config, err
 	}
 	if err := applyCloudConfig(config, url); err != nil {
 		return config, err

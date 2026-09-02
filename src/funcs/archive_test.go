@@ -1,11 +1,23 @@
 package funcs
 
 import (
+	"context"
 	"database/sql"
 	"smartping/src/g"
 	"sync/atomic"
 	"testing"
 )
+
+func TestClearArchiveContextDoesNotStartWhenCanceled(t *testing.T) {
+	atomic.StoreInt32(&archiveRunning, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ClearArchiveContext(ctx)
+	if got := atomic.LoadInt32(&archiveRunning); got != 0 {
+		t.Fatalf("archiveRunning = %d after canceled call, want 0", got)
+	}
+}
 
 func TestClearArchiveSkipsOverlappingRun(t *testing.T) {
 	atomic.StoreInt32(&archiveRunning, 1)

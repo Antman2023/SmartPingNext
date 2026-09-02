@@ -1,6 +1,7 @@
 package nettools
 
 import (
+	"context"
 	"errors"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
@@ -27,7 +28,14 @@ const (
 )
 
 func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mtr, error) {
+	return RunMtrContext(context.Background(), Addr, maxrtt, maxttl, maxtimeout)
+}
+
+func RunMtrContext(ctx context.Context, Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mtr, error) {
 	result := []Mtr{}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	if maxttl <= 0 {
 		return result, nil
 	}
@@ -40,8 +48,11 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 	if maxtimeout <= 0 {
 		return result, errors.New("Invalid maximum consecutive timeouts")
 	}
-	dest, err := net.ResolveIPAddr("ip4", Addr)
+	dest, err := resolveIPv4Context(ctx, Addr)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return result, ctxErr
+		}
 		return result, errors.New("Unable to resolve destination host")
 	}
 	Lock := sync.Mutex{}
@@ -49,6 +60,9 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 	mtr := map[int][]ICMP{}
 	timeouts := 0
 	for ttl := 1; ttl <= maxttl; ttl++ {
+		if ctx.Err() != nil {
+			break
+		}
 		id := randomUint16()
 		seq := nextICMPSequence()
 		res := pkg{
@@ -62,7 +76,10 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 		if nil != err {
 			return result, err
 		}
-		next := res.Send(ttl)
+		next := res.SendContext(ctx, ttl)
+		if ctx.Err() != nil {
+			break
+		}
 		if next.Timeout {
 			timeouts++
 		} else {
@@ -78,6 +95,9 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 		go func(ittl int) {
 			defer wg.Done()
 			for j := 1; j < mtrProbeCount; j++ {
+				if ctx.Err() != nil {
+					return
+				}
 				id := randomUint16()
 				seq := nextICMPSequence()
 				res := pkg{
@@ -96,14 +116,17 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 				}
 				res.netmsg = netmsg
 				nowTime := time.Now()
-				next := res.Send(ittl)
+				next := res.SendContext(ctx, ittl)
+				if ctx.Err() != nil {
+					return
+				}
 				Lock.Lock()
 				mtr[ittl] = append(mtr[ittl], next)
 				Lock.Unlock()
 				if j < mtrProbeCount-1 {
 					sleepFor := mtrProbeInterval - time.Since(nowTime)
-					if sleepFor > 0 {
-						time.Sleep(sleepFor)
+					if sleepFor > 0 && waitForContext(ctx, sleepFor) != nil {
+						return
 					}
 				}
 			}
@@ -113,6 +136,9 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 		}
 	}
 	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
 	for i := 1; i <= len(mtr); i++ {
 		vals, ok := mtr[i]
 		if !ok || len(vals) == 0 {
@@ -122,6 +148,36 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 
 	}
 	return result, nil
+}
+
+func resolveIPv4Context(ctx context.Context, address string) (*net.IPAddr, error) {
+	if parsed := net.ParseIP(address); parsed != nil {
+		if ipv4Address := parsed.To4(); ipv4Address != nil {
+			return &net.IPAddr{IP: ipv4Address}, nil
+		}
+		return nil, errors.New("not an IPv4 address")
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, address)
+	if err != nil {
+		return nil, err
+	}
+	for _, resolved := range addresses {
+		if ipv4Address := resolved.IP.To4(); ipv4Address != nil {
+			return &net.IPAddr{IP: ipv4Address, Zone: resolved.Zone}, nil
+		}
+	}
+	return nil, errors.New("no IPv4 address found")
+}
+
+func waitForContext(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func isTerminalMtrResponse(response ICMP) bool {

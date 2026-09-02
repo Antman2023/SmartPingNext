@@ -1,9 +1,9 @@
 package funcs
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"smartping/src/g"
 	"smartping/src/nettools"
 	"sort"
@@ -28,6 +28,13 @@ const (
 var mappingRunning int32
 
 func Mapping() {
+	MappingContext(context.Background())
+}
+
+func MappingContext(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	if !atomic.CompareAndSwapInt32(&mappingRunning, 0, 1) {
 		logrus.Warn("[func:Mapping] Previous round still running, skip")
 		return
@@ -43,37 +50,58 @@ func Mapping() {
 	MapStatus = map[string][]g.MapVal{}
 	MapLock.Unlock()
 	logrus.Debug("[func:Mapping]", config.Chinamap)
+loop:
 	for province, carrierTargets := range config.Chinamap {
 		for carrier, ips := range carrierTargets {
 			logrus.Debug("[func:Mapping]", ips)
 			if len(ips) > 0 {
 				wg.Add(1)
-				sem <- struct{}{}
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+					wg.Done()
+					break loop
+				}
 				go func(carrier, province string, ips []string) {
 					defer func() { <-sem }()
-					MappingTask(carrier, province, ips, probeCount, &wg)
+					MappingTaskContext(ctx, carrier, province, ips, probeCount, &wg)
 				}(carrier, province, ips)
 			}
 		}
 	}
 	wg.Wait()
-	MapPingStorage()
+	if ctx.Err() == nil {
+		MapPingStorageContext(ctx)
+	}
 }
 
 // ping main function
 func MappingTask(carrier string, province string, ips []string, probeCount int, wg *sync.WaitGroup) {
+	MappingTaskContext(context.Background(), carrier, province, ips, probeCount, wg)
+}
+
+func MappingTaskContext(ctx context.Context, carrier string, province string, ips []string, probeCount int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	logrus.Info("Start MappingTask " + carrier + " " + province + "..")
 	statMap := []g.PingSt{}
 	for _, ip := range ips {
+		if ctx.Err() != nil {
+			return
+		}
 		logrus.Debug("[func:StartChinaMapPing]", ip)
-		ipaddr, err := net.ResolveIPAddr("ip", ip)
+		ipaddr, err := resolveIPv4AddrContext(ctx, ip)
 		if err == nil {
 			for i := 0; i < probeCount; i++ {
+				if ctx.Err() != nil {
+					return
+				}
 				stat := g.PingSt{}
 				stat.MinDelay = -1
 				stat.LossPk = 0
-				delay, err := nettools.RunPing(ipaddr, 3*time.Second, 64, i)
+				delay, err := nettools.RunPingContext(ctx, ipaddr, 3*time.Second, 64, i)
+				if ctx.Err() != nil {
+					return
+				}
 				if err == nil {
 					stat.AvgDelay = stat.AvgDelay + delay
 					if stat.MaxDelay < delay {
@@ -166,6 +194,13 @@ func mappingStatusSnapshot() map[string][]g.MapVal {
 }
 
 func MapPingStorage() {
+	MapPingStorageContext(context.Background())
+}
+
+func MapPingStorageContext(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	logrus.Info("Start MapPingStorage...")
 	snapshot := mappingStatusSnapshot()
 	logrus.Debug(snapshot)
@@ -175,7 +210,11 @@ func MapPingStorage() {
 	}
 	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values(?, ?)"
 	g.DLock.Lock()
-	_, err = g.Db.Exec(sql, time.Now().Format("2006-01-02 15:04"), string(jdata))
+	if ctx.Err() != nil {
+		g.DLock.Unlock()
+		return
+	}
+	_, err = g.Db.ExecContext(ctx, sql, time.Now().Format("2006-01-02 15:04"), string(jdata))
 	logrus.Debug(sql)
 	if err != nil {
 		logrus.Error("[func:MapPingStorage] Sql Error ", err)

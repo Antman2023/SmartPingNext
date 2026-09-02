@@ -1,12 +1,32 @@
 package nettools
 
 import (
+	"context"
 	"errors"
 	"net"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRunMtrContextReturnsImmediatelyWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := RunMtrContext(ctx, "127.0.0.1", time.Second, 8, 3)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunMtrContext error = %v, want context canceled", err)
+	}
+	if len(res) != 0 {
+		t.Fatalf("canceled MTR result = %#v, want empty", res)
+	}
+}
+
+func TestResolveIPv4ContextRejectsIPv6Literal(t *testing.T) {
+	if _, err := resolveIPv4Context(context.Background(), "::1"); err == nil {
+		t.Fatal("resolveIPv4Context should reject IPv6-only literal")
+	}
+}
 
 func TestRunMtrInvalidHost(t *testing.T) {
 	res, err := RunMtr("invalid host !@", time.Second, 8, 3)

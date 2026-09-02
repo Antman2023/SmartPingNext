@@ -43,6 +43,10 @@ func (t *pkg) Send(ttl int) ICMP {
 	return pool.sendICMP(t.id, t.seq, ttl, t.netmsg, t.dest, t.maxrtt)
 }
 
+func (t *pkg) SendContext(ctx context.Context, ttl int) ICMP {
+	return pool.sendICMPContext(ctx, t.id, t.seq, ttl, t.netmsg, t.dest, t.maxrtt)
+}
+
 func RunPing(IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (float64, error) {
 	return RunPingContext(context.Background(), IpAddr, maxrtt, maxttl, seq)
 }

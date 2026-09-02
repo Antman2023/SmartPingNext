@@ -922,3 +922,23 @@ func TestNewHTTPServerTimeouts(t *testing.T) {
 		t.Fatalf("MaxHeaderBytes must be positive")
 	}
 }
+
+func TestNewServerUsesConfiguredPort(t *testing.T) {
+	g.CfgLock.Lock()
+	oldPort := g.Cfg.Port
+	g.Cfg.Port = 19091
+	g.CfgLock.Unlock()
+	defer func() {
+		g.CfgLock.Lock()
+		g.Cfg.Port = oldPort
+		g.CfgLock.Unlock()
+	}()
+
+	server := NewServer()
+	if server.Addr != ":19091" {
+		t.Fatalf("server address = %q, want :19091", server.Addr)
+	}
+	if server.Handler == nil {
+		t.Fatal("server handler must be configured")
+	}
+}

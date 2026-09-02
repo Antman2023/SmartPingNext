@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -577,6 +578,36 @@ func TestSaveCloudConfigRejectsNonOKStatus(t *testing.T) {
 
 		if _, err := SaveCloudConfig(srv.URL); err == nil {
 			t.Fatalf("SaveCloudConfig should reject non-200 response")
+		}
+	})
+}
+
+func TestSaveCloudConfigContextCancelsRequest(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		started := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			close(started)
+			<-r.Context().Done()
+		}))
+		defer srv.Close()
+		HttpClient = srv.Client()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		errCh := make(chan error, 1)
+		go func() {
+			_, err := SaveCloudConfigContext(ctx, srv.URL)
+			errCh <- err
+		}()
+		<-started
+		cancel()
+
+		select {
+		case err := <-errCh:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("SaveCloudConfigContext error = %v, want context canceled", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("SaveCloudConfigContext did not return after cancellation")
 		}
 	})
 }

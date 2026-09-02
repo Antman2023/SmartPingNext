@@ -1,6 +1,7 @@
 package funcs
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"smartping/src/g"
@@ -61,16 +62,32 @@ func pingTargetOffset(index int, stagger, interval time.Duration) time.Duration 
 }
 
 func Ping() {
+	PingContext(context.Background())
+}
+
+func PingContext(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	if !atomic.CompareAndSwapInt32(&pingRunning, 0, 1) {
 		logrus.Warn("[func:Ping] Previous round still running, skip")
 		return
 	}
-	defer atomic.StoreInt32(&pingRunning, 0)
 	roundTime := time.Now().Truncate(time.Minute)
-	runPingRound(roundTime)
+	func() {
+		defer atomic.StoreInt32(&pingRunning, 0)
+		runPingRoundContext(ctx, roundTime)
+	}()
+	if ctx.Err() == nil {
+		StartAlertContext(ctx)
+	}
 }
 
 func runPingRound(roundTime time.Time) {
+	runPingRoundContext(context.Background(), roundTime)
+}
+
+func runPingRoundContext(ctx context.Context, roundTime time.Time) {
 	config := g.ConfigSnapshot()
 	pingCount, pingInterval, pingTimeout, pingStagger := resolvePingRoundConfig(config)
 	logtime := roundTime.Format("2006-01-02 15:04")
@@ -79,6 +96,9 @@ func runPingRound(roundTime time.Time) {
 	var wg sync.WaitGroup
 	validIndex := 0
 	for _, target := range selfConfig.Ping {
+		if ctx.Err() != nil {
+			break
+		}
 		t, ok := config.Network[target]
 		if !ok || strings.TrimSpace(t.Addr) == "" {
 			logrus.Warnf("[func:Ping] Skip invalid ping target: %q", target)
@@ -87,31 +107,39 @@ func runPingRound(roundTime time.Time) {
 		targetOffset := pingTargetOffset(validIndex, pingStagger, pingInterval)
 		validIndex++
 		wg.Add(1)
-		go PingTask(t, pingCount, pingInterval, pingTimeout, targetOffset, roundTime, logtime, &wg)
+		go PingTaskContext(ctx, t, pingCount, pingInterval, pingTimeout, targetOffset, roundTime, logtime, &wg)
 	}
 	wg.Wait()
-	go StartAlert()
 }
 
 // ping main function
 func PingTask(t g.NetworkMember, pingCount int, pingInterval time.Duration, pingTimeout time.Duration, targetOffset time.Duration, roundTime time.Time, logtime string, wg *sync.WaitGroup) {
+	PingTaskContext(context.Background(), t, pingCount, pingInterval, pingTimeout, targetOffset, roundTime, logtime, wg)
+}
+
+func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, pingInterval time.Duration, pingTimeout time.Duration, targetOffset time.Duration, roundTime time.Time, logtime string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	logrus.Info("Start Ping " + t.Addr + "..")
 	stat := g.PingSt{}
 	stat.MinDelay = -1
 	lossPK := 0
-	ipaddr, err := net.ResolveIPAddr("ip", t.Addr)
+	ipaddr, err := resolveIPv4AddrContext(ctx, t.Addr)
 	roundStart := roundTime.Add(targetOffset)
 	if err == nil {
 		for i := 0; i < pingCount; i++ {
 			nextTick := roundStart.Add(time.Duration(i) * pingInterval)
 			sleepFor := time.Until(nextTick)
-			if sleepFor > 0 {
-				time.Sleep(sleepFor)
+			if sleepFor > 0 && sleepContext(ctx, sleepFor) != nil {
+				logrus.Info("Cancel Ping " + t.Addr + "..")
+				return
 			}
 
-			delay, pingErr := nettools.RunPing(ipaddr, pingTimeout, 64, i)
+			delay, pingErr := nettools.RunPingContext(ctx, ipaddr, pingTimeout, 64, i)
+			if ctx.Err() != nil {
+				logrus.Info("Cancel Ping " + t.Addr + "..")
+				return
+			}
 			if pingErr == nil {
 				stat.AvgDelay = stat.AvgDelay + delay
 				if stat.MaxDelay < delay {
@@ -145,12 +173,52 @@ func PingTask(t g.NetworkMember, pingCount int, pingInterval time.Duration, ping
 		stat.LossPk = 100
 		logrus.Debug("[func:IcmpPing] Finish Addr:", t.Addr, " Unable to resolve destination host")
 	}
-	PingStorage(stat, t.Addr, logtime)
+	if ctx.Err() != nil {
+		return
+	}
+	PingStorageContext(ctx, stat, t.Addr, logtime)
 	logrus.Info("Finish Ping " + t.Addr + "..")
+}
+
+func resolveIPv4AddrContext(ctx context.Context, address string) (*net.IPAddr, error) {
+	if parsed := net.ParseIP(address); parsed != nil {
+		if ipv4Address := parsed.To4(); ipv4Address != nil {
+			return &net.IPAddr{IP: ipv4Address}, nil
+		}
+		return nil, fmt.Errorf("address %q has no IPv4 representation", address)
+	}
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, address)
+	if err != nil {
+		return nil, err
+	}
+	for _, resolved := range addresses {
+		if ipv4Address := resolved.IP.To4(); ipv4Address != nil {
+			return &net.IPAddr{IP: ipv4Address, Zone: resolved.Zone}, nil
+		}
+	}
+	return nil, fmt.Errorf("address %q has no IPv4 representation", address)
+}
+
+func sleepContext(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // storage ping data
 func PingStorage(pingres g.PingSt, Addr string, logtime string) {
+	PingStorageContext(context.Background(), pingres, Addr, logtime)
+}
+
+func PingStorageContext(ctx context.Context, pingres g.PingSt, Addr string, logtime string) {
+	if ctx.Err() != nil {
+		return
+	}
 	if strings.TrimSpace(logtime) == "" {
 		logtime = time.Now().Format("2006-01-02 15:04")
 	}
@@ -158,7 +226,11 @@ func PingStorage(pingres g.PingSt, Addr string, logtime string) {
 	sql := "INSERT INTO [pinglog] (logtime, target, maxdelay, mindelay, avgdelay, sendpk, revcpk, losspk) values(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(logtime, target) DO UPDATE SET maxdelay=excluded.maxdelay, mindelay=excluded.mindelay, avgdelay=excluded.avgdelay, sendpk=excluded.sendpk, revcpk=excluded.revcpk, losspk=excluded.losspk"
 	logrus.Debug("[func:StartPing] ", sql)
 	g.DLock.Lock()
-	_, err := g.Db.Exec(sql, logtime, Addr,
+	if ctx.Err() != nil {
+		g.DLock.Unlock()
+		return
+	}
+	_, err := g.Db.ExecContext(ctx, sql, logtime, Addr,
 		fmt.Sprintf("%.2f", pingres.MaxDelay),
 		fmt.Sprintf("%.2f", pingres.MinDelay),
 		fmt.Sprintf("%.2f", pingres.AvgDelay),
