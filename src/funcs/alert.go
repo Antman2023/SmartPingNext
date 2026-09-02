@@ -1,11 +1,13 @@
 package funcs
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"smartping/src/g"
 	"smartping/src/nettools"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 )
 
 var alertRunning int32
+
+const alertTraceConcurrency = 4
 
 func StartAlert() {
 	if !atomic.CompareAndSwapInt32(&alertRunning, 0, 1) {
@@ -24,6 +28,7 @@ func StartAlert() {
 	logrus.Info("[func:StartAlert] ", "starting run AlertCheck ")
 	config := g.ConfigSnapshot()
 	selfConfig := config.Network[config.Addr]
+	pendingAlerts := make([]g.AlertLog, 0)
 	for _, v := range selfConfig.Topology {
 		if v["Addr"] != selfConfig.Addr {
 			sFlag, err := CheckAlertStatus(v)
@@ -44,39 +49,65 @@ func StartAlert() {
 
 			if shouldAlert {
 				logrus.Debug("[func:StartAlert] ", v["Addr"]+" Alert!")
-				l := g.AlertLog{}
-				l.Fromname = selfConfig.Name
-				l.Fromip = selfConfig.Addr
-				l.Logtime = time.Now().Format("2006-01-02 15:04")
-				l.Targetname = v["Name"]
-				l.Targetip = v["Addr"]
-				mtrString := ""
-				hops, err := nettools.RunMtr(v["Addr"], time.Second, 64, 6)
-				if nil != err {
-					logrus.Error("[func:StartAlert] Traceroute error ", err)
-					mtrString = err.Error()
-				} else {
-					jHops, err := json.Marshal(hops)
-					if err != nil {
-						mtrString = err.Error()
-					} else {
-						mtrString = string(jHops)
-					}
-				}
-				l.Tracert = mtrString
-				go AlertStorage(l)
+				pendingAlerts = append(pendingAlerts, g.AlertLog{
+					Fromname:   selfConfig.Name,
+					Fromip:     selfConfig.Addr,
+					Logtime:    time.Now().Format("2006-01-02 15:04"),
+					Targetname: v["Name"],
+					Targetip:   v["Addr"],
+				})
 			}
 
 		}
 	}
+	runAlertTraceJobs(pendingAlerts, alertTraceConcurrency, traceAndStoreAlert)
 	logrus.Info("[func:StartAlert] ", "AlertCheck finish ")
 }
 
+func runAlertTraceJobs(alerts []g.AlertLog, concurrency int, process func(g.AlertLog)) {
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	semaphore := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for _, alert := range alerts {
+		semaphore <- struct{}{}
+		wg.Add(1)
+		go func(item g.AlertLog) {
+			defer wg.Done()
+			defer func() { <-semaphore }()
+			process(item)
+		}(alert)
+	}
+	wg.Wait()
+}
+
+func traceAndStoreAlert(alert g.AlertLog) {
+	hops, err := nettools.RunMtr(alert.Targetip, time.Second, 64, 6)
+	if err != nil {
+		logrus.Error("[func:StartAlert] Traceroute error ", err)
+		alert.Tracert = err.Error()
+	} else if encoded, marshalErr := json.Marshal(hops); marshalErr != nil {
+		alert.Tracert = marshalErr.Error()
+	} else {
+		alert.Tracert = string(encoded)
+	}
+	AlertStorage(alert)
+}
+
 func CheckAlertStatus(v map[string]string) (bool, error) {
-	return checkAlertStatusAt(v, time.Now())
+	return CheckAlertStatusContext(context.Background(), v)
+}
+
+func CheckAlertStatusContext(ctx context.Context, v map[string]string) (bool, error) {
+	return checkAlertStatusAtContext(ctx, v, time.Now())
 }
 
 func checkAlertStatusAt(v map[string]string, now time.Time) (bool, error) {
+	return checkAlertStatusAtContext(context.Background(), v, now)
+}
+
+func checkAlertStatusAtContext(ctx context.Context, v map[string]string, now time.Time) (bool, error) {
 	Thdchecksec, err := strconv.Atoi(v["Thdchecksec"])
 	if err != nil || Thdchecksec <= 0 {
 		return false, fmt.Errorf("invalid Thdchecksec %q", v["Thdchecksec"])
@@ -101,7 +132,8 @@ func checkAlertStatusAt(v map[string]string, now time.Time) (bool, error) {
 		ORDER BY logtime DESC LIMIT ?
 	) WHERE cast(avgdelay as double) > ? OR cast(losspk as double) >= ?`
 	var cnt int
-	err = g.Db.QueryRow(
+	err = g.Db.QueryRowContext(
+		ctx,
 		querysql,
 		v["Addr"],
 		windowStart.Format("2006-01-02 15:04"),

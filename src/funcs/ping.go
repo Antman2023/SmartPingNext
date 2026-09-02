@@ -53,6 +53,13 @@ func resolvePingRoundConfig(config g.Config) (int, time.Duration, time.Duration,
 	return pingCount, pingInterval, pingTimeout, pingStagger
 }
 
+func pingTargetOffset(index int, stagger, interval time.Duration) time.Duration {
+	if index <= 0 || stagger <= 0 || interval <= 0 {
+		return 0
+	}
+	return (time.Duration(index) * stagger) % interval
+}
+
 func Ping() {
 	if !atomic.CompareAndSwapInt32(&pingRunning, 0, 1) {
 		logrus.Warn("[func:Ping] Previous round still running, skip")
@@ -77,7 +84,7 @@ func runPingRound(roundTime time.Time) {
 			logrus.Warnf("[func:Ping] Skip invalid ping target: %q", target)
 			continue
 		}
-		targetOffset := time.Duration(validIndex) * pingStagger
+		targetOffset := pingTargetOffset(validIndex, pingStagger, pingInterval)
 		validIndex++
 		wg.Add(1)
 		go PingTask(t, pingCount, pingInterval, pingTimeout, targetOffset, roundTime, logtime, &wg)

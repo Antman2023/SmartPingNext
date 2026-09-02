@@ -22,6 +22,8 @@ const OPTIONAL_BASE_LIMITS = {
   MappingProbeCount: { min: 1, max: 20 }
 } as const
 
+const MAPPING_CARRIERS = ['ctcc', 'cucc', 'cmcc'] as const
+
 export interface ConfigValidationIssue {
   key: string
   params?: Record<string, number | string>
@@ -206,17 +208,35 @@ export const validateConfigForEdit = (config: Config): ConfigValidationIssue | n
       seenTargets.add(target)
     }
 
+    const seenTopologyTargets = new Set<string>()
     for (const topologyRule of member.Topology) {
       const topologyIssue = validateTopologyRule(address, topologyRule, config)
       if (topologyIssue) {
         return topologyIssue
       }
+      if (seenTopologyTargets.has(topologyRule.Addr)) {
+        return issue('config.validationDuplicateTopologyTarget', {
+          source: address,
+          target: topologyRule.Addr
+        })
+      }
+      seenTopologyTargets.add(topologyRule.Addr)
     }
   }
 
   let mappingTargetCount = 0
-  for (const providers of Object.values(config.Chinamap)) {
-    for (const addresses of [providers.ctcc, providers.cucc, providers.cmcc]) {
+  for (const [province, providers] of Object.entries(config.Chinamap)) {
+    const unsupportedCarrier = Object.keys(providers).find(
+      (carrier) => !MAPPING_CARRIERS.includes(carrier as (typeof MAPPING_CARRIERS)[number])
+    )
+    if (unsupportedCarrier) {
+      return issue('config.validationMappingProvider', {
+        province,
+        provider: unsupportedCarrier
+      })
+    }
+    for (const carrier of MAPPING_CARRIERS) {
+      const addresses = providers[carrier] ?? []
       mappingTargetCount += addresses.length
       if (mappingTargetCount > CONFIG_LIMITS.mappingTargets) {
         return issue('config.validationMappingLimit', { max: CONFIG_LIMITS.mappingTargets })

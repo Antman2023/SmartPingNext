@@ -693,6 +693,7 @@ const validationTargetIds: Record<string, string> = {
   'config.validationAuthAddress': 'config-auth-list',
   'config.validationAuthLimit': 'config-auth-list',
   'config.validationMappingAddress': 'config-mapping-settings',
+  'config.validationMappingProvider': 'config-mapping-settings',
   'config.validationMappingLimit': 'config-mapping-settings'
 }
 
@@ -708,6 +709,7 @@ const networkValidationKeys = new Set([
   'config.validationTargetLimit',
   'config.validationPingTarget',
   'config.validationDuplicateTarget',
+  'config.validationDuplicateTopologyTarget',
   'config.validationTopologyTarget',
   'config.validationTopologyRule'
 ])
@@ -948,17 +950,22 @@ const handleSave = async () => {
   }
 }
 
-const verifyPassword = async (pwd: string): Promise<boolean> => {
+type PasswordVerificationResult = 'valid' | 'invalid' | 'rate-limited'
+
+const verifyPassword = async (pwd: string): Promise<PasswordVerificationResult> => {
   const response = await fetch('/api/verify-password.json', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ password: pwd })
   })
+  if (response.status === 429) {
+    return 'rate-limited'
+  }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`)
   }
   const result: unknown = await response.json()
-  return isRecord(result) && result.status === 'true'
+  return isRecord(result) && result.status === 'true' ? 'valid' : 'invalid'
 }
 
 const handleExport = async () => {
@@ -972,11 +979,15 @@ const handleExport = async () => {
 
   exporting.value = true
   try {
-    const valid = await verifyPassword(importExportPassword.value)
+    const verification = await verifyPassword(importExportPassword.value)
     if (isUnmounted) {
       return
     }
-    if (!valid) {
+    if (verification === 'rate-limited') {
+      ElMessage.error(t('common.tooManyRequests'))
+      return
+    }
+    if (verification !== 'valid') {
       ElMessage.error(t('common.passwordError'))
       return
     }
@@ -1023,9 +1034,9 @@ const handleImportFile = async (file: UploadFile) => {
 
   importing.value = true
   try {
-    let valid: boolean
+    let verification: PasswordVerificationResult
     try {
-      valid = await verifyPassword(importExportPassword.value)
+      verification = await verifyPassword(importExportPassword.value)
     } catch (error) {
       if (!isUnmounted) {
         ElMessage.error(t('config.passwordVerifyFailed'))
@@ -1037,7 +1048,11 @@ const handleImportFile = async (file: UploadFile) => {
     if (isUnmounted) {
       return
     }
-    if (!valid) {
+    if (verification === 'rate-limited') {
+      ElMessage.error(t('common.tooManyRequests'))
+      return
+    }
+    if (verification !== 'valid') {
       ElMessage.error(t('common.passwordError'))
       return
     }

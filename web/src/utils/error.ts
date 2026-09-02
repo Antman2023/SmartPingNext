@@ -50,13 +50,18 @@ export function handleNetworkError(error: unknown): ApiError {
 
       switch (status) {
         case 400:
-          return new ApiError(data?.info || data?.message || i18n.global.t('common.badRequest'), status)
+          return new ApiError(
+            data?.info || data?.message || i18n.global.t('common.badRequest'),
+            status
+          )
         case 401:
           return new ApiError(i18n.global.t('common.unauthorized'), status)
         case 403:
           return new ApiError(i18n.global.t('common.forbidden'), status)
         case 404:
           return new ApiError(i18n.global.t('common.notFound'), status)
+        case 429:
+          return new ApiError(i18n.global.t('common.tooManyRequests'), status)
         case 500:
           return new ApiError(
             data?.info || data?.message || i18n.global.t('common.serverError'),
@@ -83,7 +88,9 @@ export function handleNetworkError(error: unknown): ApiError {
   }
 
   return new ApiError(
-    error instanceof Error ? error.message || i18n.global.t('common.requestFailed') : i18n.global.t('common.requestFailed'),
+    error instanceof Error
+      ? error.message || i18n.global.t('common.requestFailed')
+      : i18n.global.t('common.requestFailed'),
     0
   )
 }

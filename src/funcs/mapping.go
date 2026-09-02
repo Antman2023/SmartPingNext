@@ -6,6 +6,7 @@ import (
 	"net"
 	"smartping/src/g"
 	"smartping/src/nettools"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -42,17 +43,16 @@ func Mapping() {
 	MapStatus = map[string][]g.MapVal{}
 	MapLock.Unlock()
 	logrus.Debug("[func:Mapping]", config.Chinamap)
-	for tel, provDetail := range config.Chinamap {
-		for prov := range provDetail {
-			ips := provDetail[prov]
+	for province, carrierTargets := range config.Chinamap {
+		for carrier, ips := range carrierTargets {
 			logrus.Debug("[func:Mapping]", ips)
 			if len(ips) > 0 {
 				wg.Add(1)
 				sem <- struct{}{}
-				go func(tel, prov string, ips []string) {
+				go func(carrier, province string, ips []string) {
 					defer func() { <-sem }()
-					MappingTask(tel, prov, ips, probeCount, &wg)
-				}(tel, prov, ips)
+					MappingTask(carrier, province, ips, probeCount, &wg)
+				}(carrier, province, ips)
 			}
 		}
 	}
@@ -61,9 +61,9 @@ func Mapping() {
 }
 
 // ping main function
-func MappingTask(tel string, prov string, ips []string, probeCount int, wg *sync.WaitGroup) {
+func MappingTask(carrier string, province string, ips []string, probeCount int, wg *sync.WaitGroup) {
 	defer wg.Done()
-	logrus.Info("Start MappingTask " + tel + " " + prov + "..")
+	logrus.Info("Start MappingTask " + carrier + " " + province + "..")
 	statMap := []g.PingSt{}
 	for _, ip := range ips {
 		logrus.Debug("[func:StartChinaMapPing]", ip)
@@ -108,13 +108,18 @@ func MappingTask(tel string, prov string, ips []string, probeCount int, wg *sync
 			statMap = append(statMap, stat)
 		}
 	}
-	gMapVal := g.MapVal{}
-	gMapVal.Name = tel
-	gMapVal.Value = aggregateMappingDelay(statMap)
+	storeMappingResult(carrier, province, aggregateMappingDelay(statMap))
+	logrus.Info("Finish MappingTask " + carrier + " " + province + "..")
+}
+
+func storeMappingResult(carrier, province string, value float64) {
+	gMapVal := g.MapVal{Name: province, Value: value}
 	MapLock.Lock()
-	MapStatus[prov] = append(MapStatus[prov], gMapVal)
+	if MapStatus == nil {
+		MapStatus = make(map[string][]g.MapVal)
+	}
+	MapStatus[carrier] = append(MapStatus[carrier], gMapVal)
 	MapLock.Unlock()
-	logrus.Info("Finish MappingTask " + tel + " " + prov + "..")
 }
 
 func aggregateMappingDelay(stats []g.PingSt) float64 {
@@ -144,10 +149,27 @@ func aggregateMappingDelay(stats []g.PingSt) float64 {
 	return value
 }
 
+func mappingStatusSnapshot() map[string][]g.MapVal {
+	MapLock.Lock()
+	snapshot := make(map[string][]g.MapVal, len(MapStatus))
+	for carrier, values := range MapStatus {
+		snapshot[carrier] = append([]g.MapVal(nil), values...)
+	}
+	MapLock.Unlock()
+
+	for carrier := range snapshot {
+		sort.Slice(snapshot[carrier], func(i, j int) bool {
+			return snapshot[carrier][i].Name < snapshot[carrier][j].Name
+		})
+	}
+	return snapshot
+}
+
 func MapPingStorage() {
 	logrus.Info("Start MapPingStorage...")
-	logrus.Debug(MapStatus)
-	jdata, err := json.Marshal(MapStatus)
+	snapshot := mappingStatusSnapshot()
+	logrus.Debug(snapshot)
+	jdata, err := json.Marshal(snapshot)
 	if err != nil {
 		logrus.Error("[func:MapPingStorage] Json Error ", err)
 	}

@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -22,7 +23,12 @@ import (
 	"time"
 )
 
-const maxCloudConfigBytes = 8 << 20
+const (
+	maxCloudConfigBytes   = 8 << 20
+	configFilePermissions = 0600
+	pingTargetTimeIndex   = "pinglog_target_logtime"
+	databaseBusyTimeoutMs = 5000
+)
 
 var (
 	Root            string
@@ -50,6 +56,7 @@ func IsExist(fp string) bool {
 
 func ReadConfig(filename string) Config {
 	config := Config{}
+	restrictConfigFilePermissions(filename)
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatal("Config Not Found!")
@@ -60,6 +67,12 @@ func ReadConfig(filename string) Config {
 		log.Fatal(err)
 	}
 	return config
+}
+
+func restrictConfigFilePermissions(filename string) {
+	if err := os.Chmod(filename, configFilePermissions); err != nil {
+		log.Printf("[Warn]restrict config file permissions: %v", err)
+	}
 }
 
 func GetRoot() string {
@@ -86,11 +99,12 @@ func releaseDefaultFiles() {
 		if err != nil {
 			log.Fatalln("[Fault]read embedded config-base.json fail:", err)
 		}
-		if err := os.WriteFile(configBase, data, 0644); err != nil {
+		if err := os.WriteFile(configBase, data, configFilePermissions); err != nil {
 			log.Fatalln("[Fault]write config-base.json fail:", err)
 		}
 		log.Println("[Info]released config-base.json")
 	}
+	restrictConfigFilePermissions(configBase)
 
 	// Release database-base.db
 	dbBase := Root + "/db/database-base.db"
@@ -146,17 +160,39 @@ func ParseConfig(ver string) {
 	}
 	logrus.Info("Config loaded")
 	var err error
-	Db, err = sql.Open("sqlite", Root+"/db/database.db")
+	Db, err = sql.Open("sqlite", sqliteDataSource(filepath.Join(Root, "db", "database.db")))
 	if err != nil {
 		log.Fatalln("[Fault]db open fail .", err)
 	}
 	if err := Db.Ping(); err != nil {
 		log.Fatalln("[Fault]db connection fail .", err)
 	}
+	if err := ensureDatabaseIndexes(Db); err != nil {
+		log.Fatalln("[Fault]db index migration fail .", err)
+	}
 	LocalTimezone = time.Local
 	HttpClient = &http.Client{Timeout: 10 * time.Second}
-	AlertStatus = map[string]bool{}
 	ToolLimit = map[string]int{}
+}
+
+func sqliteDataSource(filename string) string {
+	path := filepath.ToSlash(filename)
+	if filepath.VolumeName(filename) != "" && !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	databaseURL := url.URL{Scheme: "file", Path: path}
+	query := databaseURL.Query()
+	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", databaseBusyTimeoutMs))
+	databaseURL.RawQuery = query.Encode()
+	return databaseURL.String()
+}
+
+func ensureDatabaseIndexes(db *sql.DB) error {
+	if db == nil {
+		return errors.New("database is nil")
+	}
+	_, err := db.Exec("CREATE INDEX IF NOT EXISTS " + pingTargetTimeIndex + " ON pinglog(target, logtime)")
+	return err
 }
 
 func SaveCloudConfig(url string) (Config, error) {
@@ -220,12 +256,62 @@ func SetConfig(config Config) {
 
 	CfgLock.Lock()
 	AuthIpLock.Lock()
+	AlertStatusLock.Lock()
+	nextAlertStatus := reconcileAlertStatuses(Cfg, config, AlertStatus)
 	Cfg = config
 	SelfCfg = cloneNetworkMember(config.Network[config.Addr])
 	AuthUserIpMap = userIPs
 	AuthAgentIpMap = agentIPs
+	AlertStatus = nextAlertStatus
+	AlertStatusLock.Unlock()
 	AuthIpLock.Unlock()
 	CfgLock.Unlock()
+}
+
+type alertRuleIdentity struct {
+	checkSeconds string
+	loss         string
+	averageDelay string
+	occurrences  string
+}
+
+func reconcileAlertStatuses(previous, next Config, current map[string]bool) map[string]bool {
+	reconciled := make(map[string]bool)
+	if previous.Addr == "" || previous.Addr != next.Addr {
+		return reconciled
+	}
+
+	previousRules := alertRuleIdentities(previous)
+	for target, identity := range alertRuleIdentities(next) {
+		if previousIdentity, ok := previousRules[target]; !ok || previousIdentity != identity {
+			continue
+		}
+		if status, ok := current[target]; ok {
+			reconciled[target] = status
+		}
+	}
+	return reconciled
+}
+
+func alertRuleIdentities(config Config) map[string]alertRuleIdentity {
+	identities := make(map[string]alertRuleIdentity)
+	member, ok := config.Network[config.Addr]
+	if !ok {
+		return identities
+	}
+	for _, rule := range member.Topology {
+		target := rule["Addr"]
+		if target == "" || target == config.Addr {
+			continue
+		}
+		identities[target] = alertRuleIdentity{
+			checkSeconds: rule["Thdchecksec"],
+			loss:         rule["Thdloss"],
+			averageDelay: rule["Thdavgdelay"],
+			occurrences:  rule["Thdoccnum"],
+		}
+	}
+	return identities
 }
 
 func cloneConfig(config Config) Config {
@@ -429,7 +515,7 @@ func saveConfigFile(config Config) error {
 		logrus.Error("[func:SaveConfig] Json Parse ", err)
 		return err
 	}
-	err = writeFileAtomic(filepath.Join(Root, "conf", "config.json"), data, 0644)
+	err = writeFileAtomic(filepath.Join(Root, "conf", "config.json"), data, configFilePermissions)
 	if err != nil {
 		logrus.Error("[func:SaveConfig] Config File Write", err)
 		return err

@@ -71,8 +71,27 @@ func TestValidateConfigRejectsInvalidReferencesAndLimits(t *testing.T) {
 			member.Ping = []string{"192.0.2.1"}
 			config.Network["127.0.0.1"] = member
 		},
+		"duplicate topology target": func(config *g.Config) {
+			config.Network["192.0.2.1"] = g.NetworkMember{Name: "remote", Addr: "192.0.2.1"}
+			member := config.Network["127.0.0.1"]
+			rule := map[string]string{
+				"Name":        "remote",
+				"Addr":        "192.0.2.1",
+				"Thdchecksec": "600",
+				"Thdloss":     "30",
+				"Thdavgdelay": "200",
+				"Thdoccnum":   "2",
+			}
+			member.Topology = []map[string]string{rule, rule}
+			config.Network["127.0.0.1"] = member
+		},
 		"invalid auth IP": func(config *g.Config) {
 			config.Authiplist = "127.0.0.1,invalid"
+		},
+		"unsupported mapping carrier": func(config *g.Config) {
+			config.Chinamap = map[string]map[string][]string{
+				"北京": {"cernet": {"192.0.2.1"}},
+			}
 		},
 		"excessive ping count": func(config *g.Config) {
 			config.Base["PingCount"] = 1000000

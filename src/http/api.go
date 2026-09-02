@@ -17,10 +17,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func configApiRoutes() {
+func configApiRoutes(mux *http.ServeMux) {
 
 	//配置文件API
-	http.HandleFunc("/api/config.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/config.json", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
@@ -35,7 +35,7 @@ func configApiRoutes() {
 	})
 
 	//Ping数据API
-	http.HandleFunc("/api/ping.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/ping.json", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
@@ -81,7 +81,7 @@ func configApiRoutes() {
 			cursor += 60
 		}
 		querySql := "SELECT logtime,maxdelay,CASE WHEN cast(mindelay as double) < 0 THEN '0' ELSE mindelay END,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"
-		rows, err := g.Db.Query(querySql, tableip, timeStartStr, timeEndStr)
+		rows, err := g.Db.QueryContext(r.Context(), querySql, tableip, timeStartStr, timeEndStr)
 		logrus.Debug("[func:/api/ping.json] Query ", querySql)
 		if err != nil {
 			logrus.Error("[func:/api/ping.json] Query ", err)
@@ -141,7 +141,7 @@ func configApiRoutes() {
 	})
 
 	//Ping拓扑API
-	http.HandleFunc("/api/topology.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/topology.json", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
@@ -154,7 +154,7 @@ func configApiRoutes() {
 		config := g.ConfigSnapshot()
 		selfConfig := config.Network[config.Addr]
 		for _, v := range selfConfig.Topology {
-			healthy, err := funcs.CheckAlertStatus(v)
+			healthy, err := funcs.CheckAlertStatusContext(r.Context(), v)
 			if err != nil {
 				logrus.Error("[/api/topology.json] Check status ", err)
 				http.Error(w, "Check topology status failed", http.StatusInternalServerError)
@@ -171,7 +171,7 @@ func configApiRoutes() {
 	})
 
 	//报警API
-	http.HandleFunc("/api/alert.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/alert.json", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
@@ -196,7 +196,7 @@ func configApiRoutes() {
 		listpreout := []string{}
 		datapreout := []g.AlertLog{}
 		querySql := "select date(logtime) as ldate from alertlog group by date(logtime) order by logtime desc"
-		rows, err := g.Db.Query(querySql)
+		rows, err := g.Db.QueryContext(r.Context(), querySql)
 		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
 			logrus.Error("[func:/api/alert.json] Query ", err)
@@ -223,7 +223,7 @@ func configApiRoutes() {
 			rows.Close()
 		}
 		querySql = "select logtime,targetname,targetip,tracert from alertlog where logtime between ? and ?"
-		rows, err = g.Db.Query(querySql, dtb+" 00:00:00", dtb+" 23:59:59")
+		rows, err = g.Db.QueryContext(r.Context(), querySql, dtb+" 00:00:00", dtb+" 23:59:59")
 		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
 			logrus.Error("[func:/api/alert.json] Query ", err)
@@ -255,7 +255,7 @@ func configApiRoutes() {
 	})
 
 	//全国延迟API
-	http.HandleFunc("/api/mapping.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/mapping.json", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
@@ -264,10 +264,11 @@ func configApiRoutes() {
 			http.Error(w, o, http.StatusUnauthorized)
 			return
 		}
-		dataKey := time.Now().Add(-time.Minute).Format("2006-01-02 15:04")
 		form := r.URL.Query()
-		if len(form["d"]) > 0 {
-			dataKey = form["d"][0]
+		dataKey, err := resolveMappingDataKey(form, time.Now(), g.LocalTimezone)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotAcceptable)
+			return
 		}
 		type Mapjson struct {
 			Mapjson string
@@ -275,13 +276,10 @@ func configApiRoutes() {
 		chinaMp := g.ChinaMp{}
 		chinaMp.Text = g.ConfigSnapshot().Name
 		chinaMp.Subtext = dataKey
-		chinaMp.Avgdelay = map[string][]g.MapVal{}
-		chinaMp.Avgdelay["ctcc"] = []g.MapVal{}
-		chinaMp.Avgdelay["cucc"] = []g.MapVal{}
-		chinaMp.Avgdelay["cmcc"] = []g.MapVal{}
+		chinaMp.Avgdelay = emptyMappingData()
 		querySql := "select mapjson from mappinglog where logtime = ?"
 		mapRow := new(Mapjson)
-		err := g.Db.QueryRow(querySql, dataKey).Scan(&mapRow.Mapjson)
+		err = g.Db.QueryRowContext(r.Context(), querySql, dataKey).Scan(&mapRow.Mapjson)
 		logrus.Debug("[func:/api/mapping.json] Query ", querySql)
 		if err != nil {
 			if err != sql.ErrNoRows {
@@ -289,17 +287,20 @@ func configApiRoutes() {
 				http.Error(w, "Query mapping data failed", http.StatusInternalServerError)
 				return
 			}
-		} else if err = json.Unmarshal([]byte(mapRow.Mapjson), &chinaMp.Avgdelay); err != nil {
-			logrus.Error("[/api/mapping.json] Json", err)
-			http.Error(w, "Invalid mapping data", http.StatusInternalServerError)
-			return
+		} else {
+			chinaMp.Avgdelay, err = decodeMappingData(mapRow.Mapjson)
+			if err != nil {
+				logrus.Error("[/api/mapping.json] Json", err)
+				http.Error(w, "Invalid mapping data", http.StatusInternalServerError)
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		RenderJson(w, chinaMp)
 	})
 
 	//检测工具API
-	http.HandleFunc("/api/tools.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/tools.json", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
 			return
 		}
@@ -345,10 +346,14 @@ func configApiRoutes() {
 		const toolsPingCount = 5
 		channel := make(chan pingResult, toolsPingCount)
 		var wg sync.WaitGroup
+	launchPings:
 		for i := 0; i < toolsPingCount; i++ {
+			if err := r.Context().Err(); err != nil {
+				break
+			}
 			wg.Add(1)
 			go func(seq int) {
-				delay, err := nettools.RunPing(ipaddr, 3*time.Second, 64, seq)
+				delay, err := nettools.RunPingContext(r.Context(), ipaddr, 3*time.Second, 64, seq)
 				if err != nil {
 					channel <- pingResult{seq: seq, delay: -1.00}
 				} else {
@@ -356,9 +361,20 @@ func configApiRoutes() {
 				}
 				wg.Done()
 			}(i)
-			time.Sleep(100 * time.Millisecond)
+			if i < toolsPingCount-1 {
+				timer := time.NewTimer(100 * time.Millisecond)
+				select {
+				case <-timer.C:
+				case <-r.Context().Done():
+					timer.Stop()
+					break launchPings
+				}
+			}
 		}
 		wg.Wait()
+		if r.Context().Err() != nil {
+			return
+		}
 		close(channel)
 		delays := make([]float64, toolsPingCount)
 		for res := range channel {
@@ -397,7 +413,7 @@ func configApiRoutes() {
 	})
 
 	//验证密码
-	http.HandleFunc("/api/verify-password.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/verify-password.json", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodPost) {
 			return
 		}
@@ -410,10 +426,7 @@ func configApiRoutes() {
 		if !parseFormLimited(w, r, maxPasswordFormBytes) {
 			return
 		}
-		preout["status"] = "false"
-		if len(r.Form["password"]) == 0 || r.Form["password"][0] != g.ConfigSnapshot().Password {
-			preout["info"] = "密码错误!"
-			RenderJson(w, preout)
+		if !requireConfigPassword(w, r, g.ConfigSnapshot().Password) {
 			return
 		}
 		preout["status"] = "true"
@@ -421,7 +434,7 @@ func configApiRoutes() {
 	})
 
 	//保存配置文件
-	http.HandleFunc("/api/saveconfig.json", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/saveconfig.json", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodPost) {
 			return
 		}
@@ -436,9 +449,7 @@ func configApiRoutes() {
 		}
 		preout["status"] = "false"
 		currentConfig := g.ConfigSnapshot()
-		if len(r.Form["password"]) == 0 || r.Form["password"][0] != currentConfig.Password {
-			preout["info"] = "密码错误!"
-			RenderJson(w, preout)
+		if !requireConfigPassword(w, r, currentConfig.Password) {
 			return
 		}
 		if len(r.Form["config"]) == 0 {
@@ -471,8 +482,56 @@ func configApiRoutes() {
 	})
 
 	//代理访问
-	http.HandleFunc("/api/proxy.json", handleProxy)
+	mux.HandleFunc("/api/proxy.json", handleProxy)
 
+}
+
+func requireConfigPassword(w http.ResponseWriter, r *http.Request, expected string) bool {
+	submitted := ""
+	values := r.Form["password"]
+	if len(values) > 0 {
+		submitted = values[0]
+	}
+	matched, retryAfter := configPasswordAttempts.verify(r.RemoteAddr, submitted, expected, len(values) > 0, time.Now())
+	if matched {
+		return true
+	}
+	if retryAfter > 0 {
+		retrySeconds := int((retryAfter + time.Second - 1) / time.Second)
+		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
+		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+		w.WriteHeader(http.StatusTooManyRequests)
+		RenderJson(w, map[string]any{
+			"status":     "false",
+			"error":      "password_rate_limited",
+			"retryAfter": retrySeconds,
+		})
+		return false
+	}
+	RenderJson(w, map[string]string{"status": "false", "info": "密码错误!"})
+	return false
+}
+
+func emptyMappingData() map[string][]g.MapVal {
+	return map[string][]g.MapVal{
+		"ctcc": {},
+		"cucc": {},
+		"cmcc": {},
+	}
+}
+
+func decodeMappingData(raw string) (map[string][]g.MapVal, error) {
+	stored := make(map[string][]g.MapVal)
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return nil, err
+	}
+	normalized := emptyMappingData()
+	for carrier := range normalized {
+		if values := stored[carrier]; values != nil {
+			normalized[carrier] = values
+		}
+	}
+	return normalized, nil
 }
 
 func handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +573,12 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 			return http.ErrUseLastResponse
 		},
 	}
-	resp, err := client.Get(targetURL.String())
+	outboundRequest, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL.String(), nil)
+	if err != nil {
+		http.Error(w, "Create Remote Request Error:"+err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	resp, err := client.Do(outboundRequest)
 	if err != nil {
 		o := "Request Remote Data Error:" + err.Error()
 		http.Error(w, o, http.StatusServiceUnavailable)

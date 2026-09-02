@@ -21,25 +21,42 @@ type Mtr struct {
 	StDev float64
 }
 
+const (
+	mtrProbeCount    = 10
+	mtrProbeInterval = time.Second
+)
+
 func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mtr, error) {
 	result := []Mtr{}
+	if maxttl <= 0 {
+		return result, nil
+	}
+	if maxttl > 255 {
+		return result, errors.New("Invalid maximum TTL")
+	}
+	if maxrtt <= 0 {
+		return result, errors.New("Invalid probe timeout")
+	}
+	if maxtimeout <= 0 {
+		return result, errors.New("Invalid maximum consecutive timeouts")
+	}
+	dest, err := net.ResolveIPAddr("ip4", Addr)
+	if err != nil {
+		return result, errors.New("Unable to resolve destination host")
+	}
 	Lock := sync.Mutex{}
 	var wg sync.WaitGroup
 	mtr := map[int][]ICMP{}
-	var err error
 	timeouts := 0
 	for ttl := 1; ttl <= maxttl; ttl++ {
 		id := randomUint16()
-		seq := randomUint16()
+		seq := nextICMPSequence()
 		res := pkg{
 			maxrtt: maxrtt,
 			id:     id,
 			seq:    seq,
 			msg:    icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq}},
-		}
-		res.dest, err = net.ResolveIPAddr("ip", Addr)
-		if err != nil {
-			return result, errors.New("Unable to resolve destination host")
+			dest:   dest,
 		}
 		res.netmsg, err = res.msg.Marshal(nil)
 		if nil != err {
@@ -60,21 +77,14 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 		wg.Add(1)
 		go func(ittl int) {
 			defer wg.Done()
-			for j := 1; j < 10; j++ {
+			for j := 1; j < mtrProbeCount; j++ {
 				id := randomUint16()
-				seq := randomUint16()
+				seq := nextICMPSequence()
 				res := pkg{
 					maxrtt: maxrtt,
 					id:     id,
 					seq:    seq,
 					msg:    icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq}},
-				}
-				dest, resolveErr := net.ResolveIPAddr("ip", Addr)
-				if resolveErr != nil {
-					Lock.Lock()
-					mtr[ittl] = append(mtr[ittl], ICMP{Timeout: true, Error: resolveErr})
-					Lock.Unlock()
-					continue
 				}
 				res.dest = dest
 				netmsg, marshalErr := res.msg.Marshal(nil)
@@ -90,9 +100,11 @@ func RunMtr(Addr string, maxrtt time.Duration, maxttl int, maxtimeout int) ([]Mt
 				Lock.Lock()
 				mtr[ittl] = append(mtr[ittl], next)
 				Lock.Unlock()
-				sleepFor := time.Second - time.Since(nowTime)
-				if sleepFor > 0 {
-					time.Sleep(sleepFor)
+				if j < mtrProbeCount-1 {
+					sleepFor := mtrProbeInterval - time.Since(nowTime)
+					if sleepFor > 0 {
+						time.Sleep(sleepFor)
+					}
 				}
 			}
 		}(ttl)

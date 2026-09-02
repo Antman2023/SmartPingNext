@@ -2,11 +2,15 @@ package g
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,6 +33,7 @@ func withGlobalConfigState(t *testing.T, fn func()) {
 	oldSelf := cloneNetworkMember(SelfCfg)
 	oldUser := cloneBoolMapForConfig(AuthUserIpMap)
 	oldAgent := cloneBoolMapForConfig(AuthAgentIpMap)
+	oldAlert := cloneBoolMapForConfig(AlertStatus)
 	oldClient := HttpClient
 	oldTZ := LocalTimezone
 
@@ -38,6 +43,7 @@ func withGlobalConfigState(t *testing.T, fn func()) {
 		SelfCfg = oldSelf
 		AuthUserIpMap = oldUser
 		AuthAgentIpMap = oldAgent
+		AlertStatus = oldAlert
 		HttpClient = oldClient
 		LocalTimezone = oldTZ
 	}()
@@ -59,6 +65,116 @@ func TestIsExist(t *testing.T) {
 
 	if !IsExist(fp) {
 		t.Fatalf("IsExist should return true for existing file")
+	}
+}
+
+func TestReadConfigRestrictsPermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"Name":"local"}`), 0644); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+	if config := ReadConfig(path); config.Name != "local" {
+		t.Fatalf("ReadConfig name = %q, want local", config.Name)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != configFilePermissions {
+		t.Fatalf("config permissions = %04o, want %04o", got, configFilePermissions)
+	}
+}
+
+func TestEnsureDatabaseIndexesOptimizesTargetTimeQueries(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open in-memory sqlite: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay FLOAT)`); err != nil {
+		t.Fatalf("create pinglog: %v", err)
+	}
+
+	if err := ensureDatabaseIndexes(db); err != nil {
+		t.Fatalf("ensureDatabaseIndexes returned error: %v", err)
+	}
+	if err := ensureDatabaseIndexes(db); err != nil {
+		t.Fatalf("ensureDatabaseIndexes should be idempotent: %v", err)
+	}
+
+	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT avgdelay FROM pinglog WHERE target = ? AND logtime BETWEEN ? AND ?`, "192.0.2.1", "2026-01-01", "2026-02-01")
+	if err != nil {
+		t.Fatalf("explain target query: %v", err)
+	}
+	defer rows.Close()
+	plan := ""
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatalf("scan query plan: %v", err)
+		}
+		plan += detail
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read query plan: %v", err)
+	}
+	if !strings.Contains(plan, pingTargetTimeIndex) {
+		t.Fatalf("query plan %q does not use %s", plan, pingTargetTimeIndex)
+	}
+}
+
+func TestEnsureDatabaseIndexesRejectsUnavailableSchema(t *testing.T) {
+	if err := ensureDatabaseIndexes(nil); err == nil {
+		t.Fatal("ensureDatabaseIndexes should reject a nil database")
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open in-memory sqlite: %v", err)
+	}
+	defer db.Close()
+	if err := ensureDatabaseIndexes(db); err == nil {
+		t.Fatal("ensureDatabaseIndexes should reject a database without pinglog")
+	}
+}
+
+func TestSQLiteDataSourceAppliesBusyTimeoutToEveryConnection(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "database with spaces.db")
+	db, err := sql.Open("sqlite", sqliteDataSource(databasePath))
+	if err != nil {
+		t.Fatalf("open sqlite database: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(2)
+
+	ctx := context.Background()
+	first, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open first connection: %v", err)
+	}
+	defer first.Close()
+	second, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("open second connection: %v", err)
+	}
+	defer second.Close()
+
+	for index, connection := range []*sql.Conn{first, second} {
+		var timeout int
+		if err := connection.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&timeout); err != nil {
+			t.Fatalf("read busy timeout from connection %d: %v", index+1, err)
+		}
+		if timeout != databaseBusyTimeoutMs {
+			t.Fatalf("connection %d busy timeout = %d, want %d", index+1, timeout, databaseBusyTimeoutMs)
+		}
+	}
+
+	if _, err := os.Stat(databasePath); err != nil {
+		t.Fatalf("encoded database path was not created correctly: %v", err)
 	}
 }
 
@@ -135,6 +251,77 @@ func TestSetConfigNormalizesOptionalCollections(t *testing.T) {
 		}
 		if member.Topology == nil {
 			t.Fatal("SetConfig left NetworkMember.Topology nil")
+		}
+	})
+}
+
+func TestSetConfigReconcilesAlertStatusWithTopologyRules(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		baseRule := map[string]string{
+			"Name":        "target-a",
+			"Addr":        "192.0.2.1",
+			"Thdchecksec": "600",
+			"Thdloss":     "30",
+			"Thdavgdelay": "200",
+			"Thdoccnum":   "2",
+		}
+		initial := Config{
+			Addr: "127.0.0.1",
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {
+					Name:     "local",
+					Addr:     "127.0.0.1",
+					Topology: []map[string]string{cloneStringMap(baseRule)},
+				},
+				"192.0.2.1": {Name: "target-a", Addr: "192.0.2.1"},
+				"192.0.2.2": {Name: "target-b", Addr: "192.0.2.2"},
+			},
+		}
+		SetConfig(initial)
+		AlertStatus = map[string]bool{
+			"192.0.2.1":  false,
+			"192.0.2.99": true,
+		}
+
+		unchangedAndNew := cloneConfig(initial)
+		local := unchangedAndNew.Network[unchangedAndNew.Addr]
+		local.Topology = append(local.Topology, map[string]string{
+			"Name":        "target-b",
+			"Addr":        "192.0.2.2",
+			"Thdchecksec": "600",
+			"Thdloss":     "30",
+			"Thdavgdelay": "200",
+			"Thdoccnum":   "2",
+		})
+		unchangedAndNew.Network[unchangedAndNew.Addr] = local
+		SetConfig(unchangedAndNew)
+
+		if status, ok := AlertStatus["192.0.2.1"]; !ok || status {
+			t.Fatalf("unchanged alert state was not preserved: %#v", AlertStatus)
+		}
+		if _, ok := AlertStatus["192.0.2.2"]; ok {
+			t.Fatalf("new topology target inherited alert state: %#v", AlertStatus)
+		}
+		if _, ok := AlertStatus["192.0.2.99"]; ok {
+			t.Fatalf("removed topology target retained stale state: %#v", AlertStatus)
+		}
+
+		AlertStatus["192.0.2.1"] = false
+		changedRule := cloneConfig(unchangedAndNew)
+		local = changedRule.Network[changedRule.Addr]
+		local.Topology[0]["Thdloss"] = "10"
+		changedRule.Network[changedRule.Addr] = local
+		SetConfig(changedRule)
+		if _, ok := AlertStatus["192.0.2.1"]; ok {
+			t.Fatalf("changed alert rule retained stale state: %#v", AlertStatus)
+		}
+
+		AlertStatus["192.0.2.2"] = false
+		changedLocal := cloneConfig(changedRule)
+		changedLocal.Addr = "192.0.2.2"
+		SetConfig(changedLocal)
+		if len(AlertStatus) != 0 {
+			t.Fatalf("local node change retained alert state: %#v", AlertStatus)
 		}
 	})
 }
@@ -507,6 +694,15 @@ func TestSaveConfig(t *testing.T) {
 		}
 		if saved.Name != "node-2" {
 			t.Fatalf("replaced config Name = %q, want node-2", saved.Name)
+		}
+		if runtime.GOOS != "windows" {
+			info, err := os.Stat(filepath.Join(root, "conf", "config.json"))
+			if err != nil {
+				t.Fatalf("stat saved config failed: %v", err)
+			}
+			if got := info.Mode().Perm(); got != configFilePermissions {
+				t.Fatalf("saved config permissions = %04o, want %04o", got, configFilePermissions)
+			}
 		}
 
 		tempFiles, err := filepath.Glob(filepath.Join(root, "conf", ".config.json.tmp-*"))

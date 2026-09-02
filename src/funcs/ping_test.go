@@ -40,3 +40,30 @@ func TestBoundedBaseInt(t *testing.T) {
 		t.Fatalf("boundedBaseInt out-of-range value = %d, want default 8", got)
 	}
 }
+
+func TestPingTargetOffsetStaysWithinInterval(t *testing.T) {
+	interval := 3 * time.Second
+	stagger := 100 * time.Millisecond
+	tests := []struct {
+		index int
+		want  time.Duration
+	}{
+		{index: 0, want: 0},
+		{index: 1, want: 100 * time.Millisecond},
+		{index: 29, want: 2900 * time.Millisecond},
+		{index: 30, want: 0},
+		{index: 1023, want: 300 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		if got := pingTargetOffset(tt.index, stagger, interval); got != tt.want {
+			t.Fatalf("pingTargetOffset(%d) = %v, want %v", tt.index, got, tt.want)
+		}
+	}
+
+	if got := pingTargetOffset(10, 0, interval); got != 0 {
+		t.Fatalf("zero stagger offset = %v, want 0", got)
+	}
+	if got := pingTargetOffset(10, stagger, 0); got != 0 {
+		t.Fatalf("zero interval offset = %v, want 0", got)
+	}
+}

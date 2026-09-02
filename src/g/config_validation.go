@@ -94,16 +94,26 @@ func ValidateConfig(config Config) error {
 			}
 			seenPingTargets[target] = struct{}{}
 		}
+		seenTopologyTargets := make(map[string]struct{}, len(member.Topology))
 		for _, topology := range member.Topology {
 			if err := validateTopologyRule(key, topology, config.Network); err != nil {
 				return err
 			}
+			target := topology["Addr"]
+			if _, exists := seenTopologyTargets[target]; exists {
+				return fmt.Errorf("Ping节点测试网络信息错误!(%s 重复拓扑目标 %s)", key, target)
+			}
+			seenTopologyTargets[target] = struct{}{}
 		}
 	}
 
 	mappingTargets := 0
-	for _, providers := range config.Chinamap {
-		for _, ips := range providers {
+	allowedMappingCarriers := map[string]struct{}{"ctcc": {}, "cucc": {}, "cmcc": {}}
+	for province, providers := range config.Chinamap {
+		for carrier, ips := range providers {
+			if _, ok := allowedMappingCarriers[carrier]; !ok {
+				return fmt.Errorf("非法 Mapping 运营商!(%s: %s)", province, carrier)
+			}
 			mappingTargets += len(ips)
 			if mappingTargets > maxConfigMappingTargets {
 				return fmt.Errorf("Mapping IP数量超过上限!(%d)", maxConfigMappingTargets)

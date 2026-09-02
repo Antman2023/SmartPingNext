@@ -1,6 +1,7 @@
 package nettools
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"net"
@@ -23,10 +24,10 @@ type icmpResponse struct {
 
 // icmpPool 全局唯一 ICMP 连接池
 type icmpPool struct {
-	once    sync.Once
-	conn    net.PacketConn
-	ipconn  *ipv4.PacketConn
-	initErr error
+	initMu       sync.Mutex
+	conn         net.PacketConn
+	ipconn       *ipv4.PacketConn
+	listenPacket func(network, address string) (net.PacketConn, error)
 
 	mu      sync.RWMutex
 	waiters map[uint32]chan icmpResponse
@@ -43,21 +44,32 @@ func waiterKey(id, seq int) uint32 {
 
 // init 惰性初始化全局 socket
 func (p *icmpPool) init() error {
-	p.once.Do(func() {
+	p.initMu.Lock()
+	defer p.initMu.Unlock()
+	if p.conn != nil {
+		return nil
+	}
+
+	listenPacket := p.listenPacket
+	if listenPacket == nil {
+		listenPacket = net.ListenPacket
+	}
+	conn, err := listenPacket("ip4:icmp", "0.0.0.0")
+	if err != nil {
+		return err
+	}
+	if p.waiters == nil {
 		p.waiters = make(map[uint32]chan icmpResponse)
-		p.conn, p.initErr = net.ListenPacket("ip4:icmp", "0.0.0.0")
-		if p.initErr != nil {
-			return
+	}
+	if connWithReadBuffer, ok := conn.(interface{ SetReadBuffer(bytes int) error }); ok {
+		if err := connWithReadBuffer.SetReadBuffer(defaultICMPReadBufferBytes); err != nil {
+			logrus.Warnf("[icmpPool:init] SetReadBuffer(%d) failed: %v", defaultICMPReadBufferBytes, err)
 		}
-		if connWithReadBuffer, ok := p.conn.(interface{ SetReadBuffer(bytes int) error }); ok {
-			if err := connWithReadBuffer.SetReadBuffer(defaultICMPReadBufferBytes); err != nil {
-				logrus.Warnf("[icmpPool:init] SetReadBuffer(%d) failed: %v", defaultICMPReadBufferBytes, err)
-			}
-		}
-		p.ipconn = ipv4.NewPacketConn(p.conn)
-		go p.readLoop()
-	})
-	return p.initErr
+	}
+	p.conn = conn
+	p.ipconn = ipv4.NewPacketConn(conn)
+	go p.readLoop()
+	return nil
 }
 
 // register 注册一个等待者，返回接收 channel
@@ -149,6 +161,13 @@ func (p *icmpPool) readLoop() {
 
 // sendICMP 发送 ICMP 报文并等待响应
 func (p *icmpPool) sendICMP(id, seq, ttl int, msg []byte, dest net.Addr, timeout time.Duration) ICMP {
+	return p.sendICMPContext(context.Background(), id, seq, ttl, msg, dest, timeout)
+}
+
+func (p *icmpPool) sendICMPContext(ctx context.Context, id, seq, ttl int, msg []byte, dest net.Addr, timeout time.Duration) ICMP {
+	if err := ctx.Err(); err != nil {
+		return ICMP{Error: err}
+	}
 	if err := p.init(); err != nil {
 		return ICMP{Error: err}
 	}
@@ -162,6 +181,10 @@ func (p *icmpPool) sendICMP(id, seq, ttl int, msg []byte, dest net.Addr, timeout
 
 	// SetTTL + WriteTo 必须原子执行
 	p.sendMu.Lock()
+	if err := ctx.Err(); err != nil {
+		p.sendMu.Unlock()
+		return ICMP{Error: err}
+	}
 	err := p.ipconn.SetTTL(ttl)
 	if err != nil {
 		p.sendMu.Unlock()
@@ -174,6 +197,12 @@ func (p *icmpPool) sendICMP(id, seq, ttl int, msg []byte, dest net.Addr, timeout
 		return ICMP{Error: err}
 	}
 
+	return waitForICMPResponse(ctx, ch, sendOn, timeout)
+}
+
+func waitForICMPResponse(ctx context.Context, ch <-chan icmpResponse, sendOn time.Time, timeout time.Duration) ICMP {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case resp := <-ch:
 		return ICMP{
@@ -182,7 +211,9 @@ func (p *icmpPool) sendICMP(id, seq, ttl int, msg []byte, dest net.Addr, timeout
 			Final: resp.final,
 			Down:  resp.down,
 		}
-	case <-time.After(timeout):
+	case <-timer.C:
 		return ICMP{Timeout: true}
+	case <-ctx.Done():
+		return ICMP{Error: ctx.Err()}
 	}
 }

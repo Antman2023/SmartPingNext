@@ -1,7 +1,10 @@
 package funcs
 
 import (
+	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"smartping/src/g"
 	"sync/atomic"
 	"testing"
@@ -15,6 +18,65 @@ func TestStartAlertSkipsOverlappingCheck(t *testing.T) {
 	StartAlert()
 	if got := atomic.LoadInt32(&alertRunning); got != 1 {
 		t.Fatalf("alertRunning = %d, want existing check to remain active", got)
+	}
+}
+
+func TestRunAlertTraceJobsBoundsConcurrencyAndProcessesEveryAlert(t *testing.T) {
+	const (
+		jobCount    = 9
+		concurrency = 3
+	)
+	alerts := make([]g.AlertLog, jobCount)
+	for i := range alerts {
+		alerts[i].Targetip = fmt.Sprintf("192.0.2.%d", i+1)
+	}
+
+	started := make(chan struct{}, jobCount)
+	release := make(chan struct{})
+	done := make(chan struct{})
+	var active atomic.Int32
+	var peak atomic.Int32
+	var processed atomic.Int32
+	go func() {
+		runAlertTraceJobs(alerts, concurrency, func(_ g.AlertLog) {
+			current := active.Add(1)
+			for {
+				observed := peak.Load()
+				if current <= observed || peak.CompareAndSwap(observed, current) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			processed.Add(1)
+			active.Add(-1)
+		})
+		close(done)
+	}()
+
+	for i := 0; i < concurrency; i++ {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("expected workers did not start")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatal("runner exceeded its concurrency limit")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("alert jobs did not finish")
+	}
+	if got := processed.Load(); got != jobCount {
+		t.Fatalf("processed jobs = %d, want %d", got, jobCount)
+	}
+	if got := peak.Load(); got != concurrency {
+		t.Fatalf("peak concurrency = %d, want %d", got, concurrency)
 	}
 }
 
@@ -227,6 +289,27 @@ func TestCheckAlertStatusIncludesRoundThatFinishesAcrossMinuteBoundary(t *testin
 		}
 		if healthy {
 			t.Fatalf("a failing round completed just after the minute boundary should trigger an alert")
+		}
+	})
+}
+
+func TestCheckAlertStatusHonorsCanceledContext(t *testing.T) {
+	schema := []string{
+		`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay TEXT, losspk TEXT);`,
+	}
+
+	withFuncTestDB(t, schema, func(_ *sql.DB) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := checkAlertStatusAtContext(ctx, map[string]string{
+			"Thdchecksec": "600",
+			"Addr":        "1.1.1.1",
+			"Thdavgdelay": "200",
+			"Thdloss":     "30",
+			"Thdoccnum":   "1",
+		}, time.Now())
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("checkAlertStatusAtContext error = %v, want context canceled", err)
 		}
 	})
 }

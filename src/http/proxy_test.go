@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func withProxyConfig(cfg g.Config, fn func()) {
@@ -289,6 +291,49 @@ func TestHandleProxyRejectsInvalidJSON(t *testing.T) {
 
 		if recorder.Code != http.StatusBadGateway {
 			t.Fatalf("handleProxy status = %d, want %d", recorder.Code, http.StatusBadGateway)
+		}
+	})
+}
+
+func TestHandleProxyCancelsRemoteRequest(t *testing.T) {
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	remote := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-r.Context().Done()
+		close(requestCanceled)
+	}))
+	defer remote.Close()
+
+	withProxyConfig(proxyTestConfig(t, remote.URL), func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		request := proxyRequest(remote.URL + "/api/config.json").WithContext(ctx)
+		recorder := httptest.NewRecorder()
+		done := make(chan struct{})
+		go func() {
+			handleProxy(recorder, request)
+			close(done)
+		}()
+
+		select {
+		case <-requestStarted:
+		case <-time.After(time.Second):
+			t.Fatal("remote request did not start")
+		}
+		cancel()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("proxy handler did not stop after request cancellation")
+		}
+		select {
+		case <-requestCanceled:
+		case <-time.After(time.Second):
+			t.Fatal("remote request context was not canceled")
+		}
+		if recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("handleProxy status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 		}
 	})
 }

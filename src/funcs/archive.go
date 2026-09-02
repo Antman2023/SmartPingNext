@@ -2,6 +2,7 @@ package funcs
 
 import (
 	"smartping/src/g"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -9,8 +10,16 @@ import (
 
 const archiveDeleteBatchSize = 1000
 
+var archiveRunning int32
+
 // clear timeout alert table
 func ClearArchive() {
+	if !atomic.CompareAndSwapInt32(&archiveRunning, 0, 1) {
+		logrus.Warn("[func:ClearArchive] Previous archive cleanup still running, skip")
+		return
+	}
+	defer atomic.StoreInt32(&archiveRunning, 0)
+
 	logrus.Info("[func:ClearArchive] ", "starting run ClearArchive ")
 	archiveDays := g.ConfigSnapshot().Base["Archive"]
 	if archiveDays <= 0 {

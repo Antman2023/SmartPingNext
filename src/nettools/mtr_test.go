@@ -22,12 +22,32 @@ func TestRunMtrInvalidHost(t *testing.T) {
 }
 
 func TestRunMtrZeroTTL(t *testing.T) {
-	res, err := RunMtr("127.0.0.1", time.Second, 0, 3)
+	res, err := RunMtr("invalid host !@", time.Second, 0, 3)
 	if err != nil {
 		t.Fatalf("RunMtr with maxttl=0 should not error, got: %v", err)
 	}
 	if len(res) != 0 {
 		t.Fatalf("RunMtr with maxttl=0 should return empty result")
+	}
+}
+
+func TestRunMtrRejectsInvalidLimitsBeforeSocketInitialization(t *testing.T) {
+	tests := []struct {
+		name        string
+		timeout     time.Duration
+		ttl         int
+		maxTimeouts int
+	}{
+		{name: "oversized TTL", timeout: time.Second, ttl: 256, maxTimeouts: 3},
+		{name: "zero probe timeout", ttl: 8, maxTimeouts: 3},
+		{name: "zero consecutive timeout limit", timeout: time.Second, ttl: 8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := RunMtr("127.0.0.1", tt.timeout, tt.ttl, tt.maxTimeouts); err == nil {
+				t.Fatal("RunMtr should reject invalid limits")
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ package nettools
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"sync/atomic"
@@ -12,6 +13,10 @@ import (
 )
 
 var seqCounter uint32
+
+func nextICMPSequence() int {
+	return int(atomic.AddUint32(&seqCounter, 1) & 0xFFFF)
+}
 
 type pkg struct {
 	msg    icmp.Message
@@ -39,14 +44,30 @@ func (t *pkg) Send(ttl int) ICMP {
 }
 
 func RunPing(IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (float64, error) {
+	return RunPingContext(context.Background(), IpAddr, maxrtt, maxttl, seq)
+}
+
+func RunPingContext(ctx context.Context, IpAddr *net.IPAddr, maxrtt time.Duration, maxttl int, seq int) (float64, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if IpAddr == nil || IpAddr.IP.To4() == nil {
+		return 0, errors.New("invalid IPv4 destination")
+	}
+	if maxrtt <= 0 {
+		return 0, errors.New("invalid ping timeout")
+	}
+	if maxttl < 1 || maxttl > 255 {
+		return 0, errors.New("invalid IPv4 TTL")
+	}
 	id := randomUint16()
-	uniqueSeq := int(atomic.AddUint32(&seqCounter, 1) & 0xFFFF)
+	uniqueSeq := nextICMPSequence()
 	msg := icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: uniqueSeq, Data: bytes.Repeat([]byte("Go Smart Ping!"), 4)}}
 	netmsg, err := msg.Marshal(nil)
 	if err != nil {
 		return 0, err
 	}
-	result := pool.sendICMP(id, uniqueSeq, maxttl, netmsg, IpAddr, maxrtt)
+	result := pool.sendICMPContext(ctx, id, uniqueSeq, maxttl, netmsg, IpAddr, maxrtt)
 	return evaluatePingResult(result)
 }
 

@@ -41,3 +41,60 @@ func TestAggregateMappingDelayUsesFailureSentinelWhenAllProbesFail(t *testing.T)
 		t.Fatalf("aggregateMappingDelay() = %.2f, want 2000.00", got)
 	}
 }
+
+func TestStoreMappingResultUsesCarrierKeyAndProvinceName(t *testing.T) {
+	MapLock.Lock()
+	oldStatus := MapStatus
+	MapStatus = make(map[string][]g.MapVal)
+	MapLock.Unlock()
+	defer func() {
+		MapLock.Lock()
+		MapStatus = oldStatus
+		MapLock.Unlock()
+	}()
+
+	storeMappingResult("ctcc", "北京", 12.5)
+	MapLock.Lock()
+	values := append([]g.MapVal(nil), MapStatus["ctcc"]...)
+	_, hasProvinceKey := MapStatus["北京"]
+	MapLock.Unlock()
+
+	if hasProvinceKey {
+		t.Fatal("mapping result used province as map key")
+	}
+	if len(values) != 1 || values[0].Name != "北京" || values[0].Value != 12.5 {
+		t.Fatalf("stored mapping result = %#v", values)
+	}
+}
+
+func TestMappingStatusSnapshotIsSortedAndIndependent(t *testing.T) {
+	MapLock.Lock()
+	oldStatus := MapStatus
+	MapStatus = map[string][]g.MapVal{
+		"ctcc": {
+			{Name: "浙江", Value: 20},
+			{Name: "北京", Value: 10},
+		},
+	}
+	MapLock.Unlock()
+	defer func() {
+		MapLock.Lock()
+		MapStatus = oldStatus
+		MapLock.Unlock()
+	}()
+
+	snapshot := mappingStatusSnapshot()
+	if got := snapshot["ctcc"]; len(got) != 2 || got[0].Name != "北京" || got[1].Name != "浙江" {
+		t.Fatalf("snapshot order = %#v, want province name order", got)
+	}
+
+	snapshot["ctcc"][0].Name = "changed"
+	snapshot["cucc"] = []g.MapVal{{Name: "新增", Value: 30}}
+	MapLock.Lock()
+	original := append([]g.MapVal(nil), MapStatus["ctcc"]...)
+	_, addedCarrier := MapStatus["cucc"]
+	MapLock.Unlock()
+	if original[0].Name != "浙江" || addedCarrier {
+		t.Fatalf("snapshot mutation changed global status: %#v", MapStatus)
+	}
+}

@@ -1,6 +1,8 @@
 package http
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/url"
 	"smartping/src/g"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -18,9 +21,29 @@ import (
 const maxPingRangeMinutes = 31 * 24 * 60
 
 const (
-	maxPasswordFormBytes = 64 << 10
-	maxConfigFormBytes   = 16 << 20
+	maxPasswordFormBytes  = 64 << 10
+	maxConfigFormBytes    = 16 << 20
+	apiCacheControl       = "no-store"
+	passwordFailureLimit  = 5
+	passwordFailureWindow = 5 * time.Minute
+	maxPasswordClients    = 4096
 )
+
+type passwordAttempt struct {
+	failures    int
+	windowStart time.Time
+}
+
+type passwordAttemptTracker struct {
+	mu       sync.Mutex
+	attempts map[string]passwordAttempt
+}
+
+var configPasswordAttempts = newPasswordAttemptTracker()
+
+func newPasswordAttemptTracker() *passwordAttemptTracker {
+	return &passwordAttemptTracker{attempts: make(map[string]passwordAttempt)}
+}
 
 func RenderJson(w http.ResponseWriter, v any) {
 	bs, err := json.Marshal(v)
@@ -39,6 +62,105 @@ func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 	w.Header().Set("Allow", method)
 	http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	return false
+}
+
+func passwordMatches(submitted, expected string) bool {
+	submittedDigest := sha256.Sum256([]byte(submitted))
+	expectedDigest := sha256.Sum256([]byte(expected))
+	return subtle.ConstantTimeCompare(submittedDigest[:], expectedDigest[:]) == 1
+}
+
+func (t *passwordAttemptTracker) verify(remoteAddr, submitted, expected string, submittedPresent bool, now time.Time) (bool, time.Duration) {
+	clientKey := parseRemoteIP(remoteAddr)
+	if clientKey == "" {
+		clientKey = strings.TrimSpace(remoteAddr)
+	}
+	if clientKey == "" {
+		clientKey = "unknown"
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	attempt, exists := t.attempts[clientKey]
+	if exists && (now.Before(attempt.windowStart) || !now.Before(attempt.windowStart.Add(passwordFailureWindow))) {
+		delete(t.attempts, clientKey)
+		attempt = passwordAttempt{}
+		exists = false
+	}
+	if exists && attempt.failures >= passwordFailureLimit {
+		return false, attempt.windowStart.Add(passwordFailureWindow).Sub(now)
+	}
+	if submittedPresent && passwordMatches(submitted, expected) {
+		delete(t.attempts, clientKey)
+		return true, 0
+	}
+
+	if !exists {
+		t.makeRoomForClient()
+		attempt.windowStart = now
+	}
+	attempt.failures++
+	t.attempts[clientKey] = attempt
+	if attempt.failures >= passwordFailureLimit {
+		return false, attempt.windowStart.Add(passwordFailureWindow).Sub(now)
+	}
+	return false, 0
+}
+
+func (t *passwordAttemptTracker) makeRoomForClient() {
+	if len(t.attempts) < maxPasswordClients {
+		return
+	}
+	oldestKey := ""
+	var oldestStart time.Time
+	for key, attempt := range t.attempts {
+		if oldestKey == "" || attempt.windowStart.Before(oldestStart) {
+			oldestKey = key
+			oldestStart = attempt.windowStart
+		}
+	}
+	delete(t.attempts, oldestKey)
+}
+
+func withResponseHeaders(next http.Handler) http.Handler {
+	if next == nil {
+		next = http.DefaultServeMux
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set("Cache-Control", apiCacheControl)
+			w.Header().Set("Pragma", "no-cache")
+		}
+		if isForbiddenCrossOriginRequest(r) {
+			http.Error(w, "Cross-Origin Request Forbidden", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isForbiddenCrossOriginRequest(r *http.Request) bool {
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") &&
+		strings.HasPrefix(r.URL.Path, "/api/") {
+		return true
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return false
+	}
+	originURL, err := url.Parse(origin)
+	if err != nil || originURL.Host == "" || originURL.User != nil {
+		return true
+	}
+	return !strings.EqualFold(originURL.Host, r.Host)
 }
 
 func parseFormLimited(w http.ResponseWriter, r *http.Request, maxBytes int64) bool {
@@ -185,6 +307,24 @@ func resolvePingTimeRange(values url.Values, now time.Time, location *time.Locat
 	return parsedStart, parsedEnd, nil
 }
 
+func resolveMappingDataKey(values url.Values, now time.Time, location *time.Location) (string, error) {
+	if location == nil {
+		location = time.Local
+	}
+	defaultKey := now.In(location).Add(-time.Minute).Format("2006-01-02 15:04")
+	raw, exists := values["d"]
+	if !exists {
+		return defaultKey, nil
+	}
+	if len(raw) != 1 || raw[0] == "" {
+		return "", errors.New("Invalid Mapping Time!")
+	}
+	if _, err := time.ParseInLocation("2006-01-02 15:04", raw[0], location); err != nil {
+		return "", errors.New("Invalid Mapping Time!")
+	}
+	return raw[0], nil
+}
+
 func completedPingTimelineSize(lastcheck []string, populated []bool, now time.Time, location *time.Location) int {
 	size := len(lastcheck)
 	if size == 0 || len(populated) < size {
@@ -232,21 +372,26 @@ func allowToolRequest(remoteAddr string, now int, limit int) bool {
 }
 
 func StartHttp() {
-	configApiRoutes()
-	configIndexRoutes()
 	config := g.ConfigSnapshot()
 	logrus.Info("[func:StartHttp] starting to listen on ", config.Port)
-	server := newHTTPServer(fmt.Sprintf(":%d", config.Port), nil)
+	server := newHTTPServer(fmt.Sprintf(":%d", config.Port), newAppHandler())
 	err := server.ListenAndServe()
 	if err != nil {
 		log.Fatalln("[StartHttp]", err)
 	}
 }
 
+func newAppHandler() http.Handler {
+	mux := http.NewServeMux()
+	configApiRoutes(mux)
+	configIndexRoutes(mux)
+	return mux
+}
+
 func newHTTPServer(address string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              address,
-		Handler:           handler,
+		Handler:           withResponseHeaders(handler),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      2 * time.Minute,

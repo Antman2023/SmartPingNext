@@ -2,8 +2,59 @@ package funcs
 
 import (
 	"database/sql"
+	"smartping/src/g"
+	"sync/atomic"
 	"testing"
 )
+
+func TestClearArchiveSkipsOverlappingRun(t *testing.T) {
+	atomic.StoreInt32(&archiveRunning, 1)
+	defer atomic.StoreInt32(&archiveRunning, 0)
+
+	ClearArchive()
+	if got := atomic.LoadInt32(&archiveRunning); got != 1 {
+		t.Fatalf("archiveRunning = %d, want existing cleanup to remain active", got)
+	}
+}
+
+func TestClearArchiveRunsAndReleasesGuard(t *testing.T) {
+	withFuncTestDB(t, []string{
+		`CREATE TABLE alertlog (logtime TEXT);`,
+		`CREATE TABLE mappinglog (logtime TEXT);`,
+		`CREATE TABLE pinglog (logtime TEXT);`,
+	}, func(db *sql.DB) {
+		g.Cfg.Base = map[string]int{"Archive": 30}
+		for _, table := range []string{"alertlog", "mappinglog", "pinglog"} {
+			_, _ = db.Exec("INSERT INTO "+table+"(logtime) VALUES (?), (?)", "2000-01-01", "2999-01-01")
+		}
+
+		ClearArchive()
+		if got := atomic.LoadInt32(&archiveRunning); got != 0 {
+			t.Fatalf("archiveRunning = %d after success, want 0", got)
+		}
+		for _, table := range []string{"alertlog", "mappinglog", "pinglog"} {
+			var count int
+			if err := db.QueryRow("SELECT count(1) FROM " + table).Scan(&count); err != nil {
+				t.Fatalf("query %s failed: %v", table, err)
+			}
+			if count != 1 {
+				t.Fatalf("%s row count = %d, want 1", table, count)
+			}
+		}
+	})
+}
+
+func TestClearArchiveReleasesGuardAfterFailure(t *testing.T) {
+	withFuncTestDB(t, []string{
+		`CREATE TABLE alertlog (logtime TEXT);`,
+	}, func(_ *sql.DB) {
+		g.Cfg.Base = map[string]int{"Archive": 30}
+		ClearArchive()
+		if got := atomic.LoadInt32(&archiveRunning); got != 0 {
+			t.Fatalf("archiveRunning = %d after failure, want 0", got)
+		}
+	})
+}
 
 func TestClearArchiveBeforeReturnsFailure(t *testing.T) {
 	withFuncTestDB(t, []string{
