@@ -20,6 +20,12 @@ export interface BaseConfig {
   Timeout: number
   Refresh: number
   Archive: number
+  PingCount?: number
+  PingIntervalMs?: number
+  PingTimeoutMs?: number
+  PingStaggerMs?: number
+  MappingConcurrency?: number
+  MappingProbeCount?: number
 }
 
 export interface TopologySettings {

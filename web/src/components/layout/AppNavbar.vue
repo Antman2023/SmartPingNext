@@ -11,16 +11,22 @@
         :aria-expanded="isSidebarExpanded"
         @click="handleSidebarToggle"
       >
-        <el-icon>
-          <Close v-if="isCompact && sidebarStore.isMobileOpen" />
-          <Menu v-else-if="isCompact" />
-          <DArrowLeft v-else-if="isSidebarExpanded" />
-          <DArrowRight v-else />
-        </el-icon>
+        <Close
+          v-if="isCompact && sidebarStore.isMobileOpen"
+          class="app-navbar__toggle-icon"
+          aria-hidden="true"
+        />
+        <Menu v-else-if="isCompact" class="app-navbar__toggle-icon" aria-hidden="true" />
+        <DArrowLeft
+          v-else-if="isSidebarExpanded"
+          class="app-navbar__toggle-icon"
+          aria-hidden="true"
+        />
+        <DArrowRight v-else class="app-navbar__toggle-icon" aria-hidden="true" />
       </button>
       <div class="app-navbar__brand">
         <div class="app-navbar__mark">
-          <el-icon class="app-navbar__logo"><Monitor /></el-icon>
+          <Monitor class="app-navbar__logo" aria-hidden="true" />
         </div>
         <div class="app-navbar__copy">
           <span class="app-navbar__title">SmartPingNext</span>
@@ -133,12 +139,11 @@ const handleSidebarToggle = () => {
     border-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
     box-shadow: var(--shadow-sm);
   }
+}
 
-  .el-icon {
-    width: 18px;
-    height: 18px;
-    font-size: 18px;
-  }
+.app-navbar__toggle-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .app-navbar__brand {
@@ -169,7 +174,8 @@ const handleSidebarToggle = () => {
 }
 
 .app-navbar__logo {
-  font-size: 24px;
+  width: 24px;
+  height: 24px;
   color: var(--color-primary);
 }
 

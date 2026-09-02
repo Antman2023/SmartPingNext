@@ -21,32 +21,31 @@
         <strong class="app-sidebar__node">{{ currentNode }}</strong>
         <p class="app-sidebar__meta">{{ smartpingCount }} {{ $t('common.probes') }}</p>
       </div>
-      <el-menu
-        :default-active="currentRoute"
-        class="app-sidebar__menu"
-        :router="true"
-        :collapse="isDesktopCollapsed"
-        :collapse-transition="false"
-        :aria-label="$t('nav.primaryNavigation')"
-        @select="handleSelect"
-      >
-        <el-menu-item
+      <nav class="app-sidebar__menu" :aria-label="$t('nav.primaryNavigation')">
+        <RouterLink
           v-for="item in menuItems"
           :key="item.index"
-          :index="item.index"
+          :to="item.index"
+          class="app-sidebar__menu-item"
+          :class="{ 'is-active': currentRoute === item.index }"
           :aria-label="$t(item.label)"
+          :aria-current="currentRoute === item.index ? 'page' : undefined"
+          :title="isDesktopCollapsed ? $t(item.label) : undefined"
+          @click="handleSelect"
         >
-          <el-icon><component :is="item.icon" /></el-icon>
-          <template #title>{{ $t(item.label) }}</template>
-        </el-menu-item>
-      </el-menu>
+          <component :is="item.icon" class="app-sidebar__menu-icon" aria-hidden="true" />
+          <span v-if="!isDesktopCollapsed" class="app-sidebar__menu-label">{{
+            $t(item.label)
+          }}</span>
+        </RouterLink>
+      </nav>
     </aside>
   </Transition>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import {
   DataLine,
   DataAnalysis,
@@ -188,54 +187,68 @@ onBeforeUnmount(() => {
 }
 
 .app-sidebar__menu {
-  background-color: transparent;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
-  :deep(.el-menu-item) {
-    height: 52px;
-    margin-bottom: 6px;
-    border-radius: 16px;
-    color: var(--sidebar-text);
-    font-weight: 500;
-    transition:
-      transform 0.22s ease,
-      background-color 0.22s ease,
-      color 0.22s ease,
-      border-color 0.22s ease;
+.app-sidebar__menu-item {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px;
+  border-radius: 16px;
+  color: var(--sidebar-text);
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    transform 0.22s ease,
+    background-color 0.22s ease,
+    color 0.22s ease,
+    box-shadow 0.22s ease;
 
-    &:hover {
-      background-color: var(--sidebar-hover-bg);
-      transform: translateX(2px);
-    }
-
-    &.is-active {
-      color: var(--sidebar-active-text);
-      background-color: var(--sidebar-active-bg);
-      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
-    }
+  &:hover,
+  &:focus-visible {
+    background-color: var(--sidebar-hover-bg);
+    transform: translateX(2px);
+    outline: none;
   }
 
-  :deep(.el-menu-item .el-icon) {
-    width: 18px;
-    margin-right: 12px;
-    font-size: 18px;
+  &:focus-visible {
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 45%, transparent);
   }
 
-  :deep(.el-menu-item span) {
-    letter-spacing: -0.01em;
+  &.is-active {
+    color: var(--sidebar-active-text);
+    background-color: var(--sidebar-active-bg);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 18%, transparent);
   }
+}
 
-  &.el-menu--collapse {
+.app-sidebar__menu-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.app-sidebar__menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar.is-collapsed {
+  .app-sidebar__menu {
     width: calc(var(--app-sidebar-collapsed-width) - 20px);
+  }
 
-    :deep(.el-menu-item) {
-      justify-content: center;
-      padding: 0 !important;
-    }
-
-    :deep(.el-menu-item .el-icon) {
-      margin-right: 0;
-    }
+  .app-sidebar__menu-item {
+    justify-content: center;
+    gap: 0;
+    padding: 0;
   }
 }
 

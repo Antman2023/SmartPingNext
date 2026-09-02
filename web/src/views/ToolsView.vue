@@ -21,91 +21,140 @@
             <span class="page-kpi__label">{{ $t('common.issues') }}</span>
             <strong class="page-kpi__value">{{ errorCount }}</strong>
           </div>
+          <div class="page-kpi">
+            <span class="page-kpi__label">{{ $t('tools.lastRun') }}</span>
+            <strong class="page-kpi__value tools-view__time-kpi">{{ lastRunLabel || '--' }}</strong>
+          </div>
         </div>
       </div>
     </div>
 
-    <section class="surface-panel">
-      <div class="surface-panel__header">
-        <div>
-          <h2 class="surface-panel__title">{{ $t('tools.check') }}</h2>
-          <p class="surface-panel__description">{{ target || $t('tools.enterTarget') }}</p>
-        </div>
-      </div>
-
-      <div class="tools-view__search">
-        <el-select v-model="toolType" class="tools-view__tool-select">
-          <el-option label="ICMP PING" value="ping" />
-        </el-select>
-        <el-input v-model="target" :placeholder="$t('tools.enterTarget')" @keyup.enter="runCheck" />
-        <el-button type="primary" :loading="checking" @click="runCheck">
-          {{ $t('tools.check') }}
-        </el-button>
-      </div>
+    <section v-if="configLoading && !config" class="surface-panel empty-state">
+      <el-icon class="is-loading"><Loading /></el-icon>
+      <span>{{ $t('common.loading') }}</span>
     </section>
 
-    <section class="surface-panel">
-      <div class="surface-panel__header">
-        <div>
-          <h2 class="surface-panel__title">{{ $t('tools.title') }}</h2>
-          <p class="surface-panel__description">{{ results.length }} {{ $t('common.probes') }}</p>
-        </div>
-      </div>
+    <section v-else-if="configError && !config" class="surface-panel empty-state">
+      <el-icon class="tools-view__state-icon text-danger"><Warning /></el-icon>
+      <span>{{ $t('common.configLoadFailedNetwork') }}</span>
+      <el-button size="small" @click="loadConfig">{{ $t('common.retry') }}</el-button>
+    </section>
 
-      <div class="table-scroll">
-        <el-table :data="results" stripe style="width: 100%">
-          <el-table-column width="54" align="center">
-            <template #default="{ row }">
-              <el-checkbox v-model="row.checked" />
-            </template>
-          </el-table-column>
-          <el-table-column prop="name" :label="$t('common.node')" min-width="140" />
-          <el-table-column :label="$t('tools.resolvedIP')" min-width="160">
-            <template #default="{ row }">
-              <span class="mono">{{ row.result?.ip || '-' }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="$t('tools.sent')" width="80" align="center">
-            <template #default="{ row }">
-              {{ row.result?.ping?.SendPk ?? '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column :label="$t('tools.received')" width="80" align="center">
-            <template #default="{ row }">
-              {{ row.result?.ping?.RevcPk ?? '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column :label="$t('tools.packetLoss')" width="90" align="center">
-            <template #default="{ row }">
-              <span :class="{ 'text-danger': row.result?.ping?.LossPk > 0 }">
-                {{ row.result?.ping?.LossPk !== undefined ? row.result.ping.LossPk + '%' : '-' }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column :label="$t('tools.latency')" min-width="180">
-            <template #default="{ row }">
-              <template v-if="row.result?.ping">
-                <span class="tools-view__delay mono">
-                  {{ row.result.ping.MinDelay?.toFixed(1) || '-' }} /
-                  {{ row.result.ping.AvgDelay?.toFixed(1) || '-' }} /
-                  {{ row.result.ping.MaxDelay?.toFixed(1) || '-' }} ms
+    <template v-else>
+      <section class="surface-panel">
+        <div class="surface-panel__header">
+          <div>
+            <h2 class="surface-panel__title">{{ $t('tools.check') }}</h2>
+            <p class="surface-panel__description">{{ target || $t('tools.enterTarget') }}</p>
+          </div>
+        </div>
+
+        <div class="tools-view__search">
+          <el-select
+            v-model="toolType"
+            class="tools-view__tool-select"
+            :aria-label="$t('tools.toolType')"
+          >
+            <el-option label="ICMP PING" value="ping" />
+          </el-select>
+          <el-input
+            v-model="target"
+            :placeholder="$t('tools.enterTarget')"
+            @keyup.enter="runCheck"
+          />
+          <el-button type="primary" :loading="checking" @click="runCheck">
+            {{ $t('tools.check') }}
+          </el-button>
+        </div>
+      </section>
+
+      <section class="surface-panel">
+        <div class="surface-panel__header">
+          <div>
+            <h2 class="surface-panel__title">{{ $t('tools.title') }}</h2>
+            <p class="surface-panel__description">{{ results.length }} {{ $t('common.probes') }}</p>
+          </div>
+        </div>
+
+        <div class="table-scroll">
+          <el-table :data="results" stripe style="width: 100%">
+            <el-table-column width="54" align="center">
+              <template #default="{ row }">
+                <el-checkbox
+                  v-model="row.checked"
+                  :aria-label="$t('tools.toggleProbe', { name: row.name })"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column prop="name" :label="$t('common.node')" min-width="140" />
+            <el-table-column :label="$t('tools.resolvedIP')" min-width="160">
+              <template #default="{ row }">
+                <span class="mono">{{ row.result?.ip || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="$t('tools.sent')" width="80" align="center">
+              <template #default="{ row }">
+                {{ row.result?.ping?.SendPk ?? '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column :label="$t('tools.received')" width="80" align="center">
+              <template #default="{ row }">
+                {{ row.result?.ping?.RevcPk ?? '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column :label="$t('tools.packetLoss')" width="90" align="center">
+              <template #default="{ row }">
+                <span :class="{ 'text-danger': row.result?.ping?.LossPk > 0 }">
+                  {{ row.result?.ping?.LossPk !== undefined ? row.result.ping.LossPk + '%' : '-' }}
                 </span>
               </template>
-              <span v-else>-</span>
+            </el-table-column>
+            <el-table-column :label="$t('tools.latency')" min-width="180">
+              <template #default="{ row }">
+                <template v-if="row.result?.ping">
+                  <span class="tools-view__delay mono">
+                    {{ row.result.ping.MinDelay?.toFixed(1) || '-' }} /
+                    {{ row.result.ping.AvgDelay?.toFixed(1) || '-' }} /
+                    {{ row.result.ping.MaxDelay?.toFixed(1) || '-' }} ms
+                  </span>
+                </template>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="$t('common.status')" width="108" align="center">
+              <template #default="{ row }">
+                <el-icon v-if="row.loading" class="is-loading"><Loading /></el-icon>
+                <el-tooltip
+                  v-else-if="row.error || row.result?.status === 'false'"
+                  :content="rowErrorMessage(row as ResultRow)"
+                  placement="top"
+                >
+                  <span class="tools-view__status text-danger">
+                    <el-icon><Warning /></el-icon>
+                    <span>{{ $t('tools.failed') }}</span>
+                  </span>
+                </el-tooltip>
+                <span
+                  v-else-if="row.result?.status === 'true'"
+                  class="tools-view__status text-success"
+                >
+                  <el-icon><SuccessFilled /></el-icon>
+                  <span>{{ $t('tools.succeeded') }}</span>
+                </span>
+                <span v-else class="tools-view__status tools-view__status--muted">
+                  {{ $t('tools.notRun') }}
+                </span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <div class="empty-state tools-view__empty">
+                <span>{{ $t('tools.noProbeNodes') }}</span>
+              </div>
             </template>
-          </el-table-column>
-          <el-table-column :label="$t('common.status')" width="80" align="center">
-            <template #default="{ row }">
-              <el-icon v-if="row.loading" class="is-loading"><Loading /></el-icon>
-              <el-icon v-else-if="row.error" class="text-danger"><Warning /></el-icon>
-              <el-icon v-else-if="row.result?.status === 'true'" class="text-success"
-                ><SuccessFilled
-              /></el-icon>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-    </section>
+          </el-table>
+        </div>
+      </section>
+    </template>
   </div>
 </template>
 
@@ -118,12 +167,16 @@ import {
   ElOption,
   ElSelect,
   ElTable,
-  ElTableColumn
+  ElTableColumn,
+  ElTooltip
 } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import '@/plugins/elementPlusToolsStyles'
 import { Loading, SuccessFilled, Warning } from '@element-plus/icons-vue'
 import { fetchConfig } from '@/api/config'
 import { runTools } from '@/api/tools'
+import { mapWithConcurrency } from '@/utils/concurrency'
+import { formatTime } from '@/utils/format'
 import type { Config, ToolsResult } from '@/types'
 
 interface ResultRow {
@@ -142,9 +195,13 @@ const toolType = ref('ping')
 const target = ref('')
 const checking = ref(false)
 const results = ref<ResultRow[]>([])
+const configLoading = ref(true)
+const configError = ref(false)
+const lastRunAt = ref<Date | null>(null)
 let isUnmounted = false
 let configRequestId = 0
 let checkRequestId = 0
+const CHECK_CONCURRENCY = 4
 
 const checkedCount = computed(() => results.value.filter((row) => row.checked).length)
 const successCount = computed(
@@ -153,9 +210,12 @@ const successCount = computed(
 const errorCount = computed(
   () => results.value.filter((row) => row.error || row.result?.status === 'false').length
 )
+const lastRunLabel = computed(() => (lastRunAt.value ? formatTime(lastRunAt.value) : ''))
 
 const loadConfig = async () => {
   const requestId = ++configRequestId
+  configLoading.value = true
+  configError.value = false
   try {
     const cfg = await fetchConfig()
     if (isUnmounted || requestId !== configRequestId) {
@@ -180,11 +240,22 @@ const loadConfig = async () => {
       return
     }
     console.error('加载配置失败', error)
-    ElMessage.error(t('common.configLoadFailedNetwork'))
+    configError.value = true
+    if (config.value) {
+      ElMessage.error(t('common.configLoadFailedNetwork'))
+    }
+  } finally {
+    if (!isUnmounted && requestId === configRequestId) {
+      configLoading.value = false
+    }
   }
 }
 
 const runCheck = async () => {
+  if (checking.value) {
+    return
+  }
+
   const normalizedTarget = target.value.trim()
   if (!normalizedTarget) {
     ElMessage.warning(t('tools.enterTarget'))
@@ -202,13 +273,13 @@ const runCheck = async () => {
   checking.value = true
   results.value.forEach((row) => {
     row.loading = false
+    row.result = null
+    row.error = null
   })
 
-  await Promise.all(
-    checkedRows.map(async (row) => {
+  try {
+    await mapWithConcurrency(checkedRows, CHECK_CONCURRENCY, async (row) => {
       row.loading = true
-      row.result = null
-      row.error = null
 
       try {
         const result = await runTools(`${row.addr}:${row.port}`, normalizedTarget)
@@ -227,12 +298,16 @@ const runCheck = async () => {
         }
       }
     })
-  )
-
-  if (!isUnmounted && requestId === checkRequestId) {
-    checking.value = false
+  } finally {
+    if (!isUnmounted && requestId === checkRequestId) {
+      checking.value = false
+      lastRunAt.value = new Date()
+    }
   }
 }
+
+const rowErrorMessage = (row: ResultRow) =>
+  row.error || row.result?.error || t('tools.requestFailed')
 
 onMounted(() => {
   loadConfig()
@@ -258,6 +333,31 @@ onUnmounted(() => {
 
 .tools-view__delay {
   color: var(--color-text-regular);
+}
+
+.tools-view__time-kpi {
+  font-size: 14px;
+}
+
+.tools-view__state-icon {
+  font-size: 28px;
+}
+
+.tools-view__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tools-view__status--muted {
+  color: var(--color-text-secondary);
+}
+
+.tools-view__empty {
+  min-height: 160px;
 }
 
 @media (max-width: 900px) {

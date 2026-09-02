@@ -29,7 +29,16 @@
       </div>
     </div>
 
-    <div class="config-view__grid">
+    <section
+      v-if="configError && !configLoaded"
+      class="surface-panel empty-state config-view__load-error"
+    >
+      <el-icon class="config-view__load-error-icon text-danger"><Warning /></el-icon>
+      <span>{{ $t('common.configLoadFailedNetwork') }}</span>
+      <el-button size="small" @click="loadConfig">{{ $t('common.retry') }}</el-button>
+    </section>
+
+    <div v-else class="config-view__grid">
       <div class="config-view__rail">
         <section class="surface-panel">
           <div class="surface-panel__header">
@@ -37,33 +46,63 @@
               <h2 class="surface-panel__title">{{ $t('config.saveConfig') }}</h2>
               <p class="surface-panel__description">{{ $t('config.subtitle') }}</p>
             </div>
-            <el-tooltip :content="$t('config.viewRawConfig')">
-              <el-link type="primary" href="/api/config.json" target="_blank">
-                <el-icon><Document /></el-icon>
-              </el-link>
-            </el-tooltip>
+            <div class="config-view__save-meta">
+              <span
+                v-if="configLoaded"
+                class="config-view__save-state"
+                :class="{ 'is-dirty': isDirty }"
+                aria-live="polite"
+              >
+                <el-icon>
+                  <EditPen v-if="isDirty" />
+                  <CircleCheck v-else />
+                </el-icon>
+                {{ isDirty ? $t('config.unsaved') : $t('config.saved') }}
+              </span>
+              <el-tooltip :content="$t('config.viewRawConfig')">
+                <el-link
+                  type="primary"
+                  href="/api/config.json"
+                  target="_blank"
+                  :aria-label="$t('config.viewRawConfig')"
+                  :title="$t('config.viewRawConfig')"
+                >
+                  <el-icon><Document /></el-icon>
+                </el-link>
+              </el-tooltip>
+            </div>
           </div>
 
           <div class="control-row">
             <el-input
               v-model="password"
               type="password"
-              :disabled="saving || importExportBusy"
+              :disabled="saving || importExportBusy || !isDirty"
               :placeholder="$t('common.password')"
               @keyup.enter="handleSave"
             />
             <el-button
               type="primary"
               :loading="saving"
-              :disabled="importExportBusy"
+              :disabled="importExportBusy || !isDirty"
               @click="handleSave"
-            >{{
-              $t('common.save')
-            }}</el-button>
+              >{{ $t('common.save') }}</el-button
+            >
+          </div>
+          <div
+            v-if="currentValidationIssue"
+            id="config-validation-summary"
+            class="config-view__validation"
+            role="alert"
+            aria-live="assertive"
+            tabindex="-1"
+          >
+            <el-icon><Warning /></el-icon>
+            <span>{{ validationIssueMessage }}</span>
           </div>
         </section>
 
-        <section class="surface-panel">
+        <section id="config-base-settings" class="surface-panel" tabindex="-1">
           <div class="surface-panel__header">
             <div>
               <h2 class="surface-panel__title">{{ $t('config.importExport') }}</h2>
@@ -83,9 +122,8 @@
                 :loading="exporting"
                 :disabled="importing || saving"
                 @click="handleExport"
-              >{{
-                $t('config.exportConfig')
-              }}</el-button>
+                >{{ $t('config.exportConfig') }}</el-button
+              >
               <el-upload
                 :auto-upload="false"
                 :show-file-list="false"
@@ -115,14 +153,44 @@
             <div class="config-view__group">
               <h3>{{ $t('config.base') }}</h3>
               <div class="grid-3">
-                <el-form-item :label="$t('config.timeout')">
-                  <el-input v-model.number="formConfig.Base.Timeout" />
+                <el-form-item
+                  :label="$t('config.timeout')"
+                  :error="validationErrorFor('config.validationTimeout')"
+                >
+                  <el-input-number
+                    id="config-timeout"
+                    v-model="formConfig.Base.Timeout"
+                    class="config-view__number-input"
+                    :min="CONFIG_LIMITS.timeout.min"
+                    :max="CONFIG_LIMITS.timeout.max"
+                    controls-position="right"
+                  />
                 </el-form-item>
-                <el-form-item :label="$t('config.pageRefresh')">
-                  <el-input v-model.number="formConfig.Base.Refresh" />
+                <el-form-item
+                  :label="$t('config.pageRefresh')"
+                  :error="validationErrorFor('config.validationRefresh')"
+                >
+                  <el-input-number
+                    id="config-refresh"
+                    v-model="formConfig.Base.Refresh"
+                    class="config-view__number-input"
+                    :min="CONFIG_LIMITS.refresh.min"
+                    :max="CONFIG_LIMITS.refresh.max"
+                    controls-position="right"
+                  />
                 </el-form-item>
-                <el-form-item :label="$t('config.dataArchive')">
-                  <el-input v-model.number="formConfig.Base.Archive" />
+                <el-form-item
+                  :label="$t('config.dataArchive')"
+                  :error="validationErrorFor('config.validationArchive')"
+                >
+                  <el-input-number
+                    id="config-archive"
+                    v-model="formConfig.Base.Archive"
+                    class="config-view__number-input"
+                    :min="CONFIG_LIMITS.archive.min"
+                    :max="CONFIG_LIMITS.archive.max"
+                    controls-position="right"
+                  />
                 </el-form-item>
               </div>
             </div>
@@ -133,26 +201,64 @@
                 <el-form-item :label="$t('config.alertSound')">
                   <el-input v-model="formConfig.Topology.Tsound" />
                 </el-form-item>
-                <el-form-item :label="$t('config.lineWidth')">
-                  <el-input v-model="formConfig.Topology.Tline" />
+                <el-form-item
+                  :label="$t('config.lineWidth')"
+                  :error="validationErrorFor('config.validationLineWidth')"
+                >
+                  <el-input-number
+                    id="config-topology-line"
+                    :model-value="Number(formConfig.Topology.Tline)"
+                    class="config-view__number-input"
+                    :min="CONFIG_LIMITS.topologyLine.min"
+                    :max="CONFIG_LIMITS.topologyLine.max"
+                    :step="0.5"
+                    controls-position="right"
+                    @update:model-value="updateTopologyNumber('Tline', $event)"
+                  />
                 </el-form-item>
-                <el-form-item :label="$t('config.symbolSize')">
-                  <el-input v-model="formConfig.Topology.Tsymbolsize" />
+                <el-form-item
+                  :label="$t('config.symbolSize')"
+                  :error="validationErrorFor('config.validationSymbolSize')"
+                >
+                  <el-input-number
+                    id="config-topology-symbol"
+                    :model-value="Number(formConfig.Topology.Tsymbolsize)"
+                    class="config-view__number-input"
+                    :min="CONFIG_LIMITS.topologySymbol.min"
+                    :max="CONFIG_LIMITS.topologySymbol.max"
+                    controls-position="right"
+                    @update:model-value="updateTopologyNumber('Tsymbolsize', $event)"
+                  />
                 </el-form-item>
               </div>
             </div>
 
             <div class="config-view__group">
               <h3>{{ $t('config.checkTools') }}</h3>
-              <el-form-item :label="$t('config.rateLimit')">
-                <el-input v-model.number="formConfig.Toollimit" />
+              <el-form-item
+                :label="$t('config.rateLimit')"
+                :error="validationErrorFor('config.validationToolLimit')"
+              >
+                <el-input-number
+                  id="config-tool-limit"
+                  v-model="formConfig.Toollimit"
+                  class="config-view__number-input"
+                  :min="CONFIG_LIMITS.toolLimit.min"
+                  :max="CONFIG_LIMITS.toolLimit.max"
+                  controls-position="right"
+                />
               </el-form-item>
             </div>
 
-            <div class="config-view__group">
+            <div id="config-auth-settings" class="config-view__group" tabindex="-1">
               <h3>{{ $t('config.authManagement') }}</h3>
-              <el-form-item :label="$t('config.ipWhitelist')">
-                <el-input v-model="formConfig.Authiplist" />
+              <el-form-item
+                :label="$t('config.ipWhitelist')"
+                :error="
+                  validationErrorFor('config.validationAuthAddress', 'config.validationAuthLimit')
+                "
+              >
+                <el-input id="config-auth-list" v-model="formConfig.Authiplist" />
               </el-form-item>
             </div>
           </el-form>
@@ -160,7 +266,7 @@
       </div>
 
       <div class="config-view__main">
-        <section class="surface-panel">
+        <section id="config-network-settings" class="surface-panel" tabindex="-1">
           <div class="surface-panel__header">
             <div>
               <h2 class="surface-panel__title">{{ $t('config.pingNetwork') }}</h2>
@@ -177,7 +283,11 @@
               <el-table-column prop="Addr" :label="$t('config.nodeIP')" min-width="150" />
               <el-table-column label="SmartPing" width="110">
                 <template #default="{ row }">
-                  <el-checkbox v-model="row._original.Smartping" :disabled="row.isSelf" />
+                  <el-checkbox
+                    v-model="row._original.Smartping"
+                    :disabled="row.isSelf"
+                    :aria-label="$t('config.toggleSmartping', { name: displayName(row.Name) })"
+                  />
                 </template>
               </el-table-column>
               <el-table-column :label="$t('common.operation')" min-width="260">
@@ -211,6 +321,8 @@
                     size="small"
                     :icon="Delete"
                     circle
+                    :aria-label="$t('config.deleteNodeLabel', { name: displayName(row.Name) })"
+                    :title="$t('config.deleteNodeLabel', { name: displayName(row.Name) })"
                     @click="deleteNode(row as NetworkListItem)"
                   />
                 </template>
@@ -219,7 +331,7 @@
           </div>
         </section>
 
-        <section class="surface-panel">
+        <section id="config-mapping-settings" class="surface-panel" tabindex="-1">
           <div class="surface-panel__header">
             <div>
               <h2 class="surface-panel__title">{{ $t('config.chinaMapNetwork') }}</h2>
@@ -395,34 +507,37 @@
     >
       <el-tabs v-model="chinaMapTab">
         <el-tab-pane :label="`${$t('mapping.telecom')} (CTCC)`" name="ctcc">
-          <div class="config-view__ip-editor">
+          <el-form-item class="config-view__ip-editor" :error="chinaMapValidationError('ctcc')">
             <el-input
               v-model="chinaMapIps.ctcc"
               type="textarea"
               :rows="6"
               :placeholder="$t('config.eachLineOneIP')"
+              @input="clearChinaMapValidation('ctcc')"
             />
-          </div>
+          </el-form-item>
         </el-tab-pane>
         <el-tab-pane :label="`${$t('mapping.unicom')} (CUCC)`" name="cucc">
-          <div class="config-view__ip-editor">
+          <el-form-item class="config-view__ip-editor" :error="chinaMapValidationError('cucc')">
             <el-input
               v-model="chinaMapIps.cucc"
               type="textarea"
               :rows="6"
               :placeholder="$t('config.eachLineOneIP')"
+              @input="clearChinaMapValidation('cucc')"
             />
-          </div>
+          </el-form-item>
         </el-tab-pane>
         <el-tab-pane :label="`${$t('mapping.mobile')} (CMCC)`" name="cmcc">
-          <div class="config-view__ip-editor">
+          <el-form-item class="config-view__ip-editor" :error="chinaMapValidationError('cmcc')">
             <el-input
               v-model="chinaMapIps.cmcc"
               type="textarea"
               :rows="6"
               :placeholder="$t('config.eachLineOneIP')"
+              @input="clearChinaMapValidation('cmcc')"
             />
-          </div>
+          </el-form-item>
         </el-tab-pane>
       </el-tabs>
       <template #footer>
@@ -449,9 +564,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { Delete, Document } from '@element-plus/icons-vue'
+import '@/plugins/elementPlusConfigStyles'
+import { CircleCheck, Delete, Document, EditPen, Warning } from '@element-plus/icons-vue'
 import {
   ElCheckbox,
   ElDialog,
@@ -461,6 +578,7 @@ import {
   ElInputNumber,
   ElLink,
   ElMessage,
+  ElMessageBox,
   ElTabPane,
   ElTable,
   ElTableColumn,
@@ -470,6 +588,13 @@ import {
   type UploadFile
 } from 'element-plus'
 import { useConfigStore } from '@/stores/config'
+import {
+  CONFIG_LIMITS,
+  isValidIPv4,
+  validateConfigForEdit,
+  type ConfigValidationIssue
+} from '@/utils/configValidation'
+import { displayName } from '@/utils/format'
 import type { Config, NetworkMember, TopologyConfig } from '@/types'
 
 const { t } = useI18n()
@@ -477,6 +602,9 @@ const configStore = useConfigStore()
 const password = ref('')
 const importExportPassword = ref('')
 const loadingConfig = ref(false)
+const configError = ref(false)
+const configLoaded = ref(false)
+const savedSnapshot = ref('')
 const saving = ref(false)
 const exporting = ref(false)
 const importing = ref(false)
@@ -527,6 +655,80 @@ const networkList = computed(() => {
 const smartpingCount = computed(() => networkList.value.filter((node) => node.Smartping).length)
 const provinceCount = computed(() => Object.keys(formConfig.Chinamap || {}).length)
 
+const serializeConfig = (value: Config): string =>
+  JSON.stringify(value, (_key, item: unknown) => {
+    if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
+      return Object.fromEntries(
+        Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
+          left.localeCompare(right)
+        )
+      )
+    }
+    return item
+  })
+
+const currentSnapshot = computed(() => serializeConfig(formConfig))
+const isDirty = computed(() => configLoaded.value && currentSnapshot.value !== savedSnapshot.value)
+const validationAttempted = ref(false)
+const currentValidationIssue = computed(() =>
+  validationAttempted.value ? validateConfigForEdit(formConfig) : null
+)
+const validationIssueMessage = computed(() => {
+  const issue = currentValidationIssue.value
+  return issue ? t(issue.key, issue.params ?? {}) : ''
+})
+
+const validationErrorFor = (...keys: string[]) => {
+  const issue = currentValidationIssue.value
+  return issue && keys.includes(issue.key) ? t(issue.key, issue.params ?? {}) : ''
+}
+
+const validationTargetIds: Record<string, string> = {
+  'config.validationTimeout': 'config-timeout',
+  'config.validationArchive': 'config-archive',
+  'config.validationRefresh': 'config-refresh',
+  'config.validationLineWidth': 'config-topology-line',
+  'config.validationSymbolSize': 'config-topology-symbol',
+  'config.validationToolLimit': 'config-tool-limit',
+  'config.validationAuthAddress': 'config-auth-list',
+  'config.validationAuthLimit': 'config-auth-list',
+  'config.validationMappingAddress': 'config-mapping-settings',
+  'config.validationMappingLimit': 'config-mapping-settings'
+}
+
+const networkValidationKeys = new Set([
+  'config.validationNodeName',
+  'config.validationPort',
+  'config.validationLocalAddress',
+  'config.validationNetworkEmpty',
+  'config.validationNetworkLimit',
+  'config.validationLocalNodeMissing',
+  'config.validationNodeAddress',
+  'config.validationNamedNode',
+  'config.validationTargetLimit',
+  'config.validationPingTarget',
+  'config.validationDuplicateTarget',
+  'config.validationTopologyTarget',
+  'config.validationTopologyRule'
+])
+
+const focusValidationIssue = async (validationIssue: ConfigValidationIssue) => {
+  await nextTick()
+  const targetId = networkValidationKeys.has(validationIssue.key)
+    ? 'config-network-settings'
+    : (validationTargetIds[validationIssue.key] ?? 'config-validation-summary')
+  const target = document.getElementById(targetId)
+  if (!target) {
+    return
+  }
+
+  target.scrollIntoView({
+    behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    block: 'center'
+  })
+  target.focus({ preventScroll: true })
+}
+
 const addNodeVisible = ref(false)
 const newNodeName = ref('')
 const newNodeAddr = ref('')
@@ -557,32 +759,68 @@ const maxOccurrenceCount = (checkSeconds: number) => {
   return Math.max(Math.floor(checkSeconds / 60), 1)
 }
 
+const updateTopologyNumber = (field: 'Tline' | 'Tsymbolsize', value: number | undefined) => {
+  if (value !== undefined && Number.isFinite(value)) {
+    formConfig.Topology[field] = String(value)
+  }
+}
+
+const showValidationIssue = (validationIssue: ConfigValidationIssue) => {
+  ElMessage.error(t(validationIssue.key, validationIssue.params ?? {}))
+}
+
 const chinaMapVisible = ref(false)
-const chinaMapTab = ref('ctcc')
+type ChinaMapProviderKey = 'ctcc' | 'cucc' | 'cmcc'
+
+const chinaMapTab = ref<ChinaMapProviderKey>('ctcc')
 const currentProvince = ref('')
 const chinaMapIps = reactive({
   ctcc: '',
   cucc: '',
   cmcc: ''
 })
+const chinaMapValidationIssue = ref<{
+  provider: ChinaMapProviderKey
+  address: string
+} | null>(null)
+const chinaMapValidationError = (provider: ChinaMapProviderKey) => {
+  const issue = chinaMapValidationIssue.value
+  return issue?.provider === provider
+    ? t('config.validationMappingAddress', { address: issue.address })
+    : ''
+}
+const clearChinaMapValidation = (provider: ChinaMapProviderKey) => {
+  if (chinaMapValidationIssue.value?.provider === provider) {
+    chinaMapValidationIssue.value = null
+  }
+}
 const addProvinceVisible = ref(false)
 const newProvinceName = ref('')
 
 const loadConfig = async () => {
   const requestId = ++configRequestId
   loadingConfig.value = true
-  const cfg = await configStore.loadConfig()
-  if (isUnmounted || requestId !== configRequestId) {
-    return
-  }
+  configError.value = false
+  try {
+    const cfg = await configStore.loadConfig()
+    if (isUnmounted || requestId !== configRequestId) {
+      return
+    }
 
-  loadingConfig.value = false
-  if (!cfg) {
-    ElMessage.error(t('common.configLoadFailedNetwork'))
-    return
-  }
+    if (!cfg) {
+      configError.value = true
+      return
+    }
 
-  Object.assign(formConfig, JSON.parse(JSON.stringify(cfg)) as Config)
+    Object.assign(formConfig, JSON.parse(JSON.stringify(cfg)) as Config)
+    configLoaded.value = true
+    validationAttempted.value = false
+    savedSnapshot.value = serializeConfig(formConfig)
+  } finally {
+    if (!isUnmounted && requestId === configRequestId) {
+      loadingConfig.value = false
+    }
+  }
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -595,15 +833,14 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
     typeof value.Name !== 'string' ||
     typeof value.Addr !== 'string' ||
     !isRecord(value.Base) ||
-    Object.values(value.Base).some(
-      (item) => typeof item !== 'number' || !Number.isFinite(item)
-    ) ||
+    Object.values(value.Base).some((item) => typeof item !== 'number' || !Number.isFinite(item)) ||
     !isRecord(value.Topology) ||
     Object.values(value.Topology).some((item) => typeof item !== 'string') ||
     !isRecord(value.Network) ||
     (value.Mode !== undefined &&
       value.Mode !== null &&
-      (!isRecord(value.Mode) || Object.values(value.Mode).some((item) => typeof item !== 'string'))) ||
+      (!isRecord(value.Mode) ||
+        Object.values(value.Mode).some((item) => typeof item !== 'string'))) ||
     (value.Chinamap !== undefined && value.Chinamap !== null && !isRecord(value.Chinamap)) ||
     (value.Toollimit !== undefined &&
       (typeof value.Toollimit !== 'number' || !Number.isFinite(value.Toollimit))) ||
@@ -679,6 +916,12 @@ const handleSave = async () => {
   if (saving.value || importExportBusy.value) {
     return
   }
+  validationAttempted.value = true
+  const validationIssue = validateConfigForEdit(formConfig)
+  if (validationIssue) {
+    void focusValidationIssue(validationIssue)
+    return
+  }
   if (!password.value) {
     ElMessage.warning(t('common.pleaseEnterPassword'))
     return
@@ -688,6 +931,8 @@ const handleSave = async () => {
   try {
     await configStore.saveConfig(formConfig, password.value)
     if (!isUnmounted) {
+      savedSnapshot.value = serializeConfig(formConfig)
+      validationAttempted.value = false
       ElMessage.success(t('common.saveSuccess'))
     }
   } catch (error: unknown) {
@@ -697,6 +942,7 @@ const handleSave = async () => {
     console.error('保存失败', error)
   } finally {
     if (!isUnmounted) {
+      password.value = ''
       saving.value = false
     }
   }
@@ -755,6 +1001,7 @@ const handleExport = async () => {
     console.error('密码验证失败', error)
   } finally {
     if (!isUnmounted) {
+      importExportPassword.value = ''
       exporting.value = false
     }
   }
@@ -801,7 +1048,7 @@ const handleImportFile = async (file: UploadFile) => {
         return
       }
 
-      if (!importedConfig || !importedConfig.Name || !importedConfig.Addr) {
+      if (!importedConfig) {
         ElMessage.error(t('config.configInvalid'))
         return
       }
@@ -810,11 +1057,21 @@ const handleImportFile = async (file: UploadFile) => {
       const currentAddr = formConfig.Addr
       const currentPort = formConfig.Port
 
-      Object.assign(formConfig, importedConfig, {
+      const candidate = {
+        ...JSON.parse(JSON.stringify(formConfig)),
+        ...importedConfig,
         Name: currentName,
         Addr: currentAddr,
         Port: currentPort
-      })
+      } as Config
+      const validationIssue = validateConfigForEdit(candidate)
+      if (validationIssue) {
+        showValidationIssue(validationIssue)
+        return
+      }
+
+      Object.assign(formConfig, candidate)
+      validationAttempted.value = false
 
       ElMessage.success(t('config.configImported'))
     } catch (error) {
@@ -823,6 +1080,7 @@ const handleImportFile = async (file: UploadFile) => {
     }
   } finally {
     if (!isUnmounted) {
+      importExportPassword.value = ''
       importing.value = false
     }
   }
@@ -840,9 +1098,7 @@ const addNode = () => {
     return
   }
 
-  const ipRegex =
-    /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/
-  if (!ipRegex.test(newNodeAddr.value.trim())) {
+  if (!isValidIPv4(newNodeAddr.value.trim())) {
     ElMessage.warning(t('config.pleaseEnterValidIPv4'))
     return
   }
@@ -865,7 +1121,21 @@ const addNode = () => {
   ElMessage.success(t('config.nodeAdded'))
 }
 
-const deleteNode = (row: NetworkListItem) => {
+const deleteNode = async (row: NetworkListItem) => {
+  try {
+    await ElMessageBox.confirm(
+      t('config.deleteNodeConfirm', { name: displayName(row.Name) }),
+      t('config.deleteNode'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    )
+  } catch {
+    return
+  }
+
   const addr = row.Addr
   delete formConfig.Network[addr]
 
@@ -876,6 +1146,7 @@ const deleteNode = (row: NetworkListItem) => {
     }
     member.Topology = member.Topology.filter((topology) => topology.Addr !== addr)
   }
+  ElMessage.success(t('config.nodeDeleted'))
 }
 
 const showEditNode = (row: NetworkListItem) => {
@@ -891,9 +1162,7 @@ const saveEditNode = () => {
     return
   }
 
-  const ipRegex =
-    /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/
-  if (!ipRegex.test(editNodeAddr.value.trim())) {
+  if (!isValidIPv4(editNodeAddr.value.trim())) {
     ElMessage.warning(t('config.pleaseEnterValidIPv4'))
     return
   }
@@ -1045,6 +1314,7 @@ const saveTopoConfig = () => {
 const editChinaMap = (province: string) => {
   currentProvince.value = province
   chinaMapTab.value = 'ctcc'
+  chinaMapValidationIssue.value = null
 
   const provinceData = formConfig.Chinamap[province] || {}
   chinaMapIps.ctcc = (provinceData.ctcc || []).join('\n')
@@ -1066,18 +1336,62 @@ const saveChinaMap = () => {
       .filter((ip) => ip.length > 0)
   }
 
-  formConfig.Chinamap[currentProvince.value] = {
+  const providers = {
     ctcc: parseIps(chinaMapIps.ctcc),
     cucc: parseIps(chinaMapIps.cucc),
     cmcc: parseIps(chinaMapIps.cmcc)
   }
+  for (const [provider, addresses] of Object.entries(providers) as Array<
+    [ChinaMapProviderKey, string[]]
+  >) {
+    const invalidAddress = addresses.find((address) => !isValidIPv4(address))
+    if (invalidAddress) {
+      chinaMapValidationIssue.value = { provider, address: invalidAddress }
+      chinaMapTab.value = provider
+      return
+    }
+  }
+
+  const mappingTargetCount = Object.entries(formConfig.Chinamap).reduce(
+    (count, [province, currentProviders]) =>
+      count +
+      Object.values(province === currentProvince.value ? providers : currentProviders).reduce(
+        (providerCount, addresses) => providerCount + addresses.length,
+        0
+      ),
+    0
+  )
+  if (mappingTargetCount > CONFIG_LIMITS.mappingTargets) {
+    showValidationIssue({
+      key: 'config.validationMappingLimit',
+      params: { max: CONFIG_LIMITS.mappingTargets }
+    })
+    return
+  }
+
+  formConfig.Chinamap[currentProvince.value] = providers
+  chinaMapValidationIssue.value = null
 
   chinaMapVisible.value = false
   ElMessage.success(t('config.delayConfigUpdated'))
 }
 
-const deleteChinaMap = () => {
+const deleteChinaMap = async () => {
   if (!currentProvince.value) {
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      t('config.deleteProvinceConfirm', { province: currentProvince.value }),
+      t('config.deleteProvince'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    )
+  } catch {
     return
   }
 
@@ -1113,13 +1427,47 @@ const addProvince = () => {
   ElMessage.success(t('config.provinceAdded'))
 }
 
+const confirmDiscardChanges = async (): Promise<boolean> => {
+  if (!isDirty.value) {
+    return true
+  }
+
+  try {
+    await ElMessageBox.confirm(t('config.unsavedChangesMessage'), t('config.unsavedChanges'), {
+      confirmButtonText: t('config.discardChanges'),
+      cancelButtonText: t('common.cancel'),
+      type: 'warning'
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+  if (!isDirty.value) {
+    return
+  }
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onBeforeRouteLeave(async () => {
+  if (saving.value || importExportBusy.value) {
+    return false
+  }
+  return confirmDiscardChanges()
+})
+
 onMounted(() => {
+  window.addEventListener('beforeunload', handleBeforeUnload)
   loadConfig()
 })
 
 onUnmounted(() => {
   isUnmounted = true
   configRequestId++
+  window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>
 
@@ -1130,8 +1478,57 @@ onUnmounted(() => {
   gap: 20px;
 }
 
+.config-view__load-error {
+  min-height: 320px;
+}
+
+.config-view__load-error-icon {
+  font-size: 30px;
+}
+
+.config-view__save-meta,
+.config-view__save-state {
+  display: inline-flex;
+  align-items: center;
+}
+
+.config-view__validation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  color: var(--color-danger);
+  font-size: 13px;
+  line-height: 1.5;
+
+  .el-icon {
+    flex: 0 0 auto;
+    margin-top: 2px;
+  }
+}
+
+.config-view__save-meta {
+  gap: 14px;
+}
+
+.config-view__save-state {
+  gap: 6px;
+  color: var(--color-success);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+
+  &.is-dirty {
+    color: var(--color-warning);
+  }
+}
+
 .config-view__rail,
 .config-view__main {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -1199,13 +1596,17 @@ onUnmounted(() => {
   font-family: 'JetBrains Mono', 'Cascadia Code', 'SFMono-Regular', Consolas, monospace;
 }
 
+.config-view__ip-editor {
+  margin-bottom: 0;
+}
+
 .config-view__number-input {
   width: 100%;
 }
 
 @media (max-width: 1320px) {
   .config-view__grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

@@ -27,13 +27,27 @@
               v-model="selectedDate"
               type="datetime"
               :placeholder="$t('mapping.selectTime')"
+              :disabled="configLoading || !config"
               format="YYYY-MM-DD HH:mm"
               value-format="YYYY-MM-DD HH:mm"
               @change="loadMappingData"
             />
-            <el-button @click="saveMapImage">{{ $t('common.saveImage') }}</el-button>
+            <el-button
+              :icon="Download"
+              :disabled="!latestData || mappingLoading || !isMapReady"
+              @click="saveMapImage"
+            >
+              {{ $t('common.saveImage') }}
+            </el-button>
           </div>
         </section>
+
+        <RefreshStatus
+          class="surface-panel surface-panel--tight"
+          :loading="configLoading || mappingLoading"
+          :last-updated="lastUpdatedLabel"
+          @refresh="refreshMapping"
+        />
       </div>
     </div>
 
@@ -53,7 +67,34 @@
             </div>
           </div>
 
-          <div ref="chartRef" class="mapping-view__map"></div>
+          <div
+            v-loading="configLoading || mappingLoading || chartLoading"
+            class="mapping-view__map-shell"
+          >
+            <div ref="chartRef" class="mapping-view__map"></div>
+
+            <div v-if="chartError" class="empty-state mapping-view__state">
+              <el-icon class="mapping-view__state-icon text-danger"><Warning /></el-icon>
+              <span>{{ $t('mapping.chartLoadFailed') }}</span>
+              <el-button size="small" @click="initChart">{{ $t('common.retry') }}</el-button>
+            </div>
+
+            <div v-else-if="configError && !config" class="empty-state mapping-view__state">
+              <el-icon class="mapping-view__state-icon text-danger"><Warning /></el-icon>
+              <span>{{ $t('common.configLoadFailedNetwork') }}</span>
+              <el-button size="small" @click="loadConfig">{{ $t('common.retry') }}</el-button>
+            </div>
+
+            <div v-else-if="mappingError && !latestData" class="empty-state mapping-view__state">
+              <el-icon class="mapping-view__state-icon text-danger"><Warning /></el-icon>
+              <span>{{ $t('common.dataLoadFailed') }}</span>
+              <el-button size="small" @click="loadMappingData">{{ $t('common.retry') }}</el-button>
+            </div>
+
+            <div v-else-if="latestData && !hasMappingData" class="empty-state mapping-view__state">
+              <span>{{ $t('mapping.noData') }}</span>
+            </div>
+          </div>
         </section>
       </div>
 
@@ -97,16 +138,16 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElDatePicker, ElMessage } from 'element-plus'
-import { Loading } from '@element-plus/icons-vue'
+import { Download, Loading, Warning } from '@element-plus/icons-vue'
 import type { EChartsOption } from 'echarts'
 import type { EChartsType } from 'echarts/core'
-import chinaMap from 'china-map-geojson/lib/china'
+import '@/plugins/elementPlusMappingStyles'
+import RefreshStatus from '@/components/common/RefreshStatus.vue'
 import { fetchConfig } from '@/api/config'
 import { getMapping, getProxyMapping } from '@/api/mapping'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useThemeStore } from '@/stores/theme'
-import { displayName } from '@/utils/format'
-import { echarts } from '@/utils/echartsMap'
+import { displayName, formatTime } from '@/utils/format'
 import type { ChinaMapData, Config } from '@/types'
 
 const { t, locale } = useI18n()
@@ -119,9 +160,17 @@ const chartRef = ref<HTMLDivElement>()
 const sidebarStore = useSidebarStore()
 const themeStore = useThemeStore()
 const isMapReady = ref(false)
+const chartLoading = ref(true)
+const chartError = ref(false)
+const configLoading = ref(true)
+const configError = ref(false)
+const mappingLoading = ref(false)
+const mappingError = ref(false)
+const lastUpdatedAt = ref<Date | null>(null)
+const latestData = ref<ChinaMapData | null>(null)
 let chart: EChartsType | null = null
+let chartLoadPromise: Promise<void> | null = null
 let isUnmounted = false
-let latestData: ChinaMapData | null = null
 let configRequestId = 0
 let mappingRequestId = 0
 let resizeTimer: number | null = null
@@ -134,9 +183,20 @@ const currentAgentName = computed(() => {
   const matched = agents.value.find((agent) => agent.addr === currentAgent.value)
   return matched ? displayName(matched.name) : currentAgent.value
 })
+const hasMappingData = computed(() => {
+  const data = latestData.value
+  return data
+    ? data.avgdelay.ctcc.length + data.avgdelay.cucc.length + data.avgdelay.cmcc.length > 0
+    : false
+})
+const lastUpdatedLabel = computed(() =>
+  lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
+)
 
 const loadConfig = async () => {
   const requestId = ++configRequestId
+  configLoading.value = true
+  configError.value = false
   try {
     const cfg = await fetchConfig()
     if (isUnmounted || requestId !== configRequestId) {
@@ -155,7 +215,14 @@ const loadConfig = async () => {
       return
     }
     console.error('加载配置失败', error)
-    ElMessage.error(t('common.configLoadFailedNetwork'))
+    configError.value = true
+    if (config.value) {
+      ElMessage.error(t('common.configLoadFailedNetwork'))
+    }
+  } finally {
+    if (!isUnmounted && requestId === configRequestId) {
+      configLoading.value = false
+    }
   }
 }
 
@@ -167,29 +234,40 @@ const loadMappingData = async () => {
   const requestId = ++mappingRequestId
   const baseUrl = currentBaseUrl.value
   const date = selectedDate.value
+  mappingLoading.value = true
+  mappingError.value = false
   try {
     const data = baseUrl ? await getProxyMapping(baseUrl, date) : await getMapping(date)
 
-    if (isUnmounted || requestId !== mappingRequestId || !isMapReady.value) {
+    if (isUnmounted || requestId !== mappingRequestId) {
       return
     }
 
-    latestData = data
-    updateChart(data)
+    latestData.value = data
+    if (isMapReady.value) {
+      updateChart(data)
+    }
+    lastUpdatedAt.value = new Date()
   } catch (error) {
     if (isUnmounted || requestId !== mappingRequestId) {
       return
     }
     console.error('加载地图数据失败', error)
-    ElMessage.error(t('common.dataLoadFailed'))
+    mappingError.value = true
+    if (latestData.value) {
+      ElMessage.error(t('common.dataLoadFailed'))
+    }
   } finally {
     if (!isUnmounted && requestId === mappingRequestId) {
+      mappingLoading.value = false
       agents.value.forEach((agent) => {
         agent.loading = false
       })
     }
   }
 }
+
+const refreshMapping = () => (config.value ? loadMappingData() : loadConfig())
 
 const switchAgent = async (agent: { name: string; addr: string; loading: boolean }) => {
   agents.value.forEach((item) => {
@@ -208,8 +286,7 @@ const updateChart = (data: ChinaMapData) => {
 
   const styles = window.getComputedStyle(document.documentElement)
   const textColor = styles.getPropertyValue('--color-text-primary').trim() || '#303133'
-  const secondaryTextColor =
-    styles.getPropertyValue('--color-text-secondary').trim() || '#606266'
+  const secondaryTextColor = styles.getPropertyValue('--color-text-secondary').trim() || '#606266'
 
   const option: EChartsOption = {
     backgroundColor: 'transparent',
@@ -291,14 +368,49 @@ const updateChart = (data: ChinaMapData) => {
   chart.setOption(option)
 }
 
-const initChart = () => {
-  if (!chartRef.value) {
-    return
+const initChart = (): Promise<void> => {
+  if (chartLoadPromise) {
+    return chartLoadPromise
   }
 
-  chart = echarts.init(chartRef.value)
-  echarts.registerMap('china', chinaMap)
-  isMapReady.value = true
+  chartLoading.value = true
+  chartError.value = false
+  const promise = (async () => {
+    try {
+      const [{ echarts }, { default: chinaMap }] = await Promise.all([
+        import('@/utils/echartsMap'),
+        import('china-map-geojson/lib/china')
+      ])
+      if (isUnmounted || !chartRef.value) {
+        return
+      }
+
+      echarts.registerMap('china', chinaMap)
+      chart?.dispose()
+      chart = echarts.init(chartRef.value)
+      isMapReady.value = true
+      if (latestData.value) {
+        updateChart(latestData.value)
+      }
+    } catch (error) {
+      if (!isUnmounted) {
+        chartError.value = true
+        console.error('加载地图组件失败', error)
+      }
+    } finally {
+      if (!isUnmounted) {
+        chartLoading.value = false
+      }
+    }
+  })()
+
+  chartLoadPromise = promise
+  void promise.finally(() => {
+    if (chartLoadPromise === promise) {
+      chartLoadPromise = null
+    }
+  })
+  return promise
 }
 
 const handleResize = () => {
@@ -323,15 +435,15 @@ watch(
 watch(
   () => themeStore.theme,
   () => {
-    if (latestData) {
-      updateChart(latestData)
+    if (latestData.value) {
+      updateChart(latestData.value)
     }
   }
 )
 
 watch(locale, () => {
-  if (latestData) {
-    updateChart(latestData)
+  if (latestData.value) {
+    updateChart(latestData.value)
   }
 })
 
@@ -353,10 +465,7 @@ const saveMapImage = () => {
 
 onMounted(async () => {
   window.addEventListener('resize', handleResize)
-  initChart()
-  if (isUnmounted) {
-    return
-  }
+  void initChart()
   await loadConfig()
 })
 
@@ -369,7 +478,9 @@ onUnmounted(() => {
     resizeTimer = null
   }
   isMapReady.value = false
-  latestData = null
+  chartLoading.value = false
+  latestData.value = null
+  chartLoadPromise = null
   chart?.dispose()
   chart = null
   window.removeEventListener('resize', handleResize)
@@ -381,9 +492,27 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
-.mapping-view__map {
+.mapping-view__map-shell {
+  position: relative;
   min-height: 520px;
   height: min(72vh, 760px);
+}
+
+.mapping-view__map {
+  width: 100%;
+  height: 100%;
+}
+
+.mapping-view__state {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg-primary) 94%, transparent);
+}
+
+.mapping-view__state-icon {
+  font-size: 28px;
 }
 
 .mapping-view__agent {
@@ -402,7 +531,7 @@ onUnmounted(() => {
 }
 
 @media (max-width: 900px) {
-  .mapping-view__map {
+  .mapping-view__map-shell {
     min-height: 420px;
     height: 58vh;
   }

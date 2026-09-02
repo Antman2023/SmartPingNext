@@ -1,6 +1,6 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import 'element-plus/dist/index.css'
+import './plugins/elementPlusStyles'
 
 import App from './App.vue'
 import router from './router'
@@ -21,6 +21,7 @@ app.use(router)
 // 初始化语言
 const localeStore = useLocaleStore()
 const initialLocale = localeStore.locale
+document.documentElement.lang = initialLocale
 
 // 设置 i18n 初始语言
 i18n.global.locale.value = initialLocale
@@ -30,6 +31,7 @@ app.use(i18n)
 // 监听语言变化，同步更新 vue-i18n
 localeStore.$subscribe((_mutation, state) => {
   i18n.global.locale.value = state.locale
+  document.documentElement.lang = state.locale
 })
 
 // 初始化主题

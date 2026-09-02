@@ -26,6 +26,13 @@
             <strong class="page-kpi__value">{{ loadedNodes }}</strong>
           </div>
         </div>
+
+        <RefreshStatus
+          class="surface-panel surface-panel--tight"
+          :loading="configLoading || isRefreshing"
+          :last-updated="lastUpdatedLabel"
+          @refresh="refreshTopology"
+        />
       </div>
     </div>
 
@@ -42,13 +49,39 @@
             </div>
           </div>
 
-          <TopologyGraph
-            :nodes="topologyNodes"
-            :links="topologyLinks"
-            :symbol-size="Number(config?.Topology?.Tsymbolsize || 50)"
-            :line-width="Number(config?.Topology?.Tline || 2)"
-            :height="graphHeight"
-          />
+          <div v-if="configLoading && !config" class="empty-state" aria-live="polite">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>{{ $t('common.loading') }}</span>
+          </div>
+
+          <div v-else-if="configError && !config" class="empty-state">
+            <el-icon class="topology-view__empty-icon topology-view__empty-icon--danger">
+              <Warning />
+            </el-icon>
+            <span>{{ $t('common.configLoadFailedNetwork') }}</span>
+            <el-button size="small" @click="loadConfig">{{ $t('common.retry') }}</el-button>
+          </div>
+
+          <div v-else-if="!topologyNodes.length" class="empty-state">
+            <el-icon class="topology-view__empty-icon"><InfoFilled /></el-icon>
+            <span>{{ $t('topology.noTopology') }}</span>
+          </div>
+
+          <div
+            v-else
+            v-loading="!topologyGraphRef"
+            class="topology-view__graph-shell"
+            :style="{ height: `${graphHeight}px` }"
+          >
+            <TopologyGraph
+              ref="topologyGraphRef"
+              :nodes="topologyNodes"
+              :links="topologyLinks"
+              :symbol-size="Number(config?.Topology?.Tsymbolsize || 50)"
+              :line-width="Number(config?.Topology?.Tline || 2)"
+              :height="graphHeight"
+            />
+          </div>
         </section>
       </div>
 
@@ -78,9 +111,7 @@
           <div class="list-stack">
             <div v-for="node in monitoredNodes" :key="node.id" class="list-row">
               <div class="list-row__meta">
-                <el-icon v-if="loadingNodes.has(node.id)" class="is-loading"
-                  ><Loading
-                /></el-icon>
+                <el-icon v-if="loadingNodes.has(node.id)" class="is-loading"><Loading /></el-icon>
                 <el-icon
                   v-else-if="node.color === 'red' || failedNodes.has(node.id)"
                   class="text-danger"
@@ -105,16 +136,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Bell, Loading, Warning } from '@element-plus/icons-vue'
-import TopologyGraph from '@/components/charts/TopologyGraph.vue'
+import { Bell, InfoFilled, Loading, Warning } from '@element-plus/icons-vue'
+import RefreshStatus from '@/components/common/RefreshStatus.vue'
 import { fetchConfig } from '@/api/config'
 import { getTopology } from '@/api/topology'
-import { displayName } from '@/utils/format'
+import { mapWithConcurrency } from '@/utils/concurrency'
+import { displayName, formatTime } from '@/utils/format'
 import type { Config } from '@/types'
+
+const topologyGraphModule = import('@/components/charts/TopologyGraph.vue')
+const TopologyGraph = defineAsyncComponent(() => topologyGraphModule)
 
 const router = useRouter()
 const { t } = useI18n()
@@ -122,10 +157,16 @@ const config = ref<Config | null>(null)
 const loadingNodes = ref(new Set<string>())
 const failedNodes = ref(new Set<string>())
 const topologyStatus = ref<Record<string, Record<string, string>>>({})
+const configLoading = ref(true)
+const configError = ref(false)
+const isRefreshing = ref(false)
+const lastUpdatedAt = ref<Date | null>(null)
 const graphHeight = ref(Math.max(window.innerHeight - 300, 420))
+const topologyGraphRef = ref<unknown>(null)
 let isUnmounted = false
 let configRequestId = 0
 let topologyRequestId = 0
+const TOPOLOGY_CONCURRENCY = 4
 
 interface TopoNode {
   id: string
@@ -201,22 +242,35 @@ const loadedNodes = computed(
 const degradedLinks = computed(
   () => topologyLinks.value.filter((link) => link.color === 'red').length
 )
+const lastUpdatedLabel = computed(() =>
+  lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
+)
 
 const loadConfig = async () => {
   const requestId = ++configRequestId
+  configLoading.value = true
+  configError.value = false
   try {
     const cfg = await fetchConfig()
     if (isUnmounted || requestId !== configRequestId) {
       return
     }
     config.value = cfg
+    topologyStatus.value = {}
     await loadTopologyStatus()
   } catch (error) {
     if (isUnmounted || requestId !== configRequestId) {
       return
     }
     console.error('加载配置失败', error)
-    ElMessage.error(t('common.configLoadFailedNetwork'))
+    configError.value = true
+    if (config.value) {
+      ElMessage.error(t('common.configLoadFailedNetwork'))
+    }
+  } finally {
+    if (!isUnmounted && requestId === configRequestId) {
+      configLoading.value = false
+    }
   }
 }
 
@@ -230,35 +284,50 @@ const loadTopologyStatus = async () => {
   const networkWithTopology = Object.entries(cfg.Network).filter(
     ([, network]) => network.Topology && network.Topology.length > 0
   )
+  const nextStatus = Object.fromEntries(
+    networkWithTopology.flatMap(([addr]) =>
+      topologyStatus.value[addr] ? [[addr, topologyStatus.value[addr]]] : []
+    )
+  ) as Record<string, Record<string, string>>
 
+  isRefreshing.value = true
   loadingNodes.value = new Set(networkWithTopology.map(([addr]) => addr))
   failedNodes.value = new Set()
-  topologyStatus.value = {}
 
-  const promises = networkWithTopology.map(async ([addr, network]) => {
-    try {
-      const status = await getTopology(addr, cfg.Port, cfg.Addr)
-      if (isUnmounted || requestId !== topologyRequestId) {
-        return
+  try {
+    await mapWithConcurrency(networkWithTopology, TOPOLOGY_CONCURRENCY, async ([addr, network]) => {
+      try {
+        const status = await getTopology(addr, cfg.Port, cfg.Addr)
+        if (isUnmounted || requestId !== topologyRequestId) {
+          return
+        }
+        nextStatus[addr] = status
+        topologyStatus.value = { ...nextStatus }
+      } catch (error) {
+        if (isUnmounted || requestId !== topologyRequestId) {
+          return
+        }
+        delete nextStatus[addr]
+        topologyStatus.value = { ...nextStatus }
+        failedNodes.value = new Set(failedNodes.value).add(addr)
+        console.error(`获取 ${network.Name} 拓扑状态失败`, error)
+      } finally {
+        if (!isUnmounted && requestId === topologyRequestId) {
+          const nextLoadingNodes = new Set(loadingNodes.value)
+          nextLoadingNodes.delete(addr)
+          loadingNodes.value = nextLoadingNodes
+        }
       }
-      topologyStatus.value = { ...topologyStatus.value, [addr]: status }
-    } catch (error) {
-      if (isUnmounted || requestId !== topologyRequestId) {
-        return
-      }
-      failedNodes.value = new Set(failedNodes.value).add(addr)
-      console.error(`获取 ${network.Name} 拓扑状态失败`, error)
-    } finally {
-      if (!isUnmounted && requestId === topologyRequestId) {
-        const nextLoadingNodes = new Set(loadingNodes.value)
-        nextLoadingNodes.delete(addr)
-        loadingNodes.value = nextLoadingNodes
-      }
+    })
+  } finally {
+    if (!isUnmounted && requestId === topologyRequestId) {
+      isRefreshing.value = false
+      lastUpdatedAt.value = new Date()
     }
-  })
-
-  await Promise.all(promises)
+  }
 }
+
+const refreshTopology = () => (config.value ? loadTopologyStatus() : loadConfig())
 
 const handleResize = () => {
   graphHeight.value = Math.max(window.innerHeight - 300, 420)
@@ -318,6 +387,11 @@ onUnmounted(() => {
   }
 }
 
+.topology-view__graph-shell {
+  width: 100%;
+  min-height: 420px;
+}
+
 .topology-view__alert-copy {
   display: flex;
   flex-direction: column;
@@ -342,5 +416,14 @@ onUnmounted(() => {
 
 .topology-view__dot--green {
   background: var(--color-success);
+}
+
+.topology-view__empty-icon {
+  color: var(--color-text-secondary);
+  font-size: 26px;
+}
+
+.topology-view__empty-icon--danger {
+  color: var(--color-danger);
 }
 </style>

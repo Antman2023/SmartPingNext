@@ -27,13 +27,13 @@
           </div>
         </div>
 
-        <section class="surface-panel surface-panel--tight reverse-view__switcher">
-          <div class="reverse-view__switcher-copy">
-            <span class="page-eyebrow">{{ $t('common.autoRefresh') }}</span>
-            <strong>{{ autoRefresh ? $t('common.loaded') : $t('common.status') }}</strong>
-          </div>
-          <el-switch v-model="autoRefresh" size="small" :aria-label="$t('common.autoRefresh')" />
-        </section>
+        <MonitorRefreshControl
+          v-model="autoRefresh"
+          class="surface-panel surface-panel--tight"
+          :refreshing="configLoading || isRefreshing"
+          :last-updated="lastUpdatedLabel"
+          @refresh="refreshMonitor"
+        />
       </div>
     </div>
 
@@ -54,7 +54,25 @@
             </div>
           </div>
 
-          <div class="monitor-grid">
+          <div v-if="configLoading && !config" class="empty-state" aria-live="polite">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>{{ $t('common.loading') }}</span>
+          </div>
+
+          <div v-else-if="configError && !config" class="empty-state">
+            <el-icon class="reverse-view__empty-icon reverse-view__empty-icon--danger">
+              <Warning />
+            </el-icon>
+            <span>{{ $t('common.configLoadFailedNetwork') }}</span>
+            <el-button size="small" @click="loadConfig()">{{ $t('common.retry') }}</el-button>
+          </div>
+
+          <div v-else-if="!reverseTargets.length" class="empty-state">
+            <el-icon class="reverse-view__empty-icon"><InfoFilled /></el-icon>
+            <span>{{ $t('common.noMonitorTargets') }}</span>
+          </div>
+
+          <div v-else class="monitor-grid">
             <article
               v-for="target in reverseTargets"
               :key="target.fromAddr"
@@ -186,16 +204,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ElDatePicker, ElDialog, ElSwitch } from 'element-plus'
-import { Loading, Warning } from '@element-plus/icons-vue'
-import PingChart from '@/components/charts/PingChart.vue'
-import PingMiniChart from '@/components/charts/PingMiniChart.vue'
+import { ElDatePicker, ElDialog, ElMessage, ElSwitch } from 'element-plus'
+import { InfoFilled, Loading, Warning } from '@element-plus/icons-vue'
+import '@/plugins/elementPlusMonitorStyles'
+import MonitorRefreshControl from '@/components/common/MonitorRefreshControl.vue'
 import { fetchConfig, fetchProxyConfig } from '@/api/config'
 import { getProxyPingData } from '@/api/ping'
-import { displayName, formatDateTime } from '@/utils/format'
+import { displayName, formatDateTime, formatTime } from '@/utils/format'
 import type { Config, PingLogData } from '@/types'
+
+const pingMiniChartModule = import('@/components/charts/PingMiniChart.vue')
+const PingMiniChart = defineAsyncComponent(() => pingMiniChartModule)
+const PingChart = defineAsyncComponent(() => import('@/components/charts/PingChart.vue'))
 
 interface ReverseTarget {
   fromName: string
@@ -223,6 +245,10 @@ const currentTarget = ref<ReverseTarget | null>(null)
 const pingChartRef = ref<{ saveAsImage: () => void } | null>(null)
 
 const autoRefresh = ref(false)
+const configLoading = ref(true)
+const configError = ref(false)
+const isRefreshing = ref(false)
+const lastUpdatedAt = ref<Date | null>(null)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 const detailAutoRefresh = ref(false)
 let detailRefreshTimer: ReturnType<typeof setInterval> | null = null
@@ -231,6 +257,9 @@ let configRequestId = 0
 let chartRequestId = 0
 let detailRequestId = 0
 const refreshInterval = computed(() => Math.max(config.value?.Base.Refresh || 1, 1) * 60 * 1000)
+const lastUpdatedLabel = computed(() =>
+  lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
+)
 
 const timeRanges = computed(() => [
   { label: t('dashboard.timeRanges.hour1'), hours: 1 },
@@ -251,6 +280,8 @@ const failedTargets = computed(
 
 const loadConfig = async (proxyUrl?: string) => {
   const requestId = ++configRequestId
+  configLoading.value = true
+  configError.value = false
   try {
     const cfg = proxyUrl ? await fetchProxyConfig(proxyUrl) : await fetchConfig()
     if (isUnmounted || requestId !== configRequestId) {
@@ -289,13 +320,36 @@ const loadConfig = async (proxyUrl?: string) => {
       return
     }
     console.error('加载配置失败', error)
+    configError.value = true
+    if (config.value) {
+      ElMessage.error(t('common.configLoadFailedNetwork'))
+    }
+  } finally {
+    if (!isUnmounted && requestId === configRequestId) {
+      configLoading.value = false
+    }
   }
 }
 
 const loadAllCharts = async () => {
   const requestId = ++chartRequestId
-  const targets = reverseTargets.value
-  await Promise.all(targets.map((target) => loadChartData(target, requestId)))
+  const targets = [...reverseTargets.value]
+  const batchSize = 4
+  isRefreshing.value = true
+  try {
+    for (let index = 0; index < targets.length; index += batchSize) {
+      if (isUnmounted || requestId !== chartRequestId) {
+        return
+      }
+      const batch = targets.slice(index, index + batchSize)
+      await Promise.all(batch.map((target) => loadChartData(target, requestId)))
+    }
+  } finally {
+    if (!isUnmounted && requestId === chartRequestId) {
+      isRefreshing.value = false
+      lastUpdatedAt.value = new Date()
+    }
+  }
 }
 
 const loadChartData = async (target: ReverseTarget, requestId: number) => {
@@ -351,6 +405,10 @@ const loadDetailData = async () => {
   const baseUrl = `http://${target.fromAddr}:${target.fromPort}`
   const start = startTime.value
   const end = endTime.value
+  if (start && end && start > end) {
+    ElMessage.warning(t('common.invalidTimeRange'))
+    return
+  }
   detailLoading.value = true
   detailError.value = false
   try {
@@ -408,7 +466,39 @@ const getStatusText = (target: ReverseTarget) => {
   return t('common.loaded')
 }
 
+const refreshChartsIfVisible = () => {
+  if (document.visibilityState === 'visible') {
+    loadAllCharts()
+  }
+}
+
+const refreshMonitor = () => {
+  if (config.value) {
+    return loadAllCharts()
+  }
+  return loadConfig()
+}
+
+const refreshDetailIfVisible = () => {
+  if (document.visibilityState === 'visible' && detailVisible.value) {
+    loadDetailData()
+  }
+}
+
+const handleVisibilityChange = () => {
+  if (document.visibilityState !== 'visible') {
+    return
+  }
+  if (autoRefresh.value) {
+    loadAllCharts()
+  }
+  if (detailAutoRefresh.value && detailVisible.value) {
+    loadDetailData()
+  }
+}
+
 onMounted(() => {
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   loadConfig()
 })
 
@@ -419,9 +509,7 @@ watch([autoRefresh, refreshInterval], ([enabled, interval]) => {
   }
 
   if (enabled) {
-    refreshTimer = setInterval(() => {
-      loadAllCharts()
-    }, interval)
+    refreshTimer = setInterval(refreshChartsIfVisible, interval)
   }
 })
 
@@ -432,9 +520,7 @@ watch([detailAutoRefresh, refreshInterval], ([enabled, interval]) => {
   }
 
   if (enabled) {
-    detailRefreshTimer = setInterval(() => {
-      loadDetailData()
-    }, interval)
+    detailRefreshTimer = setInterval(refreshDetailIfVisible, interval)
   }
 })
 
@@ -449,6 +535,7 @@ watch(detailVisible, (visible) => {
 
 onUnmounted(() => {
   isUnmounted = true
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   configRequestId++
   chartRequestId++
   detailRequestId++
@@ -465,25 +552,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped lang="scss">
-.reverse-view__switcher {
-  min-width: 172px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.reverse-view__switcher-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-
-  strong {
-    font-size: 14px;
-    color: var(--color-text-primary);
-  }
-}
-
 .reverse-view__tile {
   animation: page-rise 0.45s ease both;
 }
@@ -497,6 +565,15 @@ onUnmounted(() => {
 }
 
 .reverse-view__state--danger {
+  color: var(--color-danger);
+}
+
+.reverse-view__empty-icon {
+  font-size: 26px;
+  color: var(--color-text-secondary);
+}
+
+.reverse-view__empty-icon--danger {
   color: var(--color-danger);
 }
 
@@ -527,11 +604,5 @@ onUnmounted(() => {
 .reverse-view__refresh-label {
   font-size: 13px;
   color: var(--color-text-secondary);
-}
-
-@media (max-width: 900px) {
-  .reverse-view__switcher {
-    width: 100%;
-  }
 }
 </style>

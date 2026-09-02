@@ -28,22 +28,32 @@
             <strong class="page-kpi__value">{{ failedNodes }}</strong>
           </div>
         </div>
+
+        <RefreshStatus
+          class="surface-panel surface-panel--tight"
+          :loading="configLoading || alertsLoading"
+          :last-updated="lastUpdatedLabel"
+          @refresh="retryAlerts"
+        />
       </div>
     </div>
 
     <div class="page-frame alerts-view__frame">
       <aside class="page-aside page-aside--narrow">
-        <section class="surface-panel surface-panel--soft">
+        <section
+          v-loading="configLoading || alertsLoading"
+          class="surface-panel surface-panel--soft"
+        >
           <div class="surface-panel__header">
             <div>
               <h2 class="surface-panel__title">{{ $t('alerts.alertArchive') }}</h2>
               <p class="surface-panel__description">
-                {{ dates.length }} {{ $t('common.records') }}
+                {{ $t('alerts.archiveDays', { count: dates.length }) }}
               </p>
             </div>
           </div>
 
-          <div class="list-stack alerts-view__archive">
+          <div v-if="dates.length" class="list-stack alerts-view__archive">
             <button
               v-for="date in dates"
               :key="date"
@@ -54,6 +64,12 @@
             >
               <span class="list-row__title">{{ date }}</span>
             </button>
+          </div>
+          <div
+            v-else-if="!configLoading && !alertsLoading"
+            class="empty-state alerts-view__archive-empty"
+          >
+            <span>{{ $t('alerts.noArchiveDates') }}</span>
           </div>
         </section>
       </aside>
@@ -70,7 +86,12 @@
           </div>
 
           <div class="table-scroll">
-            <el-table v-loading="alertsLoading" :data="alerts" stripe style="width: 100%">
+            <el-table
+              v-loading="configLoading || alertsLoading"
+              :data="alerts"
+              stripe
+              style="width: 100%"
+            >
               <el-table-column prop="Logtime" :label="$t('alerts.alertDate')" min-width="170" />
               <el-table-column prop="Fromname" :label="$t('alerts.sourceNode')" min-width="120" />
               <el-table-column prop="Fromip" :label="$t('alerts.sourceIP')" min-width="140" />
@@ -143,8 +164,11 @@
     </div>
 
     <el-dialog v-model="mtrVisible" :title="$t('alerts.mtrResult')" width="760px">
-      <div class="table-scroll">
+      <div class="table-scroll alerts-view__mtr-scroll">
         <el-table :data="mtrData" stripe style="width: 100%">
+          <el-table-column :label="$t('alerts.hop')" width="64">
+            <template #default="{ $index }">{{ $index + 1 }}</template>
+          </el-table-column>
           <el-table-column prop="Host" :label="$t('alerts.host')" min-width="150" />
           <el-table-column :label="$t('alerts.packetLossRate')" width="90">
             <template #default="{ row }">
@@ -192,9 +216,12 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { ElDialog, ElMessage, ElTable, ElTableColumn } from 'element-plus'
 import { ArrowLeft, Loading, Warning } from '@element-plus/icons-vue'
+import '@/plugins/elementPlusAlertsStyles'
+import RefreshStatus from '@/components/common/RefreshStatus.vue'
 import { fetchConfig } from '@/api/config'
 import { getAlerts } from '@/api/alert'
-import { displayName } from '@/utils/format'
+import { mapWithConcurrency } from '@/utils/concurrency'
+import { displayName, formatTime } from '@/utils/format'
 import type { AlertData, AlertLog, Config, MtrResult } from '@/types'
 
 interface AlertNode {
@@ -213,16 +240,23 @@ const alerts = ref<AlertLog[]>([])
 const nodes = ref<AlertNode[]>([])
 const alertsLoading = ref(false)
 const alertsLoadError = ref(false)
+const configLoading = ref(true)
+const lastUpdatedAt = ref<Date | null>(null)
 
 const mtrVisible = ref(false)
 const mtrData = ref<MtrResult[]>([])
 let isUnmounted = false
 let configRequestId = 0
 let alertsRequestId = 0
+const ALERT_CONCURRENCY = 4
 const failedNodes = computed(() => nodes.value.filter((node) => node.error).length)
+const lastUpdatedLabel = computed(() =>
+  lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
+)
 
 const loadConfig = async () => {
   const requestId = ++configRequestId
+  configLoading.value = true
   try {
     const cfg = await fetchConfig()
     if (isUnmounted || requestId !== configRequestId) {
@@ -241,7 +275,13 @@ const loadConfig = async () => {
     }
     console.error('加载配置失败', error)
     alertsLoadError.value = true
-    ElMessage.error(t('common.configLoadFailedNetwork'))
+    if (config.value) {
+      ElMessage.error(t('common.configLoadFailedNetwork'))
+    }
+  } finally {
+    if (!isUnmounted && requestId === configRequestId) {
+      configLoading.value = false
+    }
   }
 }
 
@@ -260,17 +300,15 @@ const loadAlerts = async (date?: string) => {
     node.error = false
   })
   try {
-    const results = await Promise.all(
-      requestNodes.map(async (node) => {
-        try {
-          const data = await getAlerts(`http://${node.addr}:${port}`, date)
-          return { node, data, error: false }
-        } catch (error) {
-          console.error(`获取 ${node.name} 报警记录失败`, error)
-          return { node, data: null, error: true }
-        }
-      })
-    )
+    const results = await mapWithConcurrency(requestNodes, ALERT_CONCURRENCY, async (node) => {
+      try {
+        const data = await getAlerts(`http://${node.addr}:${port}`, date)
+        return { node, data, error: false }
+      } catch (error) {
+        console.error(`获取 ${node.name} 报警记录失败`, error)
+        return { node, data: null, error: true }
+      }
+    })
     if (isUnmounted || requestId !== alertsRequestId) {
       return
     }
@@ -296,6 +334,7 @@ const loadAlerts = async (date?: string) => {
     if (!isUnmounted && requestId === alertsRequestId) {
       requestNodes.forEach((node) => (node.loading = false))
       alertsLoading.value = false
+      lastUpdatedAt.value = new Date()
     }
   }
 }
@@ -358,8 +397,7 @@ const formatLossRate = (row: MtrResult): string => {
 const formatMtrDuration = (value: number): string =>
   Number.isFinite(value) ? (value / 1_000_000).toFixed(2) : '--'
 
-const formatMtrValue = (value: number): string =>
-  Number.isFinite(value) ? value.toFixed(2) : '--'
+const formatMtrValue = (value: number): string => (Number.isFinite(value) ? value.toFixed(2) : '--')
 
 onMounted(() => {
   loadConfig()
@@ -392,6 +430,10 @@ onUnmounted(() => {
   border: none;
   cursor: pointer;
   font: inherit;
+}
+
+.alerts-view__archive-empty {
+  min-height: 120px;
 }
 
 .alerts-view__table-panel {
@@ -427,6 +469,11 @@ onUnmounted(() => {
 
 .alerts-view__node-error {
   color: var(--color-danger);
+}
+
+.alerts-view__mtr-scroll {
+  max-height: min(68vh, 620px);
+  max-height: min(68svh, 620px);
 }
 
 .alerts-view__empty {

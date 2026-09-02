@@ -7,12 +7,28 @@ import { dirname } from 'path'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+const elementPlusCssLayer = () => ({
+  name: 'element-plus-css-layer',
+  enforce: 'pre' as const,
+  transform(code: string, id: string) {
+    const cleanId = id.split('?', 1)[0].replace(/\\/g, '/')
+    if (!cleanId.includes('/element-plus/theme-chalk/') || !cleanId.endsWith('.css')) {
+      return null
+    }
+
+    return {
+      code: `@layer element-plus {\n${code}\n}`,
+      map: null
+    }
+  }
+})
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, cwd(), '')
   const proxyTarget = env.VITE_PROXY_TARGET || 'http://localhost:8899'
 
   return {
-    plugins: [vue()],
+    plugins: [elementPlusCssLayer(), vue()],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src')

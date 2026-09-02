@@ -1,0 +1,6 @@
+import 'element-plus/es/components/button/style/css.mjs'
+import 'element-plus/es/components/config-provider/style/css.mjs'
+import 'element-plus/es/components/icon/style/css.mjs'
+import 'element-plus/es/components/loading/style/css.mjs'
+import 'element-plus/es/components/message/style/css.mjs'
+import 'element-plus/es/components/tooltip/style/css.mjs'

@@ -1,0 +1,6 @@
+import 'element-plus/es/components/checkbox/style/css.mjs'
+import 'element-plus/es/components/input/style/css.mjs'
+import 'element-plus/es/components/option/style/css.mjs'
+import 'element-plus/es/components/select/style/css.mjs'
+import 'element-plus/es/components/table/style/css.mjs'
+import 'element-plus/es/components/table-column/style/css.mjs'
