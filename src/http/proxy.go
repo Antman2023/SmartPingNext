@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -12,9 +13,12 @@ import (
 )
 
 const (
-	maxProxyResponseBytes  = 16 << 20
-	maxProxyTimeoutSeconds = 60
+	maxProxyResponseBytes      = 16 << 20
+	maxProxyTimeoutSeconds     = 60
+	maxConcurrentProxyRequests = 32
 )
+
+var proxyRequestSlots = make(chan struct{}, maxConcurrentProxyRequests)
 
 type proxyQueryRule struct {
 	required map[string]struct{}
@@ -56,6 +60,19 @@ func normalizeProxyTimeout(seconds int) int {
 	return seconds
 }
 
+func acquireProxyRequest() bool {
+	select {
+	case proxyRequestSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseProxyRequest() {
+	<-proxyRequestSlots
+}
+
 func readProxyResponseBody(reader io.Reader) ([]byte, error) {
 	limited := io.LimitReader(reader, maxProxyResponseBytes+1)
 	body, err := io.ReadAll(limited)
@@ -66,6 +83,16 @@ func readProxyResponseBody(reader io.Reader) ([]byte, error) {
 		return nil, errors.New("Proxy Response Too Large!")
 	}
 	return body, nil
+}
+
+func readProxyHTTPResponseBody(response *http.Response) ([]byte, error) {
+	if response == nil || response.Body == nil {
+		return nil, errors.New("Proxy Response Body Missing!")
+	}
+	if response.ContentLength > maxProxyResponseBytes {
+		return nil, errors.New("Proxy Response Too Large!")
+	}
+	return readProxyResponseBody(response.Body)
 }
 
 func validateProxyTarget(rawTarget string) (*url.URL, error) {

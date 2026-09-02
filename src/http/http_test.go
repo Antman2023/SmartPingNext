@@ -1,7 +1,9 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -113,6 +115,15 @@ func TestResolveToolIPAddrUsesIPv4(t *testing.T) {
 
 	if _, err := resolveToolIPAddr("2001:db8::1"); err == nil {
 		t.Fatalf("resolveToolIPAddr should reject an IPv6-only target")
+	}
+}
+
+func TestResolveToolIPAddrContextHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := resolveToolIPAddrContext(ctx, "127.0.0.1"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("resolveToolIPAddrContext error = %v, want context canceled", err)
 	}
 }
 
@@ -325,6 +336,15 @@ func TestResponseHeaders(t *testing.T) {
 
 			if got := recorder.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 				t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+			}
+			if got := recorder.Header().Get("X-Frame-Options"); got != "SAMEORIGIN" {
+				t.Fatalf("X-Frame-Options = %q, want SAMEORIGIN", got)
+			}
+			if got := recorder.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+				t.Fatalf("Content-Security-Policy = %q, want frame-ancestors 'self'", got)
+			}
+			if got := recorder.Header().Get("Permissions-Policy"); got != "camera=(), geolocation=(), microphone=()" {
+				t.Fatalf("Permissions-Policy = %q", got)
 			}
 			if got := recorder.Header().Get("Referrer-Policy"); got != "no-referrer" {
 				t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
@@ -666,6 +686,45 @@ func TestSetStaticCacheHeaders(t *testing.T) {
 	}
 }
 
+func TestIndexRoutesDistinguishAPISPARoutesAndStaticFiles(t *testing.T) {
+	withAuthMaps(nil, nil, func() {
+		mux := http.NewServeMux()
+		configIndexRoutes(mux)
+		tests := []struct {
+			name             string
+			requestPath      string
+			wantStatus       int
+			wantIndex        bool
+			wantCacheControl string
+		}{
+			{name: "API root", requestPath: "/api", wantStatus: http.StatusNotFound},
+			{name: "SPA route", requestPath: "/topology", wantStatus: http.StatusOK, wantIndex: true, wantCacheControl: indexCacheControl},
+			{name: "SPA route below dotted directory", requestPath: "/site.v2/topology", wantStatus: http.StatusOK, wantIndex: true, wantCacheControl: indexCacheControl},
+			{name: "missing static asset", requestPath: "/assets/missing.js", wantStatus: http.StatusNotFound},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				request := httptest.NewRequest(http.MethodGet, tt.requestPath, nil)
+				mux.ServeHTTP(recorder, request)
+
+				if recorder.Code != tt.wantStatus {
+					t.Fatalf("status = %d, want %d: %s", recorder.Code, tt.wantStatus, recorder.Body.String())
+				}
+				if got := strings.Contains(recorder.Body.String(), `<div id="app"></div>`); got != tt.wantIndex {
+					t.Fatalf("index marker present = %v, want %v", got, tt.wantIndex)
+				}
+				if tt.wantCacheControl != "" {
+					if got := recorder.Header().Get("Cache-Control"); got != tt.wantCacheControl {
+						t.Fatalf("Cache-Control = %q, want %q", got, tt.wantCacheControl)
+					}
+				}
+			})
+		}
+	})
+}
+
 func TestParseFormLimited(t *testing.T) {
 	t.Run("accepts form within limit", func(t *testing.T) {
 		recorder := httptest.NewRecorder()
@@ -910,6 +969,126 @@ func TestAllowToolRequestAllowsZeroLimitAndExactBoundary(t *testing.T) {
 	}
 	if !allowToolRequest("192.0.2.1:10003", 1030, 30) {
 		t.Fatalf("request at the exact boundary should be allowed")
+	}
+}
+
+func TestAllowToolRequestResetsClientAfterClockRollback(t *testing.T) {
+	g.ToolLimitLock.Lock()
+	oldToolLimit := g.ToolLimit
+	g.ToolLimit = map[string]int{"192.0.2.1": 1000}
+	g.ToolLimitLock.Unlock()
+	defer func() {
+		g.ToolLimitLock.Lock()
+		g.ToolLimit = oldToolLimit
+		g.ToolLimitLock.Unlock()
+	}()
+
+	if !allowToolRequest("192.0.2.1:10001", 900, 30) {
+		t.Fatal("request after clock rollback should start a new rate-limit window")
+	}
+	g.ToolLimitLock.RLock()
+	lastSeen := g.ToolLimit["192.0.2.1"]
+	g.ToolLimitLock.RUnlock()
+	if lastSeen != 900 {
+		t.Fatalf("last seen = %d, want 900", lastSeen)
+	}
+}
+
+func TestAllowToolRequestBoundsClientEntries(t *testing.T) {
+	g.ToolLimitLock.Lock()
+	oldToolLimit := g.ToolLimit
+	g.ToolLimit = make(map[string]int, maxToolClients)
+	for i := 0; i < maxToolClients; i++ {
+		g.ToolLimit[fmt.Sprintf("client-%04d", i)] = i + 1
+	}
+	g.ToolLimitLock.Unlock()
+	defer func() {
+		g.ToolLimitLock.Lock()
+		g.ToolLimit = oldToolLimit
+		g.ToolLimitLock.Unlock()
+	}()
+
+	now := maxToolClients + 1
+	if !allowToolRequest("192.0.2.1:10001", now, maxToolClients+10) {
+		t.Fatal("new client should be allowed when the rate-limit table is full")
+	}
+	g.ToolLimitLock.RLock()
+	entryCount := len(g.ToolLimit)
+	_, oldestExists := g.ToolLimit["client-0000"]
+	_, newClientExists := g.ToolLimit["192.0.2.1"]
+	g.ToolLimitLock.RUnlock()
+	if entryCount != maxToolClients {
+		t.Fatalf("rate-limit entry count = %d, want %d", entryCount, maxToolClients)
+	}
+	if oldestExists || !newClientExists {
+		t.Fatalf("rate-limit table did not evict the oldest client")
+	}
+}
+
+func TestToolRequestConcurrencyLimitReleasesSlots(t *testing.T) {
+	oldSlots := toolRequestSlots
+	toolRequestSlots = make(chan struct{}, maxConcurrentTools)
+	defer func() { toolRequestSlots = oldSlots }()
+
+	for i := 0; i < maxConcurrentTools; i++ {
+		if !acquireToolRequest() {
+			t.Fatalf("acquireToolRequest rejected slot %d", i)
+		}
+	}
+	if acquireToolRequest() {
+		t.Fatal("acquireToolRequest should reject a request when all slots are occupied")
+	}
+
+	releaseToolRequest()
+	if !acquireToolRequest() {
+		t.Fatal("released tool request slot was not reusable")
+	}
+	for i := 0; i < maxConcurrentTools; i++ {
+		releaseToolRequest()
+	}
+}
+
+func TestToolsEndpointReturnsTooManyRequestsWhenConcurrencyIsFull(t *testing.T) {
+	oldConfig := g.ConfigSnapshot()
+	oldSlots := toolRequestSlots
+	toolRequestSlots = make(chan struct{}, maxConcurrentTools)
+	g.SetConfig(g.Config{Authiplist: ""})
+	defer func() {
+		toolRequestSlots = oldSlots
+		g.SetConfig(oldConfig)
+	}()
+
+	for i := 0; i < maxConcurrentTools; i++ {
+		if !acquireToolRequest() {
+			t.Fatalf("fill tool request slot %d", i)
+		}
+	}
+	defer func() {
+		for i := 0; i < maxConcurrentTools; i++ {
+			releaseToolRequest()
+		}
+	}()
+
+	handler := newHTTPServer(":8899", newAppHandler()).Handler
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/tools.json?t=127.0.0.1", nil)
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("tools endpoint status = %d, want %d", recorder.Code, http.StatusTooManyRequests)
+	}
+	if recorder.Header().Get("Retry-After") != "1" {
+		t.Fatalf("Retry-After = %q, want 1", recorder.Header().Get("Retry-After"))
+	}
+	if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Fatalf("Content-Type = %q, want application/json", got)
+	}
+	var response g.ToolsRes
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode tools concurrency response: %v", err)
+	}
+	if response.Status != "false" || response.Error != "Too Many Tool Requests" {
+		t.Fatalf("tools concurrency response = %#v", response)
 	}
 }
 

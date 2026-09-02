@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"smartping/src/g"
+	"smartping/src/nettools"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,8 @@ const (
 	passwordFailureLimit  = 5
 	passwordFailureWindow = 5 * time.Minute
 	maxPasswordClients    = 4096
+	maxToolClients        = 4096
+	maxConcurrentTools    = 16
 )
 
 type passwordAttempt struct {
@@ -40,6 +44,7 @@ type passwordAttemptTracker struct {
 }
 
 var configPasswordAttempts = newPasswordAttemptTracker()
+var toolRequestSlots = make(chan struct{}, maxConcurrentTools)
 
 func newPasswordAttemptTracker() *passwordAttemptTracker {
 	return &passwordAttemptTracker{attempts: make(map[string]passwordAttempt)}
@@ -129,6 +134,9 @@ func withResponseHeaders(next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
+		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", apiCacheControl)
@@ -270,8 +278,15 @@ func normalizeToolTarget(rawTarget string) (string, error) {
 }
 
 func resolveToolIPAddr(target string) (*net.IPAddr, error) {
-	ipaddr, err := net.ResolveIPAddr("ip4", target)
-	if err != nil || ipaddr == nil || ipaddr.IP.To4() == nil {
+	return resolveToolIPAddrContext(context.Background(), target)
+}
+
+func resolveToolIPAddrContext(ctx context.Context, target string) (*net.IPAddr, error) {
+	ipaddr, err := nettools.ResolveIPv4Context(ctx, target)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, errors.New("unable to resolve IPv4 destination host")
 	}
 	return ipaddr, nil
@@ -360,15 +375,45 @@ func allowToolRequest(remoteAddr string, now int, limit int) bool {
 		g.ToolLimit = make(map[string]int)
 	}
 	for key, lastSeen := range g.ToolLimit {
-		if now-lastSeen > retention {
+		if now < lastSeen || now-lastSeen > retention {
 			delete(g.ToolLimit, key)
 		}
 	}
 	if lastSeen, ok := g.ToolLimit[clientKey]; ok && now-lastSeen < limit {
 		return false
 	}
+	if _, exists := g.ToolLimit[clientKey]; !exists && len(g.ToolLimit) >= maxToolClients {
+		evictOldestToolClient()
+	}
 	g.ToolLimit[clientKey] = now
 	return true
+}
+
+func acquireToolRequest() bool {
+	select {
+	case toolRequestSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseToolRequest() {
+	<-toolRequestSlots
+}
+
+func evictOldestToolClient() {
+	oldestKey := ""
+	oldestSeen := 0
+	for key, lastSeen := range g.ToolLimit {
+		if oldestKey == "" || lastSeen < oldestSeen {
+			oldestKey = key
+			oldestSeen = lastSeen
+		}
+	}
+	if oldestKey != "" {
+		delete(g.ToolLimit, oldestKey)
+	}
 }
 
 func StartHttp() {

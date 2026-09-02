@@ -3,7 +3,6 @@ package funcs
 import (
 	"context"
 	"fmt"
-	"net"
 	"smartping/src/g"
 	"smartping/src/nettools"
 	"strings"
@@ -124,7 +123,7 @@ func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, ping
 	stat := g.PingSt{}
 	stat.MinDelay = -1
 	lossPK := 0
-	ipaddr, err := resolveIPv4AddrContext(ctx, t.Addr)
+	ipaddr, err := nettools.ResolveIPv4Context(ctx, t.Addr)
 	roundStart := roundTime.Add(targetOffset)
 	if err == nil {
 		for i := 0; i < pingCount; i++ {
@@ -178,25 +177,6 @@ func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, ping
 	}
 	PingStorageContext(ctx, stat, t.Addr, logtime)
 	logrus.Info("Finish Ping " + t.Addr + "..")
-}
-
-func resolveIPv4AddrContext(ctx context.Context, address string) (*net.IPAddr, error) {
-	if parsed := net.ParseIP(address); parsed != nil {
-		if ipv4Address := parsed.To4(); ipv4Address != nil {
-			return &net.IPAddr{IP: ipv4Address}, nil
-		}
-		return nil, fmt.Errorf("address %q has no IPv4 representation", address)
-	}
-	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, address)
-	if err != nil {
-		return nil, err
-	}
-	for _, resolved := range addresses {
-		if ipv4Address := resolved.IP.To4(); ipv4Address != nil {
-			return &net.IPAddr{IP: ipv4Address, Zone: resolved.Zone}, nil
-		}
-	}
-	return nil, fmt.Errorf("address %q has no IPv4 representation", address)
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) error {

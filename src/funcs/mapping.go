@@ -89,7 +89,7 @@ func MappingTaskContext(ctx context.Context, carrier string, province string, ip
 			return
 		}
 		logrus.Debug("[func:StartChinaMapPing]", ip)
-		ipaddr, err := resolveIPv4AddrContext(ctx, ip)
+		ipaddr, err := nettools.ResolveIPv4Context(ctx, ip)
 		if err == nil {
 			for i := 0; i < probeCount; i++ {
 				if ctx.Err() != nil {

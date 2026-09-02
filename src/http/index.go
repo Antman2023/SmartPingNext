@@ -3,6 +3,7 @@ package http
 import (
 	"io/fs"
 	"net/http"
+	"path"
 	"smartping/src/static"
 	"strings"
 )
@@ -46,13 +47,13 @@ func configIndexRoutes(mux *http.ServeMux) {
 		}
 
 		// API 请求交给其他路由处理
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 			http.NotFound(w, r)
 			return
 		}
 
 		// 静态资源文件（有扩展名）直接服务
-		if strings.Contains(r.URL.Path, ".") {
+		if path.Ext(r.URL.Path) != "" {
 			setStaticCacheHeaders(w, r.URL.Path, false)
 			fileServer.ServeHTTP(w, r)
 			return

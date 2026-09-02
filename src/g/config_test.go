@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -89,6 +90,27 @@ func TestReadConfigRestrictsPermissions(t *testing.T) {
 	}
 }
 
+func TestReadConfigFileRejectsTrailingJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"Name":"local"} {"Name":"second"}`), 0600); err != nil {
+		t.Fatalf("write config fixture: %v", err)
+	}
+	if _, err := readConfigFile(path); err == nil {
+		t.Fatal("readConfigFile should reject trailing JSON")
+	}
+}
+
+func TestReadConfigFileRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	content := bytes.Repeat([]byte(" "), maxLocalConfigBytes+1)
+	if err := os.WriteFile(path, content, 0600); err != nil {
+		t.Fatalf("write oversized config fixture: %v", err)
+	}
+	if _, err := readConfigFile(path); err == nil {
+		t.Fatal("readConfigFile should reject oversized config")
+	}
+}
+
 func TestEnsureDatabaseIndexesOptimizesTargetTimeQueries(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -140,6 +162,55 @@ func TestEnsureDatabaseIndexesRejectsUnavailableSchema(t *testing.T) {
 	defer db.Close()
 	if err := ensureDatabaseIndexes(db); err == nil {
 		t.Fatal("ensureDatabaseIndexes should reject a database without pinglog")
+	}
+}
+
+func TestConfigureDatabasePoolBoundsConnections(t *testing.T) {
+	if err := configureDatabasePool(nil); err == nil {
+		t.Fatal("configureDatabasePool should reject a nil database")
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open in-memory sqlite: %v", err)
+	}
+	defer db.Close()
+	if err := configureDatabasePool(db); err != nil {
+		t.Fatalf("configureDatabasePool returned error: %v", err)
+	}
+	if got := db.Stats().MaxOpenConnections; got != databaseMaxOpenConns {
+		t.Fatalf("max open connections = %d, want %d", got, databaseMaxOpenConns)
+	}
+
+	connections := make([]*sql.Conn, 0, databaseMaxOpenConns)
+	defer func() {
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	}()
+	for i := 0; i < databaseMaxOpenConns; i++ {
+		connection, err := db.Conn(context.Background())
+		if err != nil {
+			t.Fatalf("acquire connection %d: %v", i+1, err)
+		}
+		connections = append(connections, connection)
+	}
+	blockedCtx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	extraConnection, err := db.Conn(blockedCtx)
+	if extraConnection != nil {
+		_ = extraConnection.Close()
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("connection beyond pool limit error = %v, want deadline exceeded", err)
+	}
+	for _, connection := range connections {
+		if err := connection.Close(); err != nil {
+			t.Fatalf("release pooled connection: %v", err)
+		}
+	}
+	if got := db.Stats().Idle; got > databaseMaxIdleConns {
+		t.Fatalf("idle connections = %d, want at most %d", got, databaseMaxIdleConns)
 	}
 }
 
@@ -568,6 +639,29 @@ func TestReadCloudConfigBodyRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestReadCloudConfigHTTPResponseBodyRejectsDeclaredOversizeWithoutReading(t *testing.T) {
+	body := bytes.NewReader([]byte("not consumed"))
+	response := &http.Response{
+		Body:          io.NopCloser(body),
+		ContentLength: maxCloudConfigBytes + 1,
+	}
+
+	if _, err := readCloudConfigHTTPResponseBody(response); err == nil {
+		t.Fatal("readCloudConfigHTTPResponseBody should reject an oversized declared response")
+	}
+	if got, want := body.Len(), len("not consumed"); got != want {
+		t.Fatalf("declared oversized response consumed %d bytes, want 0", want-got)
+	}
+}
+
+func TestReadCloudConfigHTTPResponseBodyRejectsMissingBody(t *testing.T) {
+	for _, response := range []*http.Response{nil, {}} {
+		if _, err := readCloudConfigHTTPResponseBody(response); err == nil {
+			t.Fatal("readCloudConfigHTTPResponseBody should reject a missing response body")
+		}
+	}
+}
+
 func TestSaveCloudConfigRejectsNonOKStatus(t *testing.T) {
 	withGlobalConfigState(t, func() {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -578,6 +672,54 @@ func TestSaveCloudConfigRejectsNonOKStatus(t *testing.T) {
 
 		if _, err := SaveCloudConfig(srv.URL); err == nil {
 			t.Fatalf("SaveCloudConfig should reject non-200 response")
+		}
+	})
+}
+
+func TestCloudHTTPClientDoesNotFollowRedirects(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		targetVisited := make(chan struct{}, 1)
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			targetVisited <- struct{}{}
+			_ = json.NewEncoder(w).Encode(Config{})
+		}))
+		defer target.Close()
+		redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL, http.StatusFound)
+		}))
+		defer redirect.Close()
+
+		HttpClient = newCloudHTTPClient()
+		if HttpClient.Timeout != cloudHTTPTimeout {
+			t.Fatalf("cloud client timeout = %v, want %v", HttpClient.Timeout, cloudHTTPTimeout)
+		}
+		if _, err := SaveCloudConfig(redirect.URL); err == nil {
+			t.Fatal("SaveCloudConfig should reject a redirect response")
+		}
+		select {
+		case <-targetVisited:
+			t.Fatal("cloud HTTP client followed a redirect to another endpoint")
+		default:
+		}
+	})
+}
+
+func TestSaveCloudConfigContextRejectsMissingHTTPClient(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		HttpClient = nil
+		if _, err := SaveCloudConfigContext(context.Background(), "http://127.0.0.1/config.json"); err == nil {
+			t.Fatal("SaveCloudConfigContext should reject a missing HTTP client")
+		}
+	})
+}
+
+func TestSaveCloudConfigContextReturnsCancellationBeforeClientError(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		HttpClient = nil
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if _, err := SaveCloudConfigContext(ctx, "http://127.0.0.1/config.json"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("SaveCloudConfigContext error = %v, want context canceled", err)
 		}
 	})
 }
@@ -770,6 +912,36 @@ func TestApplyConfigWriteFailureDoesNotPublish(t *testing.T) {
 		}
 		if !AuthUserIpMap["127.0.0.1"] {
 			t.Fatalf("failed ApplyConfig changed authorization state: %#v", AuthUserIpMap)
+		}
+	})
+}
+
+func TestApplyConfigRejectsOversizedSerializedConfig(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		original := Config{
+			Name:       "original",
+			Addr:       "127.0.0.1",
+			Authiplist: "127.0.0.1",
+			Network: map[string]NetworkMember{
+				"127.0.0.1": {Name: "original", Addr: "127.0.0.1"},
+			},
+		}
+		SetConfig(original)
+		Root = t.TempDir()
+		if err := os.MkdirAll(filepath.Join(Root, "conf"), 0755); err != nil {
+			t.Fatalf("create conf directory: %v", err)
+		}
+
+		candidate := cloneConfig(original)
+		candidate.Name = strings.Repeat("x", maxLocalConfigBytes)
+		if err := ApplyConfig(candidate); err == nil {
+			t.Fatal("ApplyConfig should reject an oversized serialized config")
+		}
+		if got := ConfigSnapshot().Name; got != original.Name {
+			t.Fatalf("oversized config published Name = %q, want %q", got, original.Name)
+		}
+		if IsExist(filepath.Join(Root, "conf", "config.json")) {
+			t.Fatal("oversized config should not be written to disk")
 		}
 	})
 }

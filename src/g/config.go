@@ -26,9 +26,14 @@ import (
 
 const (
 	maxCloudConfigBytes   = 8 << 20
+	maxLocalConfigBytes   = 16 << 20
 	configFilePermissions = 0600
 	pingTargetTimeIndex   = "pinglog_target_logtime"
 	databaseBusyTimeoutMs = 5000
+	databaseMaxOpenConns  = 16
+	databaseMaxIdleConns  = 4
+	databaseConnMaxIdle   = 5 * time.Minute
+	cloudHTTPTimeout      = 10 * time.Second
 )
 
 var (
@@ -56,18 +61,32 @@ func IsExist(fp string) bool {
 }
 
 func ReadConfig(filename string) Config {
-	config := Config{}
-	restrictConfigFilePermissions(filename)
-	file, err := os.Open(filename)
-	if err != nil {
-		log.Fatal("Config Not Found!")
-	}
-	defer file.Close()
-	err = json.NewDecoder(file).Decode(&config)
+	config, err := readConfigFile(filename)
 	if err != nil {
 		log.Fatal(err)
 	}
 	return config
+}
+
+func readConfigFile(filename string) (Config, error) {
+	config := Config{}
+	restrictConfigFilePermissions(filename)
+	file, err := os.Open(filename)
+	if err != nil {
+		return config, fmt.Errorf("open config file %s: %w", filename, err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxLocalConfigBytes+1))
+	if err != nil {
+		return config, fmt.Errorf("read config file %s: %w", filename, err)
+	}
+	if len(data) > maxLocalConfigBytes {
+		return config, fmt.Errorf("config file %s exceeds %d bytes", filename, maxLocalConfigBytes)
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return config, fmt.Errorf("decode config file %s: %w", filename, err)
+	}
+	return config, nil
 }
 
 func restrictConfigFilePermissions(filename string) {
@@ -134,7 +153,9 @@ func ParseConfig(ver string) {
 		}
 		cfile = "config-base.json"
 	}
-	InitLogger(Root)
+	if err := InitLogger(Root); err != nil {
+		log.Fatalln("[Fault]init logger:", err)
+	}
 	config := ReadConfig(Root + "/conf/" + cfile)
 	if config.Name == "" {
 		config.Name, _ = os.Hostname()
@@ -165,6 +186,9 @@ func ParseConfig(ver string) {
 	if err != nil {
 		log.Fatalln("[Fault]db open fail .", err)
 	}
+	if err := configureDatabasePool(Db); err != nil {
+		log.Fatalln("[Fault]db pool config fail .", err)
+	}
 	if err := Db.Ping(); err != nil {
 		log.Fatalln("[Fault]db connection fail .", err)
 	}
@@ -172,8 +196,27 @@ func ParseConfig(ver string) {
 		log.Fatalln("[Fault]db index migration fail .", err)
 	}
 	LocalTimezone = time.Local
-	HttpClient = &http.Client{Timeout: 10 * time.Second}
+	HttpClient = newCloudHTTPClient()
 	ToolLimit = map[string]int{}
+}
+
+func newCloudHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: cloudHTTPTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func configureDatabasePool(db *sql.DB) error {
+	if db == nil {
+		return errors.New("database is nil")
+	}
+	db.SetMaxOpenConns(databaseMaxOpenConns)
+	db.SetMaxIdleConns(databaseMaxIdleConns)
+	db.SetConnMaxIdleTime(databaseConnMaxIdle)
+	return nil
 }
 
 func sqliteDataSource(filename string) string {
@@ -202,11 +245,18 @@ func SaveCloudConfig(url string) (Config, error) {
 
 func SaveCloudConfigContext(ctx context.Context, url string) (Config, error) {
 	config := Config{}
+	if err := ctx.Err(); err != nil {
+		return config, err
+	}
+	client := HttpClient
+	if client == nil {
+		return config, errors.New("cloud HTTP client is not initialized")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return config, err
 	}
-	resp, err := HttpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return config, err
 	}
@@ -214,7 +264,7 @@ func SaveCloudConfigContext(ctx context.Context, url string) (Config, error) {
 	if resp.StatusCode != http.StatusOK {
 		return config, errors.New("cloud config returned non-200 status")
 	}
-	body, err := readCloudConfigBody(resp.Body)
+	body, err := readCloudConfigHTTPResponseBody(resp)
 	if err != nil {
 		return config, err
 	}
@@ -245,6 +295,16 @@ func readCloudConfigBody(reader io.Reader) ([]byte, error) {
 		return nil, errors.New("cloud config response too large")
 	}
 	return body, nil
+}
+
+func readCloudConfigHTTPResponseBody(response *http.Response) ([]byte, error) {
+	if response == nil || response.Body == nil {
+		return nil, errors.New("cloud config response body is missing")
+	}
+	if response.ContentLength > maxCloudConfigBytes {
+		return nil, errors.New("cloud config response too large")
+	}
+	return readCloudConfigBody(response.Body)
 }
 
 func ConfigSnapshot() Config {
@@ -526,6 +586,9 @@ func saveConfigFile(config Config) error {
 	if err != nil {
 		logrus.Error("[func:SaveConfig] Json Parse ", err)
 		return err
+	}
+	if len(data) > maxLocalConfigBytes {
+		return fmt.Errorf("serialized config exceeds %d bytes", maxLocalConfigBytes)
 	}
 	err = writeFileAtomic(filepath.Join(Root, "conf", "config.json"), data, configFilePermissions)
 	if err != nil {

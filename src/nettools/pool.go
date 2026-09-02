@@ -13,13 +13,21 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
-const defaultICMPReadBufferBytes = 4 * 1024 * 1024
+const (
+	defaultICMPReadBufferBytes = 4 * 1024 * 1024
+	ipv4ProtocolICMP           = 1
+)
 
 // icmpResponse 是 readLoop 分发给等待者的响应
 type icmpResponse struct {
 	addr  net.Addr
 	final bool // EchoReply
 	down  bool // DestinationUnreachable
+}
+
+type icmpWaiter struct {
+	responses   chan icmpResponse
+	destination net.Addr
 }
 
 // icmpPool 全局唯一 ICMP 连接池
@@ -30,7 +38,7 @@ type icmpPool struct {
 	listenPacket func(network, address string) (net.PacketConn, error)
 
 	mu      sync.RWMutex
-	waiters map[uint32]chan icmpResponse
+	waiters map[uint32]icmpWaiter
 
 	sendMu sync.Mutex // 保护 SetTTL + WriteTo 原子操作
 }
@@ -40,6 +48,22 @@ var pool icmpPool
 // waiterKey 生成等待者唯一标识
 func waiterKey(id, seq int) uint32 {
 	return uint32((id&0xFFFF)<<16 | (seq & 0xFFFF))
+}
+
+func embeddedEchoWaiterKey(data []byte) (uint32, bool) {
+	if len(data) < ipv4.HeaderLen || data[0]>>4 != 4 {
+		return 0, false
+	}
+	headerLength := int(data[0]&0x0f) * 4
+	if headerLength < ipv4.HeaderLen || len(data) < headerLength+8 || data[9] != ipv4ProtocolICMP {
+		return 0, false
+	}
+	if data[headerLength] != byte(ipv4.ICMPTypeEcho) || data[headerLength+1] != 0 {
+		return 0, false
+	}
+	id := int(binary.BigEndian.Uint16(data[headerLength+4 : headerLength+6]))
+	seq := int(binary.BigEndian.Uint16(data[headerLength+6 : headerLength+8]))
+	return waiterKey(id, seq), true
 }
 
 // init 惰性初始化全局 socket
@@ -59,7 +83,7 @@ func (p *icmpPool) init() error {
 		return err
 	}
 	if p.waiters == nil {
-		p.waiters = make(map[uint32]chan icmpResponse)
+		p.waiters = make(map[uint32]icmpWaiter)
 	}
 	if connWithReadBuffer, ok := conn.(interface{ SetReadBuffer(bytes int) error }); ok {
 		if err := connWithReadBuffer.SetReadBuffer(defaultICMPReadBufferBytes); err != nil {
@@ -73,14 +97,14 @@ func (p *icmpPool) init() error {
 }
 
 // register 注册一个等待者，返回接收 channel
-func (p *icmpPool) register(key uint32) (chan icmpResponse, bool) {
+func (p *icmpPool) register(key uint32, destination net.Addr) (chan icmpResponse, bool) {
 	ch := make(chan icmpResponse, 1)
 	p.mu.Lock()
 	if _, exists := p.waiters[key]; exists {
 		p.mu.Unlock()
 		return nil, false
 	}
-	p.waiters[key] = ch
+	p.waiters[key] = icmpWaiter{responses: ch, destination: destination}
 	p.mu.Unlock()
 	return ch, true
 }
@@ -95,11 +119,14 @@ func (p *icmpPool) unregister(key uint32) {
 // dispatch 将响应分发给对应等待者
 func (p *icmpPool) dispatch(key uint32, resp icmpResponse) {
 	p.mu.RLock()
-	ch, ok := p.waiters[key]
+	waiter, ok := p.waiters[key]
 	p.mu.RUnlock()
 	if ok {
+		if resp.final && !sameIPAddress(resp.addr, waiter.destination) {
+			return
+		}
 		select {
-		case ch <- resp:
+		case waiter.responses <- resp:
 		default:
 		}
 	}
@@ -130,7 +157,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 		switch msg.Type {
 		case ipv4.ICMPTypeEchoReply:
 			echo, ok := msg.Body.(*icmp.Echo)
-			if !ok {
+			if !ok || msg.Code != 0 {
 				continue
 			}
 			key := waiterKey(echo.ID, echo.Seq)
@@ -138,22 +165,24 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 
 		case ipv4.ICMPTypeTimeExceeded:
 			te, ok := msg.Body.(*icmp.TimeExceeded)
-			if !ok || len(te.Data) < 28 {
+			if !ok {
 				continue
 			}
-			id := int(binary.BigEndian.Uint16(te.Data[24:26]))
-			seq := int(binary.BigEndian.Uint16(te.Data[26:28]))
-			key := waiterKey(id, seq)
+			key, ok := embeddedEchoWaiterKey(te.Data)
+			if !ok {
+				continue
+			}
 			p.dispatch(key, icmpResponse{addr: addr})
 
 		case ipv4.ICMPTypeDestinationUnreachable:
 			du, ok := msg.Body.(*icmp.DstUnreach)
-			if !ok || len(du.Data) < 28 {
+			if !ok {
 				continue
 			}
-			id := int(binary.BigEndian.Uint16(du.Data[24:26]))
-			seq := int(binary.BigEndian.Uint16(du.Data[26:28]))
-			key := waiterKey(id, seq)
+			key, ok := embeddedEchoWaiterKey(du.Data)
+			if !ok {
+				continue
+			}
 			p.dispatch(key, icmpResponse{addr: addr, down: true})
 		}
 	}
@@ -191,7 +220,7 @@ func (p *icmpPool) sendICMPContext(ctx context.Context, id, seq, ttl int, msg []
 	}
 
 	key := waiterKey(id, seq)
-	ch, registered := p.register(key)
+	ch, registered := p.register(key, dest)
 	if !registered {
 		return ICMP{Error: errors.New("icmp request identifier collision")}
 	}
@@ -219,23 +248,37 @@ func (p *icmpPool) sendICMPContext(ctx context.Context, id, seq, ttl int, msg []
 		return ICMP{Error: err}
 	}
 
-	return waitForICMPResponse(ctx, ch, sendOn, timeout)
+	return waitForICMPResponse(ctx, ch, sendOn, timeout, dest)
 }
 
-func waitForICMPResponse(ctx context.Context, ch <-chan icmpResponse, sendOn time.Time, timeout time.Duration) ICMP {
+func waitForICMPResponse(ctx context.Context, ch <-chan icmpResponse, sendOn time.Time, timeout time.Duration, destination net.Addr) ICMP {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
-	select {
-	case resp := <-ch:
-		return ICMP{
-			Addr:  resp.addr,
-			RTT:   time.Since(sendOn),
-			Final: resp.final,
-			Down:  resp.down,
+	for {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return ICMP{Error: net.ErrClosed}
+			}
+			if resp.final && !sameIPAddress(resp.addr, destination) {
+				continue
+			}
+			return ICMP{
+				Addr:  resp.addr,
+				RTT:   time.Since(sendOn),
+				Final: resp.final,
+				Down:  resp.down,
+			}
+		case <-timer.C:
+			return ICMP{Timeout: true}
+		case <-ctx.Done():
+			return ICMP{Error: ctx.Err()}
 		}
-	case <-timer.C:
-		return ICMP{Timeout: true}
-	case <-ctx.Done():
-		return ICMP{Error: ctx.Err()}
 	}
+}
+
+func sameIPAddress(left, right net.Addr) bool {
+	leftIP, leftOK := left.(*net.IPAddr)
+	rightIP, rightOK := right.(*net.IPAddr)
+	return leftOK && rightOK && leftIP != nil && rightIP != nil && leftIP.IP.Equal(rightIP.IP)
 }

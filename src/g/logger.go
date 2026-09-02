@@ -1,25 +1,107 @@
 package g
 
 import (
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/sirupsen/logrus"
-	writerHook "github.com/sirupsen/logrus/hooks/writer"
 )
 
-func InitLogger(root string) {
+type managedLogHook struct {
+	mu      sync.RWMutex
+	writers map[logrus.Level]*os.File
+}
+
+var (
+	applicationLogHook = &managedLogHook{}
+	installLogHookOnce sync.Once
+)
+
+func (hook *managedLogHook) Levels() []logrus.Level {
+	return logrus.AllLevels
+}
+
+func (hook *managedLogHook) Fire(entry *logrus.Entry) error {
+	hook.mu.RLock()
+	defer hook.mu.RUnlock()
+	writer := hook.writers[entry.Level]
+	if writer == nil {
+		return nil
+	}
+	line, err := entry.Bytes()
+	if err != nil {
+		return err
+	}
+	_, err = writer.Write(line)
+	return err
+}
+
+func (hook *managedLogHook) replace(writers map[logrus.Level]*os.File) error {
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	oldWriters := hook.writers
+	hook.writers = writers
+	return closeLogWriters(oldWriters)
+}
+
+func (hook *managedLogHook) close() error {
+	return hook.replace(nil)
+}
+
+func closeLogWriters(writers map[logrus.Level]*os.File) error {
+	uniqueFiles := make(map[*os.File]struct{})
+	for _, file := range writers {
+		if file != nil {
+			uniqueFiles[file] = struct{}{}
+		}
+	}
+	var closeErr error
+	for file := range uniqueFiles {
+		closeErr = errors.Join(closeErr, file.Close())
+	}
+	return closeErr
+}
+
+func InitLogger(root string) error {
 	logDir := filepath.Join(root, "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		log.Fatalln("[Fault]create logs dir fail:", err)
+		return fmt.Errorf("create logs directory: %w", err)
 	}
 
-	infoFile := openLogFile(filepath.Join(logDir, "info.log"))
-	debugFile := openLogFile(filepath.Join(logDir, "debug.log"))
-	errorFile := openLogFile(filepath.Join(logDir, "error.log"))
+	infoFile, err := openLogFile(filepath.Join(logDir, "info.log"))
+	if err != nil {
+		return err
+	}
+	debugFile, err := openLogFile(filepath.Join(logDir, "debug.log"))
+	if err != nil {
+		return errors.Join(err, infoFile.Close())
+	}
+	errorFile, err := openLogFile(filepath.Join(logDir, "error.log"))
+	if err != nil {
+		return errors.Join(err, infoFile.Close(), debugFile.Close())
+	}
+
+	writers := map[logrus.Level]*os.File{
+		logrus.InfoLevel:  infoFile,
+		logrus.DebugLevel: debugFile,
+		logrus.TraceLevel: debugFile,
+		logrus.WarnLevel:  errorFile,
+		logrus.ErrorLevel: errorFile,
+		logrus.FatalLevel: errorFile,
+		logrus.PanicLevel: errorFile,
+	}
+	if err := applicationLogHook.replace(writers); err != nil {
+		return err
+	}
+	installLogHookOnce.Do(func() {
+		logrus.AddHook(applicationLogHook)
+	})
 
 	logrus.SetFormatter(&logrus.TextFormatter{
 		DisableColors:   true,
@@ -36,35 +118,22 @@ func InitLogger(root string) {
 	if levelRaw := strings.TrimSpace(os.Getenv("SMARTPING_LOG_LEVEL")); levelRaw != "" {
 		level, err := logrus.ParseLevel(strings.ToLower(levelRaw))
 		if err != nil {
-			log.Println("[Warn]invalid SMARTPING_LOG_LEVEL:", levelRaw, "fallback to info")
-		} else {
-			logrus.SetLevel(level)
+			log.Printf("[Warn]invalid SMARTPING_LOG_LEVEL: %s, fallback to info", levelRaw)
+			return nil
 		}
+		logrus.SetLevel(level)
 	}
-
-	logrus.AddHook(&writerHook.Hook{
-		Writer:    infoFile,
-		LogLevels: []logrus.Level{logrus.InfoLevel},
-	})
-	logrus.AddHook(&writerHook.Hook{
-		Writer:    debugFile,
-		LogLevels: []logrus.Level{logrus.DebugLevel, logrus.TraceLevel},
-	})
-	logrus.AddHook(&writerHook.Hook{
-		Writer: errorFile,
-		LogLevels: []logrus.Level{
-			logrus.WarnLevel,
-			logrus.ErrorLevel,
-			logrus.FatalLevel,
-			logrus.PanicLevel,
-		},
-	})
+	return nil
 }
 
-func openLogFile(path string) *os.File {
+func CloseLogger() error {
+	return applicationLogHook.close()
+}
+
+func openLogFile(path string) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		log.Fatalln("[Fault]open log file fail:", path, err)
+		return nil, fmt.Errorf("open log file %s: %w", path, err)
 	}
-	return f
+	return f, nil
 }

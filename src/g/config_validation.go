@@ -204,8 +204,25 @@ func validateMode(mode map[string]string) error {
 		return errors.New("非法运行模式!")
 	}
 	endpoint, err := url.Parse(mode["Endpoint"])
-	if err != nil || !endpoint.IsAbs() || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" {
+	if err != nil || !validCloudEndpoint(endpoint) {
 		return errors.New("非法云配置地址!")
 	}
 	return nil
+}
+
+func validCloudEndpoint(endpoint *url.URL) bool {
+	if endpoint == nil ||
+		!endpoint.IsAbs() ||
+		(endpoint.Scheme != "http" && endpoint.Scheme != "https") ||
+		endpoint.Hostname() == "" ||
+		endpoint.User != nil ||
+		endpoint.Fragment != "" {
+		return false
+	}
+	port := endpoint.Port()
+	if port == "" {
+		return true
+	}
+	value, err := strconv.Atoi(port)
+	return err == nil && value >= 1 && value <= maxConfigPort
 }

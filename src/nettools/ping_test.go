@@ -2,7 +2,9 @@ package nettools
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -17,6 +19,50 @@ func TestWaiterKeyUsesIdentifierAndSequence(t *testing.T) {
 	}
 	if base == waiterKey(101, 200) {
 		t.Fatalf("waiterKey should distinguish different identifier values")
+	}
+}
+
+func TestEmbeddedEchoWaiterKeyUsesIPv4HeaderLength(t *testing.T) {
+	for _, headerLength := range []int{ipv4.HeaderLen, ipv4.HeaderLen + 4, 60} {
+		t.Run(fmt.Sprintf("header-%d", headerLength), func(t *testing.T) {
+			data := make([]byte, headerLength+8)
+			data[0] = 0x40 | byte(headerLength/4)
+			data[9] = 1
+			data[headerLength] = byte(ipv4.ICMPTypeEcho)
+			binary.BigEndian.PutUint16(data[headerLength+4:headerLength+6], 0x1234)
+			binary.BigEndian.PutUint16(data[headerLength+6:headerLength+8], 0x5678)
+
+			key, ok := embeddedEchoWaiterKey(data)
+			if !ok {
+				t.Fatal("embeddedEchoWaiterKey rejected a valid embedded echo request")
+			}
+			if want := waiterKey(0x1234, 0x5678); key != want {
+				t.Fatalf("waiter key = %#x, want %#x", key, want)
+			}
+		})
+	}
+}
+
+func TestEmbeddedEchoWaiterKeyRejectsMalformedPackets(t *testing.T) {
+	valid := make([]byte, ipv4.HeaderLen+8)
+	valid[0] = 0x45
+	valid[9] = 1
+	valid[ipv4.HeaderLen] = byte(ipv4.ICMPTypeEcho)
+
+	tests := map[string][]byte{
+		"short header":          valid[:ipv4.HeaderLen-1],
+		"wrong IP version":      append([]byte{0x65}, valid[1:]...),
+		"short IHL":             append([]byte{0x44}, valid[1:]...),
+		"truncated options":     append([]byte{0x46}, valid[1:]...),
+		"non ICMP protocol":     append(append([]byte(nil), valid[:9]...), append([]byte{17}, valid[10:]...)...),
+		"non echo ICMP message": append(append([]byte(nil), valid[:ipv4.HeaderLen]...), append([]byte{byte(ipv4.ICMPTypeEchoReply)}, valid[ipv4.HeaderLen+1:]...)...),
+	}
+	for name, data := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := embeddedEchoWaiterKey(data); ok {
+				t.Fatal("embeddedEchoWaiterKey accepted a malformed packet")
+			}
+		})
 	}
 }
 
@@ -89,7 +135,7 @@ func TestRunPingContextRejectsInvalidArgumentsBeforeSocketInitialization(t *test
 func TestWaitForICMPResponseHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result := waitForICMPResponse(ctx, make(chan icmpResponse), time.Now(), time.Minute)
+	result := waitForICMPResponse(ctx, make(chan icmpResponse), time.Now(), time.Minute, &net.IPAddr{IP: net.ParseIP("192.0.2.1")})
 	if !errors.Is(result.Error, context.Canceled) {
 		t.Fatalf("waitForICMPResponse error = %v, want context canceled", result.Error)
 	}
@@ -98,13 +144,75 @@ func TestWaitForICMPResponseHonorsCanceledContext(t *testing.T) {
 	}
 }
 
+func TestWaitForICMPResponseIgnoresFinalReplyFromUnexpectedSource(t *testing.T) {
+	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	responses := make(chan icmpResponse, 2)
+	responses <- icmpResponse{addr: &net.IPAddr{IP: net.ParseIP("198.51.100.1")}, final: true}
+	responses <- icmpResponse{addr: destination, final: true}
+
+	result := waitForICMPResponse(context.Background(), responses, time.Now(), time.Second, destination)
+	if !result.Final || !sameIPAddress(result.Addr, destination) {
+		t.Fatalf("waitForICMPResponse returned unexpected final response: %#v", result)
+	}
+}
+
+func TestWaitForICMPResponseAcceptsIntermediateRouter(t *testing.T) {
+	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	router := &net.IPAddr{IP: net.ParseIP("198.51.100.1")}
+	responses := make(chan icmpResponse, 1)
+	responses <- icmpResponse{addr: router}
+
+	result := waitForICMPResponse(context.Background(), responses, time.Now(), time.Second, destination)
+	if result.Final || !sameIPAddress(result.Addr, router) {
+		t.Fatalf("waitForICMPResponse rejected intermediate router response: %#v", result)
+	}
+}
+
+func TestSameIPAddress(t *testing.T) {
+	ipv4 := &net.IPAddr{IP: net.IP{192, 0, 2, 1}}
+	mapped := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	if !sameIPAddress(ipv4, mapped) {
+		t.Fatal("sameIPAddress should match equivalent 4-byte and 16-byte IPv4 addresses")
+	}
+	if sameIPAddress(ipv4, &net.IPAddr{IP: net.ParseIP("192.0.2.2")}) {
+		t.Fatal("sameIPAddress should reject different addresses")
+	}
+	if sameIPAddress(nil, mapped) {
+		t.Fatal("sameIPAddress should reject a missing address")
+	}
+}
+
 func TestICMPPoolRegisterRejectsCollision(t *testing.T) {
-	pool := &icmpPool{waiters: make(map[uint32]chan icmpResponse)}
-	if _, ok := pool.register(42); !ok {
+	pool := &icmpPool{waiters: make(map[uint32]icmpWaiter)}
+	if _, ok := pool.register(42, nil); !ok {
 		t.Fatalf("first waiter registration should succeed")
 	}
-	if _, ok := pool.register(42); ok {
+	if _, ok := pool.register(42, nil); ok {
 		t.Fatalf("duplicate waiter registration should be rejected")
+	}
+}
+
+func TestICMPPoolDispatchFiltersUnexpectedFinalSource(t *testing.T) {
+	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	router := &net.IPAddr{IP: net.ParseIP("198.51.100.1")}
+	pool := &icmpPool{waiters: make(map[uint32]icmpWaiter)}
+	responses, ok := pool.register(42, destination)
+	if !ok {
+		t.Fatal("register rejected a new waiter")
+	}
+
+	pool.dispatch(42, icmpResponse{addr: router, final: true})
+	if len(responses) != 0 {
+		t.Fatal("unexpected final response occupied the waiter queue")
+	}
+	pool.dispatch(42, icmpResponse{addr: destination, final: true})
+	if len(responses) != 1 {
+		t.Fatal("expected final response was not dispatched")
+	}
+	<-responses
+	pool.dispatch(42, icmpResponse{addr: router})
+	if len(responses) != 1 {
+		t.Fatal("intermediate router response was not dispatched")
 	}
 }
 

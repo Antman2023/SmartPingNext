@@ -269,7 +269,16 @@ export const validateConfigForEdit = (config: Config): ConfigValidationIssue | n
         return issue('config.validationCloudEndpoint')
       }
       const endpoint = new URL(config.Mode.Endpoint ?? '')
-      if (!['http:', 'https:'].includes(endpoint.protocol) || !endpoint.hostname) {
+      const endpointPort = endpoint.port === '' ? null : Number(endpoint.port)
+      if (
+        !['http:', 'https:'].includes(endpoint.protocol) ||
+        !endpoint.hostname ||
+        endpoint.username !== '' ||
+        endpoint.password !== '' ||
+        endpoint.hash !== '' ||
+        (endpointPort !== null &&
+          (!Number.isInteger(endpointPort) || endpointPort < 1 || endpointPort > 65535))
+      ) {
         return issue('config.validationCloudEndpoint')
       }
     } catch {

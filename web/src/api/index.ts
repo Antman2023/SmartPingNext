@@ -20,10 +20,12 @@ instance.interceptors.request.use(
 instance.interceptors.response.use(
   (response) => {
     const res = response.data
-    // 统一处理响应状态：'true' 字符串或 200 数字都视为成功
-    const isSuccess = res.status === 'true' || res.status === true || res.status === 200
-    if (res.status !== undefined && !isSuccess) {
-      throw handleNetworkError({ response: { status: res.status, data: res } })
+    const responseStatus =
+      typeof res === 'object' && res !== null && 'status' in res ? res.status : undefined
+    // 统一处理业务状态：'true' 字符串、true 或 200 数字都视为成功。
+    const isSuccess = responseStatus === 'true' || responseStatus === true || responseStatus === 200
+    if (responseStatus !== undefined && !isSuccess) {
+      throw handleNetworkError({ response: { status: response.status, data: res } })
     }
     return res
   },

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"smartping/src/g"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -164,7 +165,7 @@ func TestShutdownServiceStopsHTTPJobsAndDatabase(t *testing.T) {
 	}
 }
 
-func TestShutdownServiceKeepsDatabaseOpenWhenJobsMissDeadline(t *testing.T) {
+func TestGracefulShutdownPropagatesDeadlineAndKeepsDatabaseOpen(t *testing.T) {
 	oldDatabase := g.Db
 	oldHTTPClient := g.HttpClient
 	defer func() {
@@ -195,9 +196,12 @@ func TestShutdownServiceKeepsDatabaseOpenWhenJobsMissDeadline(t *testing.T) {
 	scheduler.Start()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	err = shutdownService(shutdownCtx, &http.Server{}, scheduler, jobs)
+	err = gracefulShutdown(shutdownCtx, &http.Server{}, scheduler, jobs)
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("shutdownService error = %v, want deadline exceeded", err)
+		t.Fatalf("gracefulShutdown error = %v, want deadline exceeded", err)
+	}
+	if !strings.Contains(err.Error(), "graceful shutdown incomplete") {
+		t.Fatalf("gracefulShutdown error lacks context: %v", err)
 	}
 	if err := database.Ping(); err != nil {
 		t.Fatalf("database closed while a background job was still running: %v", err)

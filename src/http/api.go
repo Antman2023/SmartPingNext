@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"smartping/src/funcs"
 	"smartping/src/g"
@@ -317,23 +316,35 @@ func configApiRoutes(mux *http.ServeMux) {
 			RenderJson(w, preout)
 			return
 		}
-		nowtime := int(time.Now().Unix())
-		if !allowToolRequest(r.RemoteAddr, nowtime, g.ConfigSnapshot().Toollimit) {
-			preout.Error = "Time Limit Exceeded!"
-			RenderJson(w, preout)
-			return
-		}
 		target, err := normalizeToolTarget(form["t"][0])
 		if err != nil {
 			preout.Error = "Unable to resolve destination host"
 			RenderJson(w, preout)
 			return
 		}
+		if !acquireToolRequest() {
+			preout.Error = "Too Many Tool Requests"
+			w.Header().Set("Retry-After", "1")
+			w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+			w.WriteHeader(http.StatusTooManyRequests)
+			RenderJson(w, preout)
+			return
+		}
+		defer releaseToolRequest()
+		nowtime := int(time.Now().Unix())
+		if !allowToolRequest(r.RemoteAddr, nowtime, g.ConfigSnapshot().Toollimit) {
+			preout.Error = "Time Limit Exceeded!"
+			RenderJson(w, preout)
+			return
+		}
 		preout.Ping = g.PingSt{}
 		preout.Ping.MinDelay = -1
 		lossPK := 0
-		ipaddr, err := resolveToolIPAddr(target)
+		ipaddr, err := resolveToolIPAddrContext(r.Context(), target)
 		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
 			preout.Error = "Unable to resolve destination host"
 			RenderJson(w, preout)
 			return
@@ -543,7 +554,6 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, o, http.StatusUnauthorized)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
 	form := r.URL.Query()
 	if len(form["g"]) == 0 {
 		o := "Url Param Error!"
@@ -567,6 +577,12 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, o, http.StatusNotAcceptable)
 		return
 	}
+	if !acquireProxyRequest() {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "Too Many Proxy Requests", http.StatusTooManyRequests)
+		return
+	}
+	defer releaseProxyRequest()
 	client := &http.Client{
 		Timeout: time.Duration(defaultto) * time.Second,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -591,17 +607,21 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, o, resCode)
 		return
 	}
-	body, err := readProxyResponseBody(resp.Body)
+	body, err := readProxyHTTPResponseBody(resp)
 	if err != nil {
 		o := "Read Remote Data Error:" + err.Error()
 		http.Error(w, o, http.StatusServiceUnavailable)
 		return
 	}
 	var out bytes.Buffer
+	out.Grow(len(body) + 1)
 	if err := json.Indent(&out, body, "", "\t"); err != nil {
 		http.Error(w, "Invalid Remote JSON Response", http.StatusBadGateway)
 		return
 	}
-	o := out.String()
-	fmt.Fprintln(w, o)
+	_ = out.WriteByte('\n')
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	if _, err := w.Write(out.Bytes()); err != nil {
+		logrus.Debug("[func:/api/proxy.json] Write response: ", err)
+	}
 }

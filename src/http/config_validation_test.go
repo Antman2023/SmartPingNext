@@ -99,6 +99,18 @@ func TestValidateConfigRejectsInvalidReferencesAndLimits(t *testing.T) {
 		"invalid cloud endpoint": func(config *g.Config) {
 			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "file:///etc/passwd"}
 		},
+		"cloud endpoint credentials": func(config *g.Config) {
+			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "https://user:secret@example.com/config.json"}
+		},
+		"cloud endpoint fragment": func(config *g.Config) {
+			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "https://example.com/config.json#private"}
+		},
+		"cloud endpoint zero port": func(config *g.Config) {
+			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "https://example.com:0/config.json"}
+		},
+		"cloud endpoint port above maximum": func(config *g.Config) {
+			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "https://example.com:65536/config.json"}
+		},
 		"zero port": func(config *g.Config) {
 			config.Port = 0
 		},
@@ -113,6 +125,22 @@ func TestValidateConfigRejectsInvalidReferencesAndLimits(t *testing.T) {
 			mutate(&config)
 			if err := validateConfig(config); err == nil {
 				t.Fatalf("validateConfig should reject %s", name)
+			}
+		})
+	}
+}
+
+func TestValidateConfigAcceptsCloudEndpointPortBounds(t *testing.T) {
+	for _, endpoint := range []string{
+		"https://example.com/config.json",
+		"http://example.com:1/config.json",
+		"https://example.com:65535/config.json",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			config := validTestConfig()
+			config.Mode = map[string]string{"Type": "cloud", "Endpoint": endpoint}
+			if err := validateConfig(config); err != nil {
+				t.Fatalf("validateConfig rejected valid cloud endpoint %q: %v", endpoint, err)
 			}
 		})
 	}

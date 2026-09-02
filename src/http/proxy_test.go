@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -122,6 +123,21 @@ func TestReadProxyResponseBodyRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestReadProxyHTTPResponseBodyRejectsDeclaredOversizeWithoutReading(t *testing.T) {
+	body := bytes.NewReader([]byte(`{"status":"ok"}`))
+	response := &http.Response{
+		ContentLength: maxProxyResponseBytes + 1,
+		Body:          io.NopCloser(body),
+	}
+
+	if _, err := readProxyHTTPResponseBody(response); err == nil {
+		t.Fatal("readProxyHTTPResponseBody should reject an oversized declared response")
+	}
+	if got, want := body.Len(), len(`{"status":"ok"}`); got != want {
+		t.Fatalf("response body bytes remaining = %d, want %d", got, want)
+	}
+}
+
 func proxyTestConfig(t *testing.T, serverURL string) g.Config {
 	t.Helper()
 	parsedURL, err := url.Parse(serverURL)
@@ -163,8 +179,55 @@ func TestHandleProxyUsesValidatedTarget(t *testing.T) {
 		if recorder.Code != http.StatusOK {
 			t.Fatalf("handleProxy status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
 		}
+		if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+			t.Fatalf("handleProxy Content-Type = %q, want application/json", got)
+		}
+		if got := recorder.Body.String(); got != "{\n\t\"status\": \"ok\"\n}\n" {
+			t.Fatalf("handleProxy body = %q, want indented JSON ending in newline", got)
+		}
 		if requests.Load() != 1 {
 			t.Fatalf("remote requests = %d, want 1", requests.Load())
+		}
+	})
+}
+
+func TestHandleProxyReturnsTooManyRequestsWhenConcurrencyIsFull(t *testing.T) {
+	oldSlots := proxyRequestSlots
+	proxyRequestSlots = make(chan struct{}, maxConcurrentProxyRequests)
+	defer func() { proxyRequestSlots = oldSlots }()
+	for i := 0; i < maxConcurrentProxyRequests; i++ {
+		if !acquireProxyRequest() {
+			t.Fatalf("fill proxy request slot %d", i)
+		}
+	}
+	defer func() {
+		for i := 0; i < maxConcurrentProxyRequests; i++ {
+			releaseProxyRequest()
+		}
+	}()
+
+	var requests atomic.Int32
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer remote.Close()
+
+	withProxyConfig(proxyTestConfig(t, remote.URL), func() {
+		recorder := httptest.NewRecorder()
+		handleProxy(recorder, proxyRequest(remote.URL+"/api/config.json"))
+
+		if recorder.Code != http.StatusTooManyRequests {
+			t.Fatalf("handleProxy status = %d, want %d", recorder.Code, http.StatusTooManyRequests)
+		}
+		if got := recorder.Header().Get("Retry-After"); got != "1" {
+			t.Fatalf("Retry-After = %q, want 1", got)
+		}
+		if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+			t.Fatalf("handleProxy error Content-Type = %q, want text/plain", got)
+		}
+		if requests.Load() != 0 {
+			t.Fatalf("remote requests = %d, want 0", requests.Load())
 		}
 	})
 }
@@ -291,6 +354,9 @@ func TestHandleProxyRejectsInvalidJSON(t *testing.T) {
 
 		if recorder.Code != http.StatusBadGateway {
 			t.Fatalf("handleProxy status = %d, want %d", recorder.Code, http.StatusBadGateway)
+		}
+		if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+			t.Fatalf("handleProxy error Content-Type = %q, want text/plain", got)
 		}
 	})
 }

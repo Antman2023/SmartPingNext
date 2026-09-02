@@ -90,7 +90,9 @@ func main() {
 		os.Exit(0)
 	}
 	g.ParseConfig(Version)
-	if err := runService(); err != nil {
+	serviceErr := runService()
+	loggerErr := g.CloseLogger()
+	if err := errors.Join(serviceErr, loggerErr); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -126,10 +128,7 @@ func runService() error {
 		logrus.Info("Shutdown signal received")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		if err := shutdownService(shutdownCtx, server, c, jobs); err != nil {
-			logrus.Warn("Graceful shutdown incomplete: ", err)
-		}
-		return nil
+		return gracefulShutdown(shutdownCtx, server, c, jobs)
 	case err := <-serverErrors:
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
@@ -139,6 +138,13 @@ func runService() error {
 		}
 		return errors.Join(fmt.Errorf("HTTP server failed: %w", err), shutdownErr)
 	}
+}
+
+func gracefulShutdown(ctx context.Context, server *standardHTTP.Server, scheduler *cron.Cron, jobs *backgroundJobs) error {
+	if err := shutdownService(ctx, server, scheduler, jobs); err != nil {
+		return fmt.Errorf("graceful shutdown incomplete: %w", err)
+	}
+	return nil
 }
 
 func shutdownService(ctx context.Context, server *standardHTTP.Server, scheduler *cron.Cron, jobs *backgroundJobs) error {
