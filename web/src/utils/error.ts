@@ -1,5 +1,6 @@
 import { ElMessage } from 'element-plus'
 import i18n from '@/locales'
+import { isRequestTimeout } from '@/utils/requestErrors'
 
 export class ApiError extends Error {
   constructor(
@@ -43,6 +44,9 @@ export function handleError(error: unknown, defaultMessage = i18n.global.t('comm
 }
 
 export function handleNetworkError(error: unknown): ApiError {
+  if (isRequestTimeout(error)) {
+    return new ApiError(i18n.global.t('common.requestTimeout'), 0, 'request_timeout')
+  }
   if (isAxiosError(error)) {
     if (error.response) {
       const status = error.response.status

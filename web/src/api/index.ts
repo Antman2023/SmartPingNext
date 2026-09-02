@@ -1,9 +1,18 @@
 import axios from 'axios'
 import { handleNetworkError } from '@/utils/error'
+import { isRequestCanceled, normalizeRejectedRequest } from '@/utils/requestCancellation'
+import { normalizeRequestTimeout, resolveProxyClientTimeout } from '@/utils/requestTimeouts'
+
+const apiRequestTimeoutMs = normalizeRequestTimeout(import.meta.env.VITE_API_TIMEOUT)
 
 const instance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-  timeout: Number(import.meta.env.VITE_API_TIMEOUT) || 15000
+  timeout: apiRequestTimeoutMs
+})
+
+export const proxyRequestConfig = (signal?: AbortSignal, serverTimeoutSeconds?: number) => ({
+  signal,
+  timeout: resolveProxyClientTimeout(apiRequestTimeoutMs, serverTimeoutSeconds)
 })
 
 // 请求拦截器
@@ -30,8 +39,10 @@ instance.interceptors.response.use(
     return res
   },
   (error) => {
-    return Promise.reject(handleNetworkError(error))
+    return Promise.reject(normalizeRejectedRequest(error, handleNetworkError))
   }
 )
 
 export default instance
+
+export { isRequestCanceled }

@@ -173,6 +173,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import '@/plugins/elementPlusToolsStyles'
 import { Loading, SuccessFilled, Warning } from '@element-plus/icons-vue'
+import { isRequestCanceled } from '@/api'
 import { fetchConfig } from '@/api/config'
 import { runTools } from '@/api/tools'
 import { mapWithConcurrency } from '@/utils/concurrency'
@@ -201,6 +202,8 @@ const lastRunAt = ref<Date | null>(null)
 let isUnmounted = false
 let configRequestId = 0
 let checkRequestId = 0
+let configAbortController: AbortController | null = null
+let checkAbortController: AbortController | null = null
 const CHECK_CONCURRENCY = 4
 
 const checkedCount = computed(() => results.value.filter((row) => row.checked).length)
@@ -213,11 +216,19 @@ const errorCount = computed(
 const lastRunLabel = computed(() => (lastRunAt.value ? formatTime(lastRunAt.value) : ''))
 
 const loadConfig = async () => {
+  configAbortController?.abort()
+  checkAbortController?.abort()
+  checkAbortController = null
+  checkRequestId++
+  checking.value = false
+  results.value.forEach((row) => (row.loading = false))
+  const controller = new AbortController()
+  configAbortController = controller
   const requestId = ++configRequestId
   configLoading.value = true
   configError.value = false
   try {
-    const cfg = await fetchConfig()
+    const cfg = await fetchConfig(controller.signal)
     if (isUnmounted || requestId !== configRequestId) {
       return
     }
@@ -236,7 +247,7 @@ const loadConfig = async () => {
         error: null
       }))
   } catch (error) {
-    if (isUnmounted || requestId !== configRequestId) {
+    if (isRequestCanceled(error) || isUnmounted || requestId !== configRequestId) {
       return
     }
     console.error('加载配置失败', error)
@@ -245,6 +256,9 @@ const loadConfig = async () => {
       ElMessage.error(t('common.configLoadFailedNetwork'))
     }
   } finally {
+    if (configAbortController === controller) {
+      configAbortController = null
+    }
     if (!isUnmounted && requestId === configRequestId) {
       configLoading.value = false
     }
@@ -269,6 +283,8 @@ const runCheck = async () => {
   }
 
   const requestId = ++checkRequestId
+  const controller = new AbortController()
+  checkAbortController = controller
   target.value = normalizedTarget
   checking.value = true
   results.value.forEach((row) => {
@@ -282,13 +298,17 @@ const runCheck = async () => {
       row.loading = true
 
       try {
-        const result = await runTools(`${row.addr}:${row.port}`, normalizedTarget)
+        const result = await runTools(
+          `${row.addr}:${row.port}`,
+          normalizedTarget,
+          controller.signal
+        )
         if (isUnmounted || requestId !== checkRequestId) {
           return
         }
         row.result = result
       } catch (error: unknown) {
-        if (isUnmounted || requestId !== checkRequestId) {
+        if (isRequestCanceled(error) || isUnmounted || requestId !== checkRequestId) {
           return
         }
         row.error = error instanceof Error ? error.message : t('tools.requestFailed')
@@ -299,6 +319,9 @@ const runCheck = async () => {
       }
     })
   } finally {
+    if (checkAbortController === controller) {
+      checkAbortController = null
+    }
     if (!isUnmounted && requestId === checkRequestId) {
       checking.value = false
       lastRunAt.value = new Date()
@@ -315,6 +338,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   isUnmounted = true
+  configAbortController?.abort()
+  checkAbortController?.abort()
   configRequestId++
   checkRequestId++
 })

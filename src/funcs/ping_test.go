@@ -3,30 +3,205 @@ package funcs
 import (
 	"context"
 	"smartping/src/g"
-	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestPingContextDoesNotStartCanceledRound(t *testing.T) {
-	atomic.StoreInt32(&pingRunning, 0)
+	oldGate := pingRoundGate
+	pingRoundGate = newBoundedJobGate()
+	defer func() { pingRoundGate = oldGate }()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	PingContext(ctx)
-	if got := atomic.LoadInt32(&pingRunning); got != 0 {
-		t.Fatalf("pingRunning = %d after canceled call, want 0", got)
+	running, waiting := boundedJobGateState(pingRoundGate)
+	if running || waiting {
+		t.Fatalf("gate state after canceled call = (running=%v, waiting=%v), want both false", running, waiting)
 	}
 }
 
-func TestPingSkipsOverlappingRound(t *testing.T) {
-	atomic.StoreInt32(&pingRunning, 1)
-	defer atomic.StoreInt32(&pingRunning, 0)
-
-	Ping()
-	if got := atomic.LoadInt32(&pingRunning); got != 1 {
-		t.Fatalf("pingRunning = %d, want existing round to remain active", got)
+func TestBoundedJobGateQueuesOneRoundAndRejectsAdditionalWork(t *testing.T) {
+	gate := newBoundedJobGate()
+	if acquired, queued := gate.acquire(context.Background()); !acquired || queued {
+		t.Fatalf("first acquire = (%v, %v), want (true, false)", acquired, queued)
 	}
+
+	type acquireResult struct {
+		acquired bool
+		queued   bool
+	}
+	secondResult := make(chan acquireResult, 1)
+	go func() {
+		acquired, queued := gate.acquire(context.Background())
+		secondResult <- acquireResult{acquired: acquired, queued: queued}
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for !boundedJobGateHasWaiter(gate) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !boundedJobGateHasWaiter(gate) {
+		t.Fatal("waiting slot was not occupied")
+	}
+	if acquired, queued := gate.acquire(context.Background()); acquired || queued {
+		t.Fatalf("third acquire = (%v, %v), want (false, false)", acquired, queued)
+	}
+
+	gate.release()
+	select {
+	case result := <-secondResult:
+		if !result.acquired || !result.queued {
+			t.Fatalf("queued acquire = (%v, %v), want (true, true)", result.acquired, result.queued)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued acquire did not resume after release")
+	}
+	gate.release()
+}
+
+func TestBoundedJobGateCanceledWaiterReleasesQueueSlot(t *testing.T) {
+	gate := newBoundedJobGate()
+	if acquired, _ := gate.acquire(context.Background()); !acquired {
+		t.Fatal("first acquire failed")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan acquireResultForTest, 1)
+	go func() {
+		acquired, queued := gate.acquire(ctx)
+		result <- acquireResultForTest{acquired: acquired, queued: queued}
+	}()
+	deadline := time.Now().Add(time.Second)
+	for !boundedJobGateHasWaiter(gate) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !boundedJobGateHasWaiter(gate) {
+		cancel()
+		gate.release()
+		t.Fatal("waiting slot was not occupied before cancellation")
+	}
+	cancel()
+
+	select {
+	case got := <-result:
+		if got.acquired || !got.queued {
+			t.Fatalf("canceled acquire = (%v, %v), want (false, true)", got.acquired, got.queued)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled acquire did not return")
+	}
+	if boundedJobGateHasWaiter(gate) {
+		t.Fatal("waiting slot remained occupied after cancellation")
+	}
+	gate.release()
+}
+
+func TestBoundedJobGateCancellationAfterHandoffDoesNotLeakRunningSlot(t *testing.T) {
+	gate := newBoundedJobGate()
+	if acquired, _ := gate.acquire(context.Background()); !acquired {
+		t.Fatal("first acquire failed")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan acquireResultForTest, 1)
+	go func() {
+		acquired, queued := gate.acquire(ctx)
+		result <- acquireResultForTest{acquired: acquired, queued: queued}
+	}()
+	waitForBoundedJobGateWaiter(t, gate)
+
+	gate.release()
+	cancel()
+	select {
+	case got := <-result:
+		if !got.acquired || !got.queued {
+			t.Fatalf("handoff acquire = (%v, %v), want (true, true)", got.acquired, got.queued)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handoff acquire did not return")
+	}
+
+	gate.release()
+	running, waiting := boundedJobGateState(gate)
+	if running || waiting {
+		t.Fatalf("gate state after handoff release = (running=%v, waiting=%v), want both false", running, waiting)
+	}
+}
+
+func TestBoundedJobGateHandsOffToQueuedRoundBeforeLaterTrigger(t *testing.T) {
+	gate := newBoundedJobGate()
+	if acquired, queued := gate.acquire(context.Background()); !acquired || queued {
+		t.Fatalf("first acquire = (%v, %v), want (true, false)", acquired, queued)
+	}
+
+	secondResult := make(chan acquireResultForTest, 1)
+	go func() {
+		acquired, queued := gate.acquire(context.Background())
+		secondResult <- acquireResultForTest{acquired: acquired, queued: queued}
+	}()
+	waitForBoundedJobGateWaiter(t, gate)
+
+	gate.release()
+	thirdResult := make(chan acquireResultForTest, 1)
+	go func() {
+		acquired, queued := gate.acquire(context.Background())
+		thirdResult <- acquireResultForTest{acquired: acquired, queued: queued}
+	}()
+
+	select {
+	case result := <-secondResult:
+		if !result.acquired || !result.queued {
+			t.Fatalf("second acquire = (%v, %v), want (true, true)", result.acquired, result.queued)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued acquire did not receive handoff")
+	}
+	select {
+	case result := <-thirdResult:
+		t.Fatalf("later acquire completed before second release: (%v, %v)", result.acquired, result.queued)
+	default:
+	}
+
+	waitForBoundedJobGateWaiter(t, gate)
+	gate.release()
+	select {
+	case result := <-thirdResult:
+		if !result.acquired || !result.queued {
+			t.Fatalf("third acquire = (%v, %v), want (true, true)", result.acquired, result.queued)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("later acquire did not resume after second release")
+	}
+	gate.release()
+}
+
+func boundedJobGateState(gate *boundedJobGate) (running bool, waiting bool) {
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	return gate.running, gate.waiter != nil
+}
+
+func boundedJobGateHasWaiter(gate *boundedJobGate) bool {
+	_, waiting := boundedJobGateState(gate)
+	return waiting
+}
+
+func waitForBoundedJobGateWaiter(t *testing.T, gate *boundedJobGate) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for !boundedJobGateHasWaiter(gate) && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !boundedJobGateHasWaiter(gate) {
+		t.Fatal("waiting slot was not occupied")
+	}
+}
+
+type acquireResultForTest struct {
+	acquired bool
+	queued   bool
 }
 
 func TestResolvePingRoundConfigBoundsValuesAndAllowsZeroStagger(t *testing.T) {

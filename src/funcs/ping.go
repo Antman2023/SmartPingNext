@@ -7,7 +7,6 @@ import (
 	"smartping/src/nettools"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -20,7 +19,78 @@ const (
 	defaultPingStaggerMs  = 100
 )
 
-var pingRunning int32
+type boundedJobGate struct {
+	mu      sync.Mutex
+	running bool
+	waiter  *boundedJobWaiter
+}
+
+type boundedJobWaiter struct {
+	ready   chan struct{}
+	granted bool
+}
+
+func newBoundedJobGate() *boundedJobGate {
+	return &boundedJobGate{}
+}
+
+func (gate *boundedJobGate) acquire(ctx context.Context) (acquired bool, queued bool) {
+	if ctx.Err() != nil {
+		return false, false
+	}
+
+	gate.mu.Lock()
+	if ctx.Err() != nil {
+		gate.mu.Unlock()
+		return false, false
+	}
+	if !gate.running {
+		gate.running = true
+		gate.mu.Unlock()
+		return true, false
+	}
+	if gate.waiter != nil {
+		gate.mu.Unlock()
+		return false, false
+	}
+	waiter := &boundedJobWaiter{ready: make(chan struct{})}
+	gate.waiter = waiter
+	gate.mu.Unlock()
+
+	select {
+	case <-waiter.ready:
+		return true, true
+	case <-ctx.Done():
+		gate.mu.Lock()
+		if gate.waiter == waiter {
+			gate.waiter = nil
+		}
+		granted := waiter.granted
+		gate.mu.Unlock()
+		// If release won the race, accept the handoff so the caller can release
+		// the slot even though its context has already been canceled.
+		return granted, true
+	}
+}
+
+func (gate *boundedJobGate) release() {
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	if !gate.running {
+		panic("boundedJobGate: release without acquire")
+	}
+	if gate.waiter == nil {
+		gate.running = false
+		return
+	}
+
+	waiter := gate.waiter
+	gate.waiter = nil
+	waiter.granted = true
+	close(waiter.ready)
+}
+
+var pingRoundGate = newBoundedJobGate()
 
 func boundedBaseInt(config g.Config, key string, defaultValue int, minValue int, maxValue int) int {
 	value, ok := config.Base[key]
@@ -68,18 +138,25 @@ func PingContext(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	if !atomic.CompareAndSwapInt32(&pingRunning, 0, 1) {
-		logrus.Warn("[func:Ping] Previous round still running, skip")
+	acquired, queued := pingRoundGate.acquire(ctx)
+	if !acquired {
+		if ctx.Err() == nil {
+			logrus.Warn("[func:Ping] Active and queued rounds still running, skip latest trigger")
+		}
 		return
+	}
+	if queued {
+		logrus.Info("[func:Ping] Starting delayed round after previous round completed")
 	}
 	roundTime := time.Now().Truncate(time.Minute)
 	func() {
-		defer atomic.StoreInt32(&pingRunning, 0)
+		defer pingRoundGate.release()
 		runPingRoundContext(ctx, roundTime)
 	}()
-	if ctx.Err() == nil {
-		StartAlertContext(ctx)
+	if ctx.Err() != nil {
+		return
 	}
+	StartAlertContext(ctx)
 }
 
 func runPingRound(roundTime time.Time) {

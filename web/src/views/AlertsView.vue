@@ -218,6 +218,7 @@ import { ElDialog, ElMessage, ElTable, ElTableColumn } from 'element-plus'
 import { ArrowLeft, Loading, Warning } from '@element-plus/icons-vue'
 import '@/plugins/elementPlusAlertsStyles'
 import RefreshStatus from '@/components/common/RefreshStatus.vue'
+import { isRequestCanceled } from '@/api'
 import { fetchConfig } from '@/api/config'
 import { getAlerts } from '@/api/alert'
 import { mapWithConcurrency } from '@/utils/concurrency'
@@ -248,6 +249,8 @@ const mtrData = ref<MtrResult[]>([])
 let isUnmounted = false
 let configRequestId = 0
 let alertsRequestId = 0
+let configAbortController: AbortController | null = null
+let alertsAbortController: AbortController | null = null
 const ALERT_CONCURRENCY = 4
 const failedNodes = computed(() => nodes.value.filter((node) => node.error).length)
 const lastUpdatedLabel = computed(() =>
@@ -255,10 +258,18 @@ const lastUpdatedLabel = computed(() =>
 )
 
 const loadConfig = async () => {
+  configAbortController?.abort()
+  alertsAbortController?.abort()
+  alertsAbortController = null
+  alertsRequestId++
+  alertsLoading.value = false
+  nodes.value.forEach((node) => (node.loading = false))
+  const controller = new AbortController()
+  configAbortController = controller
   const requestId = ++configRequestId
   configLoading.value = true
   try {
-    const cfg = await fetchConfig()
+    const cfg = await fetchConfig(controller.signal)
     if (isUnmounted || requestId !== configRequestId) {
       return
     }
@@ -270,7 +281,7 @@ const loadConfig = async () => {
 
     await loadAllAlerts()
   } catch (error) {
-    if (isUnmounted || requestId !== configRequestId) {
+    if (isRequestCanceled(error) || isUnmounted || requestId !== configRequestId) {
       return
     }
     console.error('加载配置失败', error)
@@ -279,6 +290,9 @@ const loadConfig = async () => {
       ElMessage.error(t('common.configLoadFailedNetwork'))
     }
   } finally {
+    if (configAbortController === controller) {
+      configAbortController = null
+    }
     if (!isUnmounted && requestId === configRequestId) {
       configLoading.value = false
     }
@@ -290,6 +304,9 @@ const loadAlerts = async (date?: string) => {
     return
   }
 
+  alertsAbortController?.abort()
+  const controller = new AbortController()
+  alertsAbortController = controller
   const requestId = ++alertsRequestId
   const port = config.value.Port
   const requestNodes = nodes.value
@@ -302,9 +319,12 @@ const loadAlerts = async (date?: string) => {
   try {
     const results = await mapWithConcurrency(requestNodes, ALERT_CONCURRENCY, async (node) => {
       try {
-        const data = await getAlerts(`http://${node.addr}:${port}`, date)
+        const data = await getAlerts(`http://${node.addr}:${port}`, date, controller.signal)
         return { node, data, error: false }
       } catch (error) {
+        if (isRequestCanceled(error)) {
+          return { node, data: null, error: false }
+        }
         console.error(`获取 ${node.name} 报警记录失败`, error)
         return { node, data: null, error: true }
       }
@@ -331,6 +351,9 @@ const loadAlerts = async (date?: string) => {
       .flatMap((data) => data.logs)
       .sort((a, b) => b.Logtime.localeCompare(a.Logtime))
   } finally {
+    if (alertsAbortController === controller) {
+      alertsAbortController = null
+    }
     if (!isUnmounted && requestId === alertsRequestId) {
       requestNodes.forEach((node) => (node.loading = false))
       alertsLoading.value = false
@@ -405,6 +428,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   isUnmounted = true
+  configAbortController?.abort()
+  alertsAbortController?.abort()
   configRequestId++
   alertsRequestId++
 })

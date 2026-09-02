@@ -210,6 +210,7 @@ import { ElDatePicker, ElDialog, ElMessage, ElSwitch } from 'element-plus'
 import { InfoFilled, Loading, Warning } from '@element-plus/icons-vue'
 import '@/plugins/elementPlusMonitorStyles'
 import MonitorRefreshControl from '@/components/common/MonitorRefreshControl.vue'
+import { isRequestCanceled } from '@/api'
 import { fetchConfig, fetchProxyConfig } from '@/api/config'
 import { getProxyPingData } from '@/api/ping'
 import { displayName, formatDateTime, formatTime } from '@/utils/format'
@@ -256,6 +257,9 @@ let isUnmounted = false
 let configRequestId = 0
 let chartRequestId = 0
 let detailRequestId = 0
+let configAbortController: AbortController | null = null
+let chartAbortController: AbortController | null = null
+let detailAbortController: AbortController | null = null
 const refreshInterval = computed(() => Math.max(config.value?.Base.Refresh || 1, 1) * 60 * 1000)
 const lastUpdatedLabel = computed(() =>
   lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
@@ -279,16 +283,25 @@ const failedTargets = computed(
 )
 
 const loadConfig = async (proxyUrl?: string) => {
+  configAbortController?.abort()
+  chartAbortController?.abort()
+  chartAbortController = null
+  chartRequestId++
+  isRefreshing.value = false
+  reverseTargets.value.forEach((target) => (target.loading = false))
+  const controller = new AbortController()
+  configAbortController = controller
   const requestId = ++configRequestId
   configLoading.value = true
   configError.value = false
   try {
-    const cfg = proxyUrl ? await fetchProxyConfig(proxyUrl) : await fetchConfig()
+    const cfg = proxyUrl
+      ? await fetchProxyConfig(proxyUrl, controller.signal)
+      : await fetchConfig(controller.signal)
     if (isUnmounted || requestId !== configRequestId) {
       return
     }
 
-    chartRequestId++
     config.value = cfg
     currentAgent.value = cfg.Addr
 
@@ -316,7 +329,7 @@ const loadConfig = async (proxyUrl?: string) => {
 
     await loadAllCharts()
   } catch (error) {
-    if (isUnmounted || requestId !== configRequestId) {
+    if (isRequestCanceled(error) || isUnmounted || requestId !== configRequestId) {
       return
     }
     console.error('加载配置失败', error)
@@ -325,6 +338,9 @@ const loadConfig = async (proxyUrl?: string) => {
       ElMessage.error(t('common.configLoadFailedNetwork'))
     }
   } finally {
+    if (configAbortController === controller) {
+      configAbortController = null
+    }
     if (!isUnmounted && requestId === configRequestId) {
       configLoading.value = false
     }
@@ -332,6 +348,9 @@ const loadConfig = async (proxyUrl?: string) => {
 }
 
 const loadAllCharts = async () => {
+  chartAbortController?.abort()
+  const controller = new AbortController()
+  chartAbortController = controller
   const requestId = ++chartRequestId
   const targets = [...reverseTargets.value]
   const batchSize = 4
@@ -342,9 +361,12 @@ const loadAllCharts = async () => {
         return
       }
       const batch = targets.slice(index, index + batchSize)
-      await Promise.all(batch.map((target) => loadChartData(target, requestId)))
+      await Promise.all(batch.map((target) => loadChartData(target, requestId, controller.signal)))
     }
   } finally {
+    if (chartAbortController === controller) {
+      chartAbortController = null
+    }
     if (!isUnmounted && requestId === chartRequestId) {
       isRefreshing.value = false
       lastUpdatedAt.value = new Date()
@@ -352,18 +374,18 @@ const loadAllCharts = async () => {
   }
 }
 
-const loadChartData = async (target: ReverseTarget, requestId: number) => {
+const loadChartData = async (target: ReverseTarget, requestId: number, signal: AbortSignal) => {
   target.loading = true
   const baseUrl = `http://${target.fromAddr}:${target.fromPort}`
   const targetIp = target.targetIp
   try {
-    const data = await getProxyPingData(baseUrl, targetIp)
+    const data = await getProxyPingData(baseUrl, targetIp, undefined, undefined, signal)
     if (isUnmounted || requestId !== chartRequestId) {
       return
     }
     target.chartData = data
   } catch (error) {
-    if (isUnmounted || requestId !== chartRequestId) {
+    if (isRequestCanceled(error) || isUnmounted || requestId !== chartRequestId) {
       return
     }
     console.error('加载图表数据失败', error)
@@ -400,31 +422,44 @@ const loadDetailData = async () => {
     return
   }
 
+  detailAbortController?.abort()
+  detailAbortController = null
   const requestId = ++detailRequestId
   const target = currentTarget.value
   const baseUrl = `http://${target.fromAddr}:${target.fromPort}`
   const start = startTime.value
   const end = endTime.value
   if (start && end && start > end) {
+    detailLoading.value = false
     ElMessage.warning(t('common.invalidTimeRange'))
     return
   }
+  const controller = new AbortController()
+  detailAbortController = controller
   detailLoading.value = true
   detailError.value = false
   try {
-    const data = await getProxyPingData(baseUrl, target.targetIp, start, end)
+    const data = await getProxyPingData(baseUrl, target.targetIp, start, end, controller.signal)
     if (isUnmounted || requestId !== detailRequestId || !detailVisible.value) {
       return
     }
     detailData.value = data
   } catch (error) {
-    if (isUnmounted || requestId !== detailRequestId || !detailVisible.value) {
+    if (
+      isRequestCanceled(error) ||
+      isUnmounted ||
+      requestId !== detailRequestId ||
+      !detailVisible.value
+    ) {
       return
     }
     console.error('加载数据失败', error)
     detailData.value = null
     detailError.value = true
   } finally {
+    if (detailAbortController === controller) {
+      detailAbortController = null
+    }
     if (!isUnmounted && requestId === detailRequestId && detailVisible.value) {
       detailLoading.value = false
     }
@@ -526,6 +561,8 @@ watch([detailAutoRefresh, refreshInterval], ([enabled, interval]) => {
 
 watch(detailVisible, (visible) => {
   if (!visible) {
+    detailAbortController?.abort()
+    detailAbortController = null
     detailRequestId++
     detailAutoRefresh.value = false
     detailLoading.value = false
@@ -535,6 +572,9 @@ watch(detailVisible, (visible) => {
 
 onUnmounted(() => {
   isUnmounted = true
+  configAbortController?.abort()
+  chartAbortController?.abort()
+  detailAbortController?.abort()
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   configRequestId++
   chartRequestId++

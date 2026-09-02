@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Config } from '@/types'
 import { fetchConfig, saveConfig as saveConfigApi } from '@/api/config'
+import { isRequestCanceled } from '@/api'
 import i18n from '@/locales'
 
 export const useConfigStore = defineStore('config', () => {
@@ -53,22 +54,24 @@ export const useConfigStore = defineStore('config', () => {
     return promise
   }
 
-  const saveConfig = async (newConfig: Config, password: string) => {
+  const saveConfig = async (newConfig: Config, password: string, signal?: AbortSignal) => {
     const currentRequestId = ++requestId
     const configSnapshot = cloneConfig(newConfig)
     loadPromise = null
     loading.value = true
     error.value = null
     try {
-      await saveConfigApi(configSnapshot, password)
+      await saveConfigApi(configSnapshot, password, signal)
       if (currentRequestId === requestId) {
         config.value = configSnapshot
       }
     } catch (e) {
-      if (currentRequestId === requestId) {
+      if (currentRequestId === requestId && !isRequestCanceled(e)) {
         error.value = i18n.global.t('common.configSaveFailed')
       }
-      console.error(e)
+      if (!isRequestCanceled(e)) {
+        console.error(e)
+      }
       throw e
     } finally {
       if (currentRequestId === requestId) {

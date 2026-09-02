@@ -143,6 +143,7 @@ import type { EChartsOption } from 'echarts'
 import type { EChartsType } from 'echarts/core'
 import '@/plugins/elementPlusMappingStyles'
 import RefreshStatus from '@/components/common/RefreshStatus.vue'
+import { isRequestCanceled } from '@/api'
 import { fetchConfig } from '@/api/config'
 import { getMapping, getProxyMapping } from '@/api/mapping'
 import { useSidebarStore } from '@/stores/sidebar'
@@ -173,6 +174,8 @@ let chartLoadPromise: Promise<void> | null = null
 let isUnmounted = false
 let configRequestId = 0
 let mappingRequestId = 0
+let configAbortController: AbortController | null = null
+let mappingAbortController: AbortController | null = null
 let resizeTimer: number | null = null
 
 const currentAgentName = computed(() => {
@@ -194,11 +197,19 @@ const lastUpdatedLabel = computed(() =>
 )
 
 const loadConfig = async () => {
+  configAbortController?.abort()
+  mappingAbortController?.abort()
+  mappingAbortController = null
+  mappingRequestId++
+  mappingLoading.value = false
+  agents.value.forEach((agent) => (agent.loading = false))
+  const controller = new AbortController()
+  configAbortController = controller
   const requestId = ++configRequestId
   configLoading.value = true
   configError.value = false
   try {
-    const cfg = await fetchConfig()
+    const cfg = await fetchConfig(controller.signal)
     if (isUnmounted || requestId !== configRequestId) {
       return
     }
@@ -211,7 +222,7 @@ const loadConfig = async () => {
 
     await loadMappingData()
   } catch (error) {
-    if (isUnmounted || requestId !== configRequestId) {
+    if (isRequestCanceled(error) || isUnmounted || requestId !== configRequestId) {
       return
     }
     console.error('加载配置失败', error)
@@ -220,6 +231,9 @@ const loadConfig = async () => {
       ElMessage.error(t('common.configLoadFailedNetwork'))
     }
   } finally {
+    if (configAbortController === controller) {
+      configAbortController = null
+    }
     if (!isUnmounted && requestId === configRequestId) {
       configLoading.value = false
     }
@@ -231,13 +245,18 @@ const loadMappingData = async () => {
     return
   }
 
+  mappingAbortController?.abort()
+  const controller = new AbortController()
+  mappingAbortController = controller
   const requestId = ++mappingRequestId
   const baseUrl = currentBaseUrl.value
   const date = selectedDate.value
   mappingLoading.value = true
   mappingError.value = false
   try {
-    const data = baseUrl ? await getProxyMapping(baseUrl, date) : await getMapping(date)
+    const data = baseUrl
+      ? await getProxyMapping(baseUrl, date, controller.signal)
+      : await getMapping(date, controller.signal)
 
     if (isUnmounted || requestId !== mappingRequestId) {
       return
@@ -249,7 +268,7 @@ const loadMappingData = async () => {
     }
     lastUpdatedAt.value = new Date()
   } catch (error) {
-    if (isUnmounted || requestId !== mappingRequestId) {
+    if (isRequestCanceled(error) || isUnmounted || requestId !== mappingRequestId) {
       return
     }
     console.error('加载地图数据失败', error)
@@ -258,6 +277,9 @@ const loadMappingData = async () => {
       ElMessage.error(t('common.dataLoadFailed'))
     }
   } finally {
+    if (mappingAbortController === controller) {
+      mappingAbortController = null
+    }
     if (!isUnmounted && requestId === mappingRequestId) {
       mappingLoading.value = false
       agents.value.forEach((agent) => {
@@ -471,6 +493,8 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true
+  configAbortController?.abort()
+  mappingAbortController?.abort()
   configRequestId++
   mappingRequestId++
   if (resizeTimer !== null) {

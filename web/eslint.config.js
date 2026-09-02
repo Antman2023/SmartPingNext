@@ -8,7 +8,7 @@ import pluginTypeScript from '@typescript-eslint/eslint-plugin'
 
 export default [
   {
-    ignores: ['dist/', 'node_modules/', '*.d.ts', 'vite.config.js', 'tsconfig.node.tsbuildinfo']
+    ignores: ['.test-dist/', 'dist/', 'node_modules/', '*.d.ts', 'vite.config.js', '*.tsbuildinfo']
   },
   js.configs.recommended,
   {
@@ -31,10 +31,13 @@ export default [
     plugins: {
       '@typescript-eslint': pluginTypeScript
     },
-rules: {
+    rules: {
       'vue/multi-word-component-names': 'off',
       'vue/no-v-html': 'off',
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
+      ],
       '@typescript-eslint/no-explicit-any': 'warn',
       'no-console': 'off',
       'no-debugger': 'off'
@@ -54,7 +57,10 @@ rules: {
     },
     rules: {
       ...pluginTypeScript.configs.recommended.rules,
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }
+      ],
       '@typescript-eslint/no-explicit-any': 'warn'
     }
   },

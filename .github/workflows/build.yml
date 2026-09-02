@@ -2,12 +2,17 @@ name: Build and Release
 
 on:
   push:
+    branches:
+      - master
     tags:
-      - 'v*'
+      - "v*"
+  pull_request:
+    branches:
+      - master
   workflow_dispatch:
     inputs:
       create_release:
-        description: 'Create a draft release'
+        description: "Create a draft release"
         required: false
         default: false
         type: boolean
@@ -16,6 +21,7 @@ jobs:
   quality:
     name: Test and Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -23,13 +29,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: web/package-lock.json
 
       - name: Install frontend dependencies
@@ -40,9 +46,22 @@ jobs:
         working-directory: web
         run: npm run lint
 
+      - name: Test frontend
+        working-directory: web
+        run: npm test
+
       - name: Build frontend
         working-directory: web
         run: npm run build
+
+      - name: Upload frontend bundle
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Copy frontend to embed directory
         run: |
@@ -53,12 +72,16 @@ jobs:
       - name: Test backend
         run: go test ./src/...
 
+      - name: Race-test backend
+        run: go test -race ./src/...
+
       - name: Vet backend
         run: go vet ./src/...
 
   build:
     name: Build ${{ matrix.os }}-${{ matrix.arch }}
     needs: quality
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -68,29 +91,29 @@ jobs:
           - os: linux
             arch: amd64
             runner: ubuntu-latest
-            ext: ''
+            ext: ""
           # Linux arm64
           - os: linux
             arch: arm64
             runner: ubuntu-latest
-            ext: ''
+            ext: ""
           # Linux armv7
           - os: linux
             arch: armv7
             runner: ubuntu-latest
-            ext: ''
+            ext: ""
             goarch: arm
-            goarm: '7'
+            goarm: "7"
           # Windows amd64
           - os: windows
             arch: amd64
             runner: windows-latest
-            ext: '.exe'
+            ext: ".exe"
           # macOS arm64
           - os: darwin
             arch: arm64
             runner: macos-latest
-            ext: ''
+            ext: ""
 
     steps:
       - name: Checkout code
@@ -99,20 +122,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: "1.24"
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download frontend bundle
+        uses: actions/download-artifact@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build frontend
-        run: |
-          cd web
-          npm ci
-          npm run build
+          name: frontend-dist
+          path: web/dist
 
       - name: Copy frontend to embed directory
         shell: bash
@@ -252,6 +268,7 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: smartping-*
           path: artifacts
           merge-multiple: false
 

@@ -119,8 +119,8 @@ func (p *icmpPool) unregister(key uint32) {
 // dispatch 将响应分发给对应等待者
 func (p *icmpPool) dispatch(key uint32, resp icmpResponse) {
 	p.mu.RLock()
+	defer p.mu.RUnlock()
 	waiter, ok := p.waiters[key]
-	p.mu.RUnlock()
 	if ok {
 		if resp.final && !sameIPAddress(resp.addr, waiter.destination) {
 			return
@@ -197,12 +197,18 @@ func (p *icmpPool) close() error {
 	defer p.initMu.Unlock()
 	p.sendMu.Lock()
 	defer p.sendMu.Unlock()
-	if p.conn == nil {
-		return nil
+	var err error
+	if p.conn != nil {
+		err = p.conn.Close()
+		p.conn = nil
+		p.ipconn = nil
 	}
-	err := p.conn.Close()
-	p.conn = nil
-	p.ipconn = nil
+	p.mu.Lock()
+	for key, waiter := range p.waiters {
+		close(waiter.responses)
+		delete(p.waiters, key)
+	}
+	p.mu.Unlock()
 	return err
 }
 

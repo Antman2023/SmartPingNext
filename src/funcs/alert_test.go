@@ -91,6 +91,33 @@ func TestRunAlertTraceJobsBoundsConcurrencyAndProcessesEveryAlert(t *testing.T) 
 	}
 }
 
+func TestRunAlertTraceJobsReturnsItemsNotStartedAfterCancellation(t *testing.T) {
+	alerts := []g.AlertLog{
+		{Targetip: "192.0.2.1"},
+		{Targetip: "192.0.2.2"},
+		{Targetip: "192.0.2.3"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var processed atomic.Int32
+
+	unprocessed := runAlertTraceJobsContext(ctx, alerts, 1, func(context.Context, g.AlertLog) {
+		processed.Add(1)
+	})
+
+	if got := processed.Load(); got != 0 {
+		t.Fatalf("processed jobs = %d, want 0", got)
+	}
+	if len(unprocessed) != len(alerts) {
+		t.Fatalf("unprocessed jobs = %d, want %d", len(unprocessed), len(alerts))
+	}
+	for index := range alerts {
+		if unprocessed[index].Targetip != alerts[index].Targetip {
+			t.Fatalf("unprocessed[%d] = %q, want %q", index, unprocessed[index].Targetip, alerts[index].Targetip)
+		}
+	}
+}
+
 func withFuncTestDB(t *testing.T, schema []string, fn func(db *sql.DB)) {
 	t.Helper()
 	oldDB := g.Db
@@ -388,4 +415,70 @@ func TestAlertStorage(t *testing.T) {
 			t.Fatalf("duplicate alert was not updated: targetname=%q tracert=%q", targetname, tracert)
 		}
 	})
+}
+
+func TestAlertStorageContextReturnsDatabaseError(t *testing.T) {
+	schema := []string{
+		`CREATE TABLE alertlog (logtime TEXT, targetip TEXT, targetname TEXT, tracert TEXT, UNIQUE(logtime, targetip));`,
+	}
+
+	withFuncTestDB(t, schema, func(db *sql.DB) {
+		if err := db.Close(); err != nil {
+			t.Fatalf("close test database: %v", err)
+		}
+		err := AlertStorageContext(context.Background(), g.AlertLog{
+			Logtime:    "2026-09-02 20:30",
+			Targetip:   "192.0.2.1",
+			Targetname: "remote",
+		})
+		if err == nil {
+			t.Fatal("AlertStorageContext should return a database error")
+		}
+	})
+}
+
+func TestTraceAndStoreAlertRestoresRetryStateWhenCanceled(t *testing.T) {
+	const target = "192.0.2.1"
+	g.AlertStatusLock.Lock()
+	oldStatus := g.AlertStatus
+	g.AlertStatus = map[string]bool{target: false}
+	g.AlertStatusLock.Unlock()
+	t.Cleanup(func() {
+		g.AlertStatusLock.Lock()
+		g.AlertStatus = oldStatus
+		g.AlertStatusLock.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	traceAndStoreAlertContext(ctx, g.AlertLog{Targetip: target})
+
+	g.AlertStatusLock.RLock()
+	status, exists := g.AlertStatus[target]
+	g.AlertStatusLock.RUnlock()
+	if !exists || !status {
+		t.Fatalf("canceled alert state = (%v, %v), want existing healthy retry state", status, exists)
+	}
+}
+
+func TestRestoreAlertStatusDoesNotRecreateRemovedTarget(t *testing.T) {
+	const target = "192.0.2.1"
+	g.AlertStatusLock.Lock()
+	oldStatus := g.AlertStatus
+	g.AlertStatus = map[string]bool{}
+	g.AlertStatusLock.Unlock()
+	t.Cleanup(func() {
+		g.AlertStatusLock.Lock()
+		g.AlertStatus = oldStatus
+		g.AlertStatusLock.Unlock()
+	})
+
+	restoreAlertStatusForRetry(target)
+
+	g.AlertStatusLock.RLock()
+	_, exists := g.AlertStatus[target]
+	g.AlertStatusLock.RUnlock()
+	if exists {
+		t.Fatal("retry restoration recreated a target removed by configuration reconciliation")
+	}
 }

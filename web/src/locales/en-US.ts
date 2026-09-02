@@ -56,6 +56,7 @@ export default {
     gatewayError: 'Gateway error',
     serviceUnavailable: 'Service unavailable',
     gatewayTimeout: 'Gateway timeout',
+    requestTimeout: 'The request timed out. Please try again.',
     networkFailed: 'Network connection failed. Check the network.',
     requestFailed: 'Request failed',
     requestFailedWithStatus: 'Request failed ({status})',

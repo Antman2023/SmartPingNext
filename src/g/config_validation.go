@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -18,6 +19,8 @@ const (
 	maxConfigMappingTargets = 8192
 	maxConfigAuthorizedIPs  = 4096
 )
+
+var decimalFloatPattern = regexp.MustCompile(`^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$`)
 
 func ValidateConfig(config Config) error {
 	if strings.TrimSpace(config.Name) == "" {
@@ -132,7 +135,7 @@ func ValidateConfig(config Config) error {
 }
 
 func validIPv4(value string) bool {
-	if value != strings.TrimSpace(value) {
+	if value != strings.TrimSpace(value) || strings.Contains(value, ":") {
 		return false
 	}
 	ip := net.ParseIP(value)
@@ -140,6 +143,9 @@ func validIPv4(value string) bool {
 }
 
 func validatePositiveFloat(raw string, max float64, message string) error {
+	if !decimalFloatPattern.MatchString(raw) {
+		return errors.New(message)
+	}
 	value, err := strconv.ParseFloat(raw, 64)
 	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 || value > max {
 		return errors.New(message)

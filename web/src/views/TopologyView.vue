@@ -142,6 +142,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Bell, InfoFilled, Loading, Warning } from '@element-plus/icons-vue'
 import RefreshStatus from '@/components/common/RefreshStatus.vue'
+import { isRequestCanceled } from '@/api'
 import { fetchConfig } from '@/api/config'
 import { getTopology } from '@/api/topology'
 import { mapWithConcurrency } from '@/utils/concurrency'
@@ -166,6 +167,8 @@ const topologyGraphRef = ref<unknown>(null)
 let isUnmounted = false
 let configRequestId = 0
 let topologyRequestId = 0
+let configAbortController: AbortController | null = null
+let topologyAbortController: AbortController | null = null
 const TOPOLOGY_CONCURRENCY = 4
 
 interface TopoNode {
@@ -247,11 +250,19 @@ const lastUpdatedLabel = computed(() =>
 )
 
 const loadConfig = async () => {
+  configAbortController?.abort()
+  topologyAbortController?.abort()
+  topologyAbortController = null
+  topologyRequestId++
+  isRefreshing.value = false
+  loadingNodes.value = new Set()
+  const controller = new AbortController()
+  configAbortController = controller
   const requestId = ++configRequestId
   configLoading.value = true
   configError.value = false
   try {
-    const cfg = await fetchConfig()
+    const cfg = await fetchConfig(controller.signal)
     if (isUnmounted || requestId !== configRequestId) {
       return
     }
@@ -259,7 +270,7 @@ const loadConfig = async () => {
     topologyStatus.value = {}
     await loadTopologyStatus()
   } catch (error) {
-    if (isUnmounted || requestId !== configRequestId) {
+    if (isRequestCanceled(error) || isUnmounted || requestId !== configRequestId) {
       return
     }
     console.error('加载配置失败', error)
@@ -268,6 +279,9 @@ const loadConfig = async () => {
       ElMessage.error(t('common.configLoadFailedNetwork'))
     }
   } finally {
+    if (configAbortController === controller) {
+      configAbortController = null
+    }
     if (!isUnmounted && requestId === configRequestId) {
       configLoading.value = false
     }
@@ -279,6 +293,9 @@ const loadTopologyStatus = async () => {
     return
   }
 
+  topologyAbortController?.abort()
+  const controller = new AbortController()
+  topologyAbortController = controller
   const requestId = ++topologyRequestId
   const cfg = config.value
   const networkWithTopology = Object.entries(cfg.Network).filter(
@@ -297,14 +314,14 @@ const loadTopologyStatus = async () => {
   try {
     await mapWithConcurrency(networkWithTopology, TOPOLOGY_CONCURRENCY, async ([addr, network]) => {
       try {
-        const status = await getTopology(addr, cfg.Port, cfg.Addr)
+        const status = await getTopology(addr, cfg.Port, cfg.Addr, controller.signal)
         if (isUnmounted || requestId !== topologyRequestId) {
           return
         }
         nextStatus[addr] = status
         topologyStatus.value = { ...nextStatus }
       } catch (error) {
-        if (isUnmounted || requestId !== topologyRequestId) {
+        if (isRequestCanceled(error) || isUnmounted || requestId !== topologyRequestId) {
           return
         }
         delete nextStatus[addr]
@@ -320,6 +337,9 @@ const loadTopologyStatus = async () => {
       }
     })
   } finally {
+    if (topologyAbortController === controller) {
+      topologyAbortController = null
+    }
     if (!isUnmounted && requestId === topologyRequestId) {
       isRefreshing.value = false
       lastUpdatedAt.value = new Date()
@@ -353,6 +373,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   isUnmounted = true
+  configAbortController?.abort()
+  topologyAbortController?.abort()
   configRequestId++
   topologyRequestId++
   window.removeEventListener('resize', handleResize)

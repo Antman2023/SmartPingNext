@@ -71,7 +71,9 @@ loop:
 	}
 	wg.Wait()
 	if ctx.Err() == nil {
-		MapPingStorageContext(ctx)
+		if err := MapPingStorageContext(ctx); err != nil {
+			logrus.Error("[func:Mapping] Store mapping result error ", err)
+		}
 	}
 }
 
@@ -194,32 +196,34 @@ func mappingStatusSnapshot() map[string][]g.MapVal {
 }
 
 func MapPingStorage() {
-	MapPingStorageContext(context.Background())
+	if err := MapPingStorageContext(context.Background()); err != nil {
+		logrus.Error("[func:MapPingStorage] ", err)
+	}
 }
 
-func MapPingStorageContext(ctx context.Context) {
-	if ctx.Err() != nil {
-		return
+func MapPingStorageContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	logrus.Info("Start MapPingStorage...")
 	snapshot := mappingStatusSnapshot()
 	logrus.Debug(snapshot)
 	jdata, err := json.Marshal(snapshot)
 	if err != nil {
-		logrus.Error("[func:MapPingStorage] Json Error ", err)
+		return fmt.Errorf("encode mapping result: %w", err)
 	}
 	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values(?, ?)"
 	g.DLock.Lock()
-	if ctx.Err() != nil {
-		g.DLock.Unlock()
-		return
+	defer g.DLock.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	_, err = g.Db.ExecContext(ctx, sql, time.Now().Format("2006-01-02 15:04"), string(jdata))
 	logrus.Debug(sql)
 	if err != nil {
-		logrus.Error("[func:MapPingStorage] Sql Error ", err)
+		return fmt.Errorf("store mapping result: %w", err)
 	}
-	g.DLock.Unlock()
 	logrus.Debug("[func:MapPingStorage] ", sql)
 	logrus.Info("Finish MapPingStorage...")
+	return nil
 }

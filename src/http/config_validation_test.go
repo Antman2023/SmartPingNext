@@ -60,6 +60,15 @@ func TestValidateConfigRejectsInvalidReferencesAndLimits(t *testing.T) {
 		"address with whitespace": func(config *g.Config) {
 			config.Addr = " 127.0.0.1"
 		},
+		"IPv4-mapped local address": func(config *g.Config) {
+			config.Addr = "::ffff:127.0.0.1"
+			config.Network = map[string]g.NetworkMember{
+				config.Addr: {Name: "local", Addr: config.Addr},
+			}
+		},
+		"non-decimal topology size": func(config *g.Config) {
+			config.Topology["Tsymbolsize"] = "0x1p4"
+		},
 		"network key mismatch": func(config *g.Config) {
 			config.Network["127.0.0.1"] = g.NetworkMember{Name: "local", Addr: "127.0.0.2"}
 		},
@@ -101,6 +110,9 @@ func TestValidateConfigRejectsInvalidReferencesAndLimits(t *testing.T) {
 		},
 		"cloud endpoint credentials": func(config *g.Config) {
 			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "https://user:secret@example.com/config.json"}
+		},
+		"cloud endpoint empty credentials": func(config *g.Config) {
+			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "https://@example.com/config.json"}
 		},
 		"cloud endpoint fragment": func(config *g.Config) {
 			config.Mode = map[string]string{"Type": "cloud", "Endpoint": "https://example.com/config.json#private"}

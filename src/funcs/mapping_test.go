@@ -2,6 +2,9 @@ package funcs
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"math"
 	"smartping/src/g"
 	"sync/atomic"
 	"testing"
@@ -109,5 +112,47 @@ func TestMappingStatusSnapshotIsSortedAndIndependent(t *testing.T) {
 	MapLock.Unlock()
 	if original[0].Name != "浙江" || addedCarrier {
 		t.Fatalf("snapshot mutation changed global status: %#v", MapStatus)
+	}
+}
+
+func TestMapPingStorageRejectsInvalidJSONWithoutWriting(t *testing.T) {
+	schema := []string{
+		`CREATE TABLE mappinglog (logtime TEXT UNIQUE, mapjson TEXT);`,
+	}
+
+	withFuncTestDB(t, schema, func(db *sql.DB) {
+		MapLock.Lock()
+		oldStatus := MapStatus
+		MapStatus = map[string][]g.MapVal{
+			"ctcc": {{Name: "invalid", Value: math.NaN()}},
+		}
+		MapLock.Unlock()
+		t.Cleanup(func() {
+			MapLock.Lock()
+			MapStatus = oldStatus
+			MapLock.Unlock()
+		})
+
+		err := MapPingStorageContext(context.Background())
+		if err == nil {
+			t.Fatal("MapPingStorageContext should reject a non-finite mapping value")
+		}
+
+		var count int
+		if queryErr := db.QueryRow(`SELECT count(1) FROM mappinglog`).Scan(&count); queryErr != nil {
+			t.Fatalf("count mapping rows: %v", queryErr)
+		}
+		if count != 0 {
+			t.Fatalf("mapping rows = %d, want no write after JSON failure", count)
+		}
+	})
+}
+
+func TestMapPingStorageReturnsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := MapPingStorageContext(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("MapPingStorageContext error = %v, want context canceled", err)
 	}
 }

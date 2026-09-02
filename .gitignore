@@ -27,6 +27,7 @@ html/admin/*
 # Web frontend
 web/node_modules/
 web/dist/
+web/.test-dist/
 web/*.d.ts
 web/vite.config.js
 web/*.tsbuildinfo

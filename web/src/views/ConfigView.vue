@@ -588,6 +588,7 @@ import {
   type UploadFile
 } from 'element-plus'
 import { useConfigStore } from '@/stores/config'
+import { isRequestCanceled } from '@/api'
 import {
   CONFIG_LIMITS,
   isValidIPv4,
@@ -611,6 +612,8 @@ const importing = ref(false)
 const importExportBusy = computed(() => exporting.value || importing.value)
 let isUnmounted = false
 let configRequestId = 0
+let saveAbortController: AbortController | null = null
+let passwordVerificationAbortController: AbortController | null = null
 
 const formConfig = reactive<Config>({
   Ver: '',
@@ -929,20 +932,27 @@ const handleSave = async () => {
     return
   }
 
+  const controller = new AbortController()
+  saveAbortController = controller
   saving.value = true
   try {
-    await configStore.saveConfig(formConfig, password.value)
+    await configStore.saveConfig(formConfig, password.value, controller.signal)
     if (!isUnmounted) {
       savedSnapshot.value = serializeConfig(formConfig)
       validationAttempted.value = false
       ElMessage.success(t('common.saveSuccess'))
     }
   } catch (error: unknown) {
-    if (!isUnmounted) {
+    if (!isUnmounted && !isRequestCanceled(error)) {
       ElMessage.error(t('common.saveFailed') + ': ' + (error instanceof Error ? error.message : ''))
     }
-    console.error('保存失败', error)
+    if (!isRequestCanceled(error)) {
+      console.error('保存失败', error)
+    }
   } finally {
+    if (saveAbortController === controller) {
+      saveAbortController = null
+    }
     if (!isUnmounted) {
       password.value = ''
       saving.value = false
@@ -952,11 +962,15 @@ const handleSave = async () => {
 
 type PasswordVerificationResult = 'valid' | 'invalid' | 'rate-limited'
 
-const verifyPassword = async (pwd: string): Promise<PasswordVerificationResult> => {
+const verifyPassword = async (
+  pwd: string,
+  signal: AbortSignal
+): Promise<PasswordVerificationResult> => {
   const response = await fetch('/api/verify-password.json', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ password: pwd })
+    body: new URLSearchParams({ password: pwd }),
+    signal
   })
   if (response.status === 429) {
     return 'rate-limited'
@@ -977,9 +991,11 @@ const handleExport = async () => {
     return
   }
 
+  const controller = new AbortController()
+  passwordVerificationAbortController = controller
   exporting.value = true
   try {
-    const verification = await verifyPassword(importExportPassword.value)
+    const verification = await verifyPassword(importExportPassword.value, controller.signal)
     if (isUnmounted) {
       return
     }
@@ -1006,11 +1022,16 @@ const handleExport = async () => {
 
     ElMessage.success(t('config.configExported'))
   } catch (error) {
-    if (!isUnmounted) {
+    if (!isUnmounted && !isRequestCanceled(error)) {
       ElMessage.error(t('config.passwordVerifyFailed'))
     }
-    console.error('密码验证失败', error)
+    if (!isRequestCanceled(error)) {
+      console.error('密码验证失败', error)
+    }
   } finally {
+    if (passwordVerificationAbortController === controller) {
+      passwordVerificationAbortController = null
+    }
     if (!isUnmounted) {
       importExportPassword.value = ''
       exporting.value = false
@@ -1032,16 +1053,20 @@ const handleImportFile = async (file: UploadFile) => {
     return
   }
 
+  const controller = new AbortController()
+  passwordVerificationAbortController = controller
   importing.value = true
   try {
     let verification: PasswordVerificationResult
     try {
-      verification = await verifyPassword(importExportPassword.value)
+      verification = await verifyPassword(importExportPassword.value, controller.signal)
     } catch (error) {
-      if (!isUnmounted) {
+      if (!isUnmounted && !isRequestCanceled(error)) {
         ElMessage.error(t('config.passwordVerifyFailed'))
       }
-      console.error('密码验证失败', error)
+      if (!isRequestCanceled(error)) {
+        console.error('密码验证失败', error)
+      }
       return
     }
 
@@ -1094,6 +1119,9 @@ const handleImportFile = async (file: UploadFile) => {
       console.error('配置文件解析失败', error)
     }
   } finally {
+    if (passwordVerificationAbortController === controller) {
+      passwordVerificationAbortController = null
+    }
     if (!isUnmounted) {
       importExportPassword.value = ''
       importing.value = false
@@ -1482,6 +1510,8 @@ onMounted(() => {
 onUnmounted(() => {
   isUnmounted = true
   configRequestId++
+  saveAbortController?.abort()
+  passwordVerificationAbortController?.abort()
   window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>

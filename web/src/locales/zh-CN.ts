@@ -54,6 +54,7 @@ export default {
     gatewayError: '网关错误',
     serviceUnavailable: '服务不可用',
     gatewayTimeout: '网关超时',
+    requestTimeout: '请求超时，请重试',
     networkFailed: '网络连接失败，请检查网络',
     requestFailed: '请求失败',
     requestFailedWithStatus: '请求失败 ({status})',

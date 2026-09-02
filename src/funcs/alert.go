@@ -73,7 +73,10 @@ func StartAlertContext(ctx context.Context) {
 
 		}
 	}
-	runAlertTraceJobsContext(ctx, pendingAlerts, alertTraceConcurrency, traceAndStoreAlertContext)
+	unprocessed := runAlertTraceJobsContext(ctx, pendingAlerts, alertTraceConcurrency, traceAndStoreAlertContext)
+	for _, alert := range unprocessed {
+		restoreAlertStatusForRetry(alert.Targetip)
+	}
 	if ctx.Err() != nil {
 		logrus.Info("[func:StartAlert] canceled")
 		return
@@ -82,25 +85,33 @@ func StartAlertContext(ctx context.Context) {
 }
 
 func runAlertTraceJobs(alerts []g.AlertLog, concurrency int, process func(g.AlertLog)) {
-	runAlertTraceJobsContext(context.Background(), alerts, concurrency, func(_ context.Context, item g.AlertLog) {
+	_ = runAlertTraceJobsContext(context.Background(), alerts, concurrency, func(_ context.Context, item g.AlertLog) {
 		process(item)
 	})
 }
 
-func runAlertTraceJobsContext(ctx context.Context, alerts []g.AlertLog, concurrency int, process func(context.Context, g.AlertLog)) {
+func runAlertTraceJobsContext(ctx context.Context, alerts []g.AlertLog, concurrency int, process func(context.Context, g.AlertLog)) []g.AlertLog {
 	if concurrency < 1 {
 		concurrency = 1
 	}
 	semaphore := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
-loop:
-	for _, alert := range alerts {
+	var unprocessed []g.AlertLog
+	for index, alert := range alerts {
+		if ctx.Err() != nil {
+			unprocessed = append(unprocessed, alerts[index:]...)
+			break
+		}
 		wg.Add(1)
 		select {
 		case semaphore <- struct{}{}:
 		case <-ctx.Done():
 			wg.Done()
-			break loop
+			unprocessed = append(unprocessed, alerts[index:]...)
+			break
+		}
+		if len(unprocessed) > 0 {
+			break
 		}
 		go func(item g.AlertLog) {
 			defer wg.Done()
@@ -109,6 +120,7 @@ loop:
 		}(alert)
 	}
 	wg.Wait()
+	return unprocessed
 }
 
 func traceAndStoreAlert(alert g.AlertLog) {
@@ -119,6 +131,7 @@ func traceAndStoreAlertContext(ctx context.Context, alert g.AlertLog) {
 	hops, err := nettools.RunMtrContext(ctx, alert.Targetip, time.Second, 64, 6)
 	if err != nil {
 		if ctx.Err() != nil {
+			restoreAlertStatusForRetry(alert.Targetip)
 			return
 		}
 		logrus.Error("[func:StartAlert] Traceroute error ", err)
@@ -128,7 +141,20 @@ func traceAndStoreAlertContext(ctx context.Context, alert g.AlertLog) {
 	} else {
 		alert.Tracert = string(encoded)
 	}
-	AlertStorageContext(ctx, alert)
+	if err := AlertStorageContext(ctx, alert); err != nil {
+		restoreAlertStatusForRetry(alert.Targetip)
+		if ctx.Err() == nil {
+			logrus.Error("[func:StartAlert] Store alert error ", err)
+		}
+	}
+}
+
+func restoreAlertStatusForRetry(target string) {
+	g.AlertStatusLock.Lock()
+	if status, exists := g.AlertStatus[target]; exists && !status {
+		g.AlertStatus[target] = true
+	}
+	g.AlertStatusLock.Unlock()
 }
 
 func CheckAlertStatus(v map[string]string) (bool, error) {
@@ -194,24 +220,26 @@ func alertWindowStart(now time.Time, windowSeconds int) time.Time {
 }
 
 func AlertStorage(t g.AlertLog) {
-	AlertStorageContext(context.Background(), t)
+	if err := AlertStorageContext(context.Background(), t); err != nil {
+		logrus.Error("[func:AlertStorage] Sql Error ", err)
+	}
 }
 
-func AlertStorageContext(ctx context.Context, t g.AlertLog) {
-	if ctx.Err() != nil {
-		return
+func AlertStorageContext(ctx context.Context, t g.AlertLog) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	logrus.Info("[func:AlertStorage] ", "(", t.Logtime, ")Starting AlertStorage ", t.Targetname)
 	sql := "INSERT INTO [alertlog] (logtime, targetip, targetname, tracert) values(?, ?, ?, ?) ON CONFLICT(logtime, targetip) DO UPDATE SET targetname=excluded.targetname, tracert=excluded.tracert"
 	g.DLock.Lock()
-	if ctx.Err() != nil {
-		g.DLock.Unlock()
-		return
+	defer g.DLock.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	_, err := g.Db.ExecContext(ctx, sql, t.Logtime, t.Targetip, t.Targetname, t.Tracert)
 	if err != nil {
-		logrus.Error("[func:AlertStorage] Sql Error ", err)
+		return fmt.Errorf("store alert for %s: %w", t.Targetip, err)
 	}
-	g.DLock.Unlock()
 	logrus.Info("[func:AlertStorage] ", "(", t.Logtime, ") AlertStorage on ", t.Targetname, " finish!")
+	return nil
 }

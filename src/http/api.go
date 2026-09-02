@@ -188,10 +188,13 @@ func configApiRoutes(mux *http.ServeMux) {
 		if len(form["date"]) > 0 {
 			dtb = strings.Replace(form["date"][0], "alertlog-", "", -1)
 		}
-		if _, err := time.ParseInLocation("2006-01-02", dtb, g.LocalTimezone); err != nil {
+		selectedDate, err := time.ParseInLocation("2006-01-02", dtb, g.LocalTimezone)
+		if err != nil {
 			http.Error(w, "Invalid date", http.StatusNotAcceptable)
 			return
 		}
+		dayStart := selectedDate.Format("2006-01-02 15:04")
+		dayEnd := selectedDate.AddDate(0, 0, 1).Format("2006-01-02 15:04")
 		listpreout := []string{}
 		datapreout := []g.AlertLog{}
 		querySql := "select date(logtime) as ldate from alertlog group by date(logtime) order by logtime desc"
@@ -221,8 +224,8 @@ func configApiRoutes(mux *http.ServeMux) {
 			}
 			rows.Close()
 		}
-		querySql = "select logtime,targetname,targetip,tracert from alertlog where logtime between ? and ?"
-		rows, err = g.Db.QueryContext(r.Context(), querySql, dtb+" 00:00:00", dtb+" 23:59:59")
+		querySql = "select logtime,targetname,targetip,tracert from alertlog where logtime >= ? and logtime < ?"
+		rows, err = g.Db.QueryContext(r.Context(), querySql, dayStart, dayEnd)
 		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
 			logrus.Error("[func:/api/alert.json] Query ", err)

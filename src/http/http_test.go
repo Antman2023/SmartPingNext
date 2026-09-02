@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -511,6 +512,92 @@ func TestAppHandlerRejectsInvalidMappingTime(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "Invalid Mapping Time") {
 		t.Fatalf("mapping endpoint body = %q, want validation error", recorder.Body.String())
+	}
+}
+
+func TestAlertsEndpointIncludesWholeSelectedDay(t *testing.T) {
+	oldConfig := g.ConfigSnapshot()
+	oldDatabase := g.Db
+	oldTimezone := g.LocalTimezone
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open alert database: %v", err)
+	}
+	defer func() {
+		_ = database.Close()
+		g.Db = oldDatabase
+		g.LocalTimezone = oldTimezone
+		g.SetConfig(oldConfig)
+	}()
+
+	if _, err := database.Exec(`CREATE TABLE alertlog (
+		logtime TEXT,
+		targetip TEXT,
+		targetname TEXT,
+		tracert TEXT
+	)`); err != nil {
+		t.Fatalf("create alert table: %v", err)
+	}
+	for _, row := range []struct {
+		logtime string
+		target  string
+	}{
+		{logtime: "2026-09-01 23:59", target: "192.0.2.1"},
+		{logtime: "2026-09-02 00:00", target: "192.0.2.2"},
+		{logtime: "2026-09-02 23:59", target: "192.0.2.3"},
+		{logtime: "2026-09-03 00:00", target: "192.0.2.4"},
+	} {
+		if _, err := database.Exec(
+			"INSERT INTO alertlog(logtime, targetip, targetname, tracert) VALUES (?, ?, ?, ?)",
+			row.logtime,
+			row.target,
+			row.target,
+			"trace",
+		); err != nil {
+			t.Fatalf("insert alert at %s: %v", row.logtime, err)
+		}
+	}
+
+	g.Db = database
+	g.LocalTimezone = time.UTC
+	g.SetConfig(g.Config{
+		Name:       "local-node",
+		Addr:       "127.0.0.1",
+		Authiplist: "",
+		Network: map[string]g.NetworkMember{
+			"127.0.0.1": {Name: "local-node", Addr: "127.0.0.1"},
+		},
+	})
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/alert.json?date=2026-09-02", nil)
+	newHTTPServer(":8899", newAppHandler()).Handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("alerts endpoint status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response []json.RawMessage
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode alerts response: %v", err)
+	}
+	if len(response) != 2 {
+		t.Fatalf("alerts response sections = %d, want 2", len(response))
+	}
+	var alerts []g.AlertLog
+	if err := json.Unmarshal(response[1], &alerts); err != nil {
+		t.Fatalf("decode alert rows: %v", err)
+	}
+	if len(alerts) != 2 {
+		t.Fatalf("selected-day alerts = %#v, want two rows", alerts)
+	}
+	alertTimes := make(map[string]bool, len(alerts))
+	for _, alert := range alerts {
+		alertTimes[alert.Logtime] = true
+	}
+	for _, expected := range []string{"2026-09-02 00:00", "2026-09-02 23:59"} {
+		if !alertTimes[expected] {
+			t.Fatalf("selected-day alert times = %#v, missing %s", alertTimes, expected)
+		}
 	}
 }
 
@@ -1090,6 +1177,31 @@ func TestToolsEndpointReturnsTooManyRequestsWhenConcurrencyIsFull(t *testing.T) 
 	if response.Status != "false" || response.Error != "Too Many Tool Requests" {
 		t.Fatalf("tools concurrency response = %#v", response)
 	}
+}
+
+func TestToolsEndpointReleasesSlotWhenRequestIsCanceled(t *testing.T) {
+	oldConfig := g.ConfigSnapshot()
+	oldSlots := toolRequestSlots
+	toolRequestSlots = make(chan struct{}, maxConcurrentTools)
+	g.SetConfig(g.Config{Authiplist: "", Toollimit: 0})
+	defer func() {
+		toolRequestSlots = oldSlots
+		g.SetConfig(oldConfig)
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	request := httptest.NewRequest(http.MethodGet, "/api/tools.json?t=127.0.0.1", nil).WithContext(ctx)
+	recorder := httptest.NewRecorder()
+	newHTTPServer(":8899", newAppHandler()).Handler.ServeHTTP(recorder, request)
+
+	if occupied := len(toolRequestSlots); occupied != 0 {
+		t.Fatalf("occupied tool request slots = %d, want 0 after cancellation", occupied)
+	}
+	if !acquireToolRequest() {
+		t.Fatal("tool request slot was not reusable after cancellation")
+	}
+	releaseToolRequest()
 }
 
 func TestNewHTTPServerTimeouts(t *testing.T) {

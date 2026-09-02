@@ -4,8 +4,8 @@ export const CONFIG_LIMITS = {
   timeout: { min: 1, max: 60 },
   archive: { min: 1, max: 36500 },
   refresh: { min: 1, max: 1440 },
-  topologyLine: { min: 0, max: 20 },
-  topologySymbol: { min: 0, max: 500 },
+  topologyLine: { min: 0.5, max: 20 },
+  topologySymbol: { min: 1, max: 500 },
   toolLimit: { min: 0, max: 86400 },
   networkNodes: 1024,
   targetsPerNode: 1024,
@@ -37,12 +37,19 @@ const issue = (key: string, params?: Record<string, number | string>): ConfigVal
 const isIntegerInRange = (value: number, min: number, max: number) =>
   Number.isInteger(value) && value >= min && value <= max
 
+const DECIMAL_FLOAT_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
+
 const isPositiveFloatInRange = (value: string, max: number) => {
-  if (value.trim() === '' || value !== value.trim()) {
+  if (value !== value.trim() || !DECIMAL_FLOAT_PATTERN.test(value)) {
     return false
   }
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 && parsed <= max
+}
+
+const hasURLUserInfo = (value: string): boolean => {
+  const authority = value.slice(value.indexOf('//') + 2).split(/[/?#]/, 1)[0] ?? ''
+  return authority.includes('@')
 }
 
 const parseInteger = (value: string): number | null => {
@@ -265,10 +272,11 @@ export const validateConfigForEdit = (config: Config): ConfigValidationIssue | n
   }
   if (modeType === 'cloud') {
     try {
-      if (!/^https?:\/\//.test(config.Mode.Endpoint ?? '')) {
+      const endpointValue = config.Mode.Endpoint ?? ''
+      if (!/^https?:\/\//.test(endpointValue) || hasURLUserInfo(endpointValue)) {
         return issue('config.validationCloudEndpoint')
       }
-      const endpoint = new URL(config.Mode.Endpoint ?? '')
+      const endpoint = new URL(endpointValue)
       const endpointPort = endpoint.port === '' ? null : Number(endpoint.port)
       if (
         !['http:', 'https:'].includes(endpoint.protocol) ||

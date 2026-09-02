@@ -244,13 +244,42 @@ func TestICMPPoolCloseReleasesAndResetsConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create packet connection: %v", err)
 	}
-	localPool := &icmpPool{conn: conn, ipconn: ipv4.NewPacketConn(conn)}
+	localPool := &icmpPool{
+		conn:    conn,
+		ipconn:  ipv4.NewPacketConn(conn),
+		waiters: make(map[uint32]icmpWaiter),
+	}
+	responses, registered := localPool.register(42, &net.IPAddr{IP: net.ParseIP("192.0.2.1")})
+	if !registered {
+		t.Fatal("register rejected a new waiter")
+	}
+	waitResult := make(chan ICMP, 1)
+	go func() {
+		waitResult <- waitForICMPResponse(
+			context.Background(),
+			responses,
+			time.Now(),
+			time.Minute,
+			&net.IPAddr{IP: net.ParseIP("192.0.2.1")},
+		)
+	}()
 
 	if err := localPool.close(); err != nil {
 		t.Fatalf("close returned error: %v", err)
 	}
 	if localPool.conn != nil || localPool.ipconn != nil {
 		t.Fatalf("close retained connection state: %#v", localPool)
+	}
+	if len(localPool.waiters) != 0 {
+		t.Fatalf("close retained %d ICMP waiters", len(localPool.waiters))
+	}
+	select {
+	case result := <-waitResult:
+		if !errors.Is(result.Error, net.ErrClosed) {
+			t.Fatalf("waiter error after close = %v, want %v", result.Error, net.ErrClosed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close did not wake the ICMP waiter")
 	}
 	if err := localPool.close(); err != nil {
 		t.Fatalf("second close should be idempotent, got: %v", err)
