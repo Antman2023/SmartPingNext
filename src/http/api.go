@@ -71,12 +71,13 @@ func configApiRoutes(mux *http.ServeMux) {
 		populated := make([]bool, size)
 		cursor := timeStart
 		for i := 0; i < size; i++ {
-			ntime := time.Unix(cursor, 0).Format("2006-01-02 15:04")
+			ntime := time.Unix(cursor, 0).In(timeStartValue.Location()).Format("2006-01-02 15:04")
 			lastcheck[i] = ntime
-			maxdelay[i] = "0"
-			mindelay[i] = "0"
-			avgdelay[i] = "0"
-			losspk[i] = "0"
+			// Missing samples must remain gaps, not healthy zero-valued measurements.
+			maxdelay[i] = "-"
+			mindelay[i] = "-"
+			avgdelay[i] = "-"
+			losspk[i] = "-"
 			cursor += 60
 		}
 		querySql := "SELECT logtime,maxdelay,CASE WHEN cast(mindelay as double) < 0 THEN '0' ELSE mindelay END,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"

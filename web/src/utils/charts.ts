@@ -72,11 +72,12 @@ export function getPingChartOption(
         if (!items || items.length === 0) return ''
         let result = items[0].name + '<br/>'
         items.forEach((item) => {
-          let value = item.value
-          if (item.seriesName === labels.lossRate) {
-            value = parseFloat(String(value)).toFixed(0) + '%'
-          } else {
-            value = parseFloat(String(value)).toFixed(2) + 'ms'
+          const numericValue = parseFloat(String(item.value))
+          let value = '-'
+          if (Number.isFinite(numericValue)) {
+            value = item.seriesName === labels.lossRate
+              ? numericValue.toFixed(0) + '%'
+              : numericValue.toFixed(2) + 'ms'
           }
           result += item.marker + item.seriesName + ': ' + value + '<br/>'
         })

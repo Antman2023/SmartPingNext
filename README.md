@@ -149,6 +149,8 @@ docker-compose up -d
 | `/api/saveconfig.json` | POST | 保存配置 |
 | `/api/proxy.json` | GET | 代理访问远程节点 |
 
+`/api/ping.json` 返回的指标数组与 `lastcheck` 时间轴逐项对应，数值使用字符串表示。没有采样记录的分钟使用 `"-"`，图表显示为断点；`"0"` 是真实记录的零值，不能与缺失采样混同。API 客户端应在转换数字前处理 `"-"`。查询时间和返回的时间轴均使用节点时区。
+
 ## 项目贡献
 
 欢迎参与项目贡献！比如提交PR修复一个bug，或者新建 [Issue](https://github.com/Antman2023/SmartPingNext/issues/) 讨论新特性或者变更。

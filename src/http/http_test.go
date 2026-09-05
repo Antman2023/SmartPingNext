@@ -515,6 +515,51 @@ func TestAppHandlerRejectsInvalidMappingTime(t *testing.T) {
 	}
 }
 
+func TestPingEndpointDistinguishesMissingSamplesAndPreservesQueryTimezone(t *testing.T) {
+	oldConfig, oldDatabase, oldTimezone, oldLocal := g.ConfigSnapshot(), g.Db, g.LocalTimezone, time.Local
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		database.Close()
+		g.Db, g.LocalTimezone, time.Local = oldDatabase, oldTimezone, oldLocal
+		g.SetConfig(oldConfig)
+	}()
+	_, err = database.Exec(`CREATE TABLE pinglog (logtime TEXT, target TEXT, maxdelay TEXT, mindelay TEXT, avgdelay TEXT, losspk TEXT);
+		INSERT INTO pinglog VALUES ('2026-01-01 10:00', '192.0.2.1', '0', '0', '0', '0');
+		INSERT INTO pinglog VALUES ('2026-01-01 10:02', '192.0.2.1', '0', '0', '0', '100');`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Db = database
+	time.Local = time.UTC
+	g.SetConfig(g.Config{Addr: "127.0.0.1", Network: map[string]g.NetworkMember{}})
+	for _, location := range []*time.Location{time.UTC, time.FixedZone("UTC+8", 8*60*60)} {
+		t.Run(location.String(), func(t *testing.T) {
+			g.LocalTimezone = location
+			query := url.Values{"ip": {"192.0.2.1"}, "starttime": {"2026-01-01 10:00"}, "endtime": {"2026-01-01 10:02"}}
+			recorder := httptest.NewRecorder()
+			newAppHandler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/ping.json?"+query.Encode(), nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", recorder.Code, recorder.Body.String())
+			}
+			var result map[string][]string
+			if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			for key, expected := range map[string]string{
+				"lastcheck": "2026-01-01 10:00,2026-01-01 10:01,2026-01-01 10:02",
+				"maxdelay":  "0,-,0", "mindelay": "0,-,0", "avgdelay": "0,-,0", "losspk": "0,-,100",
+			} {
+				if got := strings.Join(result[key], ","); got != expected {
+					t.Errorf("%s = %q, want %q", key, got, expected)
+				}
+			}
+		})
+	}
+}
+
 func TestAlertsEndpointIncludesWholeSelectedDay(t *testing.T) {
 	oldConfig := g.ConfigSnapshot()
 	oldDatabase := g.Db

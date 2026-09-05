@@ -1,8 +1,10 @@
 export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>
+  mapper: (item: T, index: number) => Promise<R>,
+  signal?: AbortSignal
 ): Promise<R[]> {
+  signal?.throwIfAborted()
   const results = new Array<R>(items.length)
   const requestedWorkers = Number.isFinite(concurrency) ? Math.floor(concurrency) : 1
   const workerCount = Math.min(Math.max(requestedWorkers, 1), items.length)
@@ -10,6 +12,7 @@ export async function mapWithConcurrency<T, R>(
 
   const workers = Array.from({ length: workerCount }, async () => {
     while (nextIndex < items.length) {
+      signal?.throwIfAborted()
       const index = nextIndex
       nextIndex += 1
       results[index] = await mapper(items[index] as T, index)
@@ -17,5 +20,6 @@ export async function mapWithConcurrency<T, R>(
   })
 
   await Promise.all(workers)
+  signal?.throwIfAborted()
   return results
 }

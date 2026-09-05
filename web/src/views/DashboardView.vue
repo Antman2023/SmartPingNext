@@ -214,6 +214,7 @@ import { isRequestCanceled } from '@/api'
 import { fetchConfig, fetchProxyConfig } from '@/api/config'
 import { getPingData, getProxyPingData } from '@/api/ping'
 import { displayName, formatDateTime, formatTime } from '@/utils/format'
+import { mapWithConcurrency } from '@/utils/concurrency'
 import type { Config, PingLogData } from '@/types'
 
 const pingMiniChartModule = import('@/components/charts/PingMiniChart.vue')
@@ -353,16 +354,12 @@ const loadAllCharts = async () => {
   chartAbortController = controller
   const requestId = ++chartRequestId
   const targets = [...pingTargets.value]
-  const batchSize = 3
   isRefreshing.value = true
   try {
-    for (let index = 0; index < targets.length; index += batchSize) {
-      if (isUnmounted || requestId !== chartRequestId) {
-        return
-      }
-      const batch = targets.slice(index, index + batchSize)
-      await Promise.all(batch.map((target) => loadChartData(target, requestId, controller.signal)))
-    }
+    await mapWithConcurrency(targets, 3,
+      (target) => loadChartData(target, requestId, controller.signal), controller.signal)
+  } catch (error) {
+    if (!isRequestCanceled(error)) throw error
   } finally {
     if (chartAbortController === controller) {
       chartAbortController = null
@@ -508,7 +505,7 @@ const getStatusText = (target: PingTarget) => {
 }
 
 const refreshChartsIfVisible = () => {
-  if (document.visibilityState === 'visible') {
+  if (document.visibilityState === 'visible' && !configLoading.value && !isRefreshing.value) {
     loadAllCharts()
   }
 }
@@ -521,7 +518,7 @@ const refreshMonitor = () => {
 }
 
 const refreshDetailIfVisible = () => {
-  if (document.visibilityState === 'visible' && detailVisible.value) {
+  if (document.visibilityState === 'visible' && detailVisible.value && !detailLoading.value) {
     loadDetailData()
   }
 }
@@ -531,10 +528,10 @@ const handleVisibilityChange = () => {
     return
   }
   if (autoRefresh.value) {
-    loadAllCharts()
+    refreshChartsIfVisible()
   }
   if (detailAutoRefresh.value && detailVisible.value) {
-    loadDetailData()
+    refreshDetailIfVisible()
   }
 }
 

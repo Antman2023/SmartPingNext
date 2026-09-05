@@ -152,6 +152,8 @@ SmartPingNext is designed as a lightweight tool. Even in multi-node mutual-PING 
 | `/api/saveconfig.json` | POST | Save configuration |
 | `/api/proxy.json` | GET | Proxy access to remote nodes |
 
+The metric arrays returned by `/api/ping.json` align with the `lastcheck` timeline and contain string values. Minutes without a stored sample use `"-"` and appear as gaps in charts. `"0"` is a recorded zero value, distinct from missing data. API clients should handle `"-"` before converting values to numbers. Query times and the returned timeline use the node's timezone.
+
 ## Contributing
 
 Contributions are welcome. Feel free to open a PR for bug fixes, or create an [Issue](https://github.com/Antman2023/SmartPingNext/issues/) for feature discussions.
