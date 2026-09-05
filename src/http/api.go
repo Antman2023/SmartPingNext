@@ -606,6 +606,11 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	resCode := resp.StatusCode
 	if resCode != http.StatusOK {
+		// Other successful statuses do not provide the complete JSON response
+		// required by the proxy API and must not look successful to clients.
+		if resCode >= 200 && resCode < 300 {
+			resCode = http.StatusBadGateway
+		}
 		o := "Get Remote Data Status Error"
 		http.Error(w, o, resCode)
 		return

@@ -94,6 +94,48 @@ func TestValidateProxyTargetRejectsMissingRequiredQuery(t *testing.T) {
 	})
 }
 
+func TestHandleProxyRejectsMalformedTargetQuery(t *testing.T) {
+	var requests atomic.Int32
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write([]byte(`{"status":"unexpected"}`))
+	}))
+	defer remote.Close()
+
+	withProxyConfig(proxyTestConfig(t, remote.URL), func() {
+		for _, query := range []string{"date=%ZZ", "date=2026-09-01;ignored=true"} {
+			t.Run(query, func(t *testing.T) {
+				recorder := httptest.NewRecorder()
+				handleProxy(recorder, proxyRequest(remote.URL+"/api/alert.json?"+query))
+				if recorder.Code != http.StatusNotAcceptable {
+					t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotAcceptable)
+				}
+			})
+		}
+		if requests.Load() != 0 {
+			t.Fatalf("malformed queries reached remote %d times", requests.Load())
+		}
+	})
+}
+
+func TestHandleProxyRejectsUnexpectedSuccessStatus(t *testing.T) {
+	for _, status := range []int{http.StatusCreated, http.StatusNoContent, http.StatusPartialContent} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+			}))
+			defer remote.Close()
+			withProxyConfig(proxyTestConfig(t, remote.URL), func() {
+				recorder := httptest.NewRecorder()
+				handleProxy(recorder, proxyRequest(remote.URL+"/api/config.json"))
+				if recorder.Code != http.StatusBadGateway {
+					t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
+				}
+			})
+		})
+	}
+}
+
 func TestValidateProxyTargetRejectsUnexpectedPort(t *testing.T) {
 	withProxyConfig(g.Config{
 		Port: 8899,

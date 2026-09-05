@@ -128,7 +128,10 @@ func validateProxyTarget(rawTarget string) (*url.URL, error) {
 		return nil, errors.New("Proxy Target API Not Allowed!")
 	}
 
-	queryValues := targetURL.Query()
+	queryValues, err := url.ParseQuery(targetURL.RawQuery)
+	if err != nil {
+		return nil, errors.New("Proxy Target Query Not Allowed!")
+	}
 	if err := rule.validate(queryValues); err != nil {
 		return nil, err
 	}
