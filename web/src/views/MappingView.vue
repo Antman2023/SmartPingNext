@@ -176,6 +176,7 @@ let configRequestId = 0
 let mappingRequestId = 0
 let configAbortController: AbortController | null = null
 let mappingAbortController: AbortController | null = null
+let mappingQueryKey: string | null = null
 let resizeTimer: number | null = null
 
 const currentAgentName = computed(() => {
@@ -215,6 +216,7 @@ const loadConfig = async () => {
     }
     config.value = cfg
     currentAgent.value = cfg.Addr
+    currentBaseUrl.value = ''
 
     agents.value = Object.values(cfg.Network)
       .filter((node) => node.Smartping)
@@ -251,6 +253,13 @@ const loadMappingData = async () => {
   const requestId = ++mappingRequestId
   const baseUrl = currentBaseUrl.value
   const date = selectedDate.value
+  const queryKey = JSON.stringify([currentAgent.value, baseUrl, date || ''])
+  if (queryKey !== mappingQueryKey) {
+    mappingQueryKey = queryKey
+    latestData.value = null
+    lastUpdatedAt.value = null
+    chart?.clear()
+  }
   mappingLoading.value = true
   mappingError.value = false
   try {

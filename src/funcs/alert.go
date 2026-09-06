@@ -3,6 +3,7 @@ package funcs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"smartping/src/g"
 	"smartping/src/nettools"
@@ -15,6 +16,9 @@ import (
 )
 
 var alertRunning int32
+
+// ErrNoAlertSamples means the configured time window has no samples for the target.
+var ErrNoAlertSamples = errors.New("no samples in alert window")
 
 const alertTraceConcurrency = 4
 
@@ -43,6 +47,9 @@ func StartAlertContext(ctx context.Context) {
 		if v["Addr"] != selfConfig.Addr {
 			sFlag, err := CheckAlertStatusContext(ctx, v)
 			if err != nil {
+				if errors.Is(err, ErrNoAlertSamples) {
+					continue
+				}
 				if ctx.Err() != nil {
 					return
 				}
@@ -188,25 +195,28 @@ func checkAlertStatusAtContext(ctx context.Context, v map[string]string, now tim
 	// minute begins. Include that boundary minute, then cap the query to the
 	// configured number of samples so the grace period cannot count stale data.
 	windowStart := alertWindowStart(now, Thdchecksec).Add(-time.Minute)
-	querysql := `SELECT count(1) FROM (
+	querysql := `SELECT count(1), coalesce(sum(CASE WHEN cast(avgdelay as double) > ? OR cast(losspk as double) >= ? THEN 1 ELSE 0 END), 0) FROM (
 		SELECT avgdelay, losspk FROM pinglog
 		WHERE target = ? AND logtime >= ? AND logtime <= ?
 		ORDER BY logtime DESC LIMIT ?
-	) WHERE cast(avgdelay as double) > ? OR cast(losspk as double) >= ?`
-	var cnt int
+	)`
+	var samples, cnt int
 	err = g.Db.QueryRowContext(
 		ctx,
 		querysql,
+		v["Thdavgdelay"],
+		v["Thdloss"],
 		v["Addr"],
 		windowStart.Format("2006-01-02 15:04"),
 		windowEnd.Format("2006-01-02 15:04"),
 		sampleCount,
-		v["Thdavgdelay"],
-		v["Thdloss"],
-	).Scan(&cnt)
+	).Scan(&samples, &cnt)
 	logrus.Debug("[func:StartAlert] ", querysql)
 	if err != nil {
 		return false, fmt.Errorf("query alert status for %s: %w", v["Addr"], err)
+	}
+	if samples == 0 {
+		return false, fmt.Errorf("target %s: %w", v["Addr"], ErrNoAlertSamples)
 	}
 	return cnt < Thdoccnum, nil
 }

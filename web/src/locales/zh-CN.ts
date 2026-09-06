@@ -77,6 +77,7 @@ export default {
     selectedDate: '选定时间',
     issues: '异常',
     active: '正常',
+    unknown: '状态未知',
     alert: '告警'
   },
   charts: {

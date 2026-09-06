@@ -154,6 +154,8 @@ SmartPingNext is designed as a lightweight tool. Even in multi-node mutual-PING 
 
 The metric arrays returned by `/api/ping.json` align with the `lastcheck` timeline and contain string values. Minutes without a stored sample use `"-"` and appear as gaps in charts. `"0"` is a recorded zero value, distinct from missing data. API clients should handle `"-"` before converting values to numbers. Query times and the returned timeline use the node's timezone.
 
+`/api/topology.json` returns string states by target IP: `"true"` means the alert threshold has not been reached, `"false"` means it has, and `"unknown"` means no samples exist for that target in the configured check window (including the grace period for rounds finishing across a minute boundary). Unknown states neither trigger alerts nor mark existing alerts as recovered. Clients must handle all three values explicitly instead of treating every non-`"false"` value as healthy.
+
 ## Contributing
 
 Contributions are welcome. Feel free to open a PR for bug fixes, or create an [Issue](https://github.com/Antman2023/SmartPingNext/issues/) for feature discussions.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"smartping/src/funcs"
 	"smartping/src/g"
@@ -155,6 +156,10 @@ func configApiRoutes(mux *http.ServeMux) {
 		selfConfig := config.Network[config.Addr]
 		for _, v := range selfConfig.Topology {
 			healthy, err := funcs.CheckAlertStatusContext(r.Context(), v)
+			if errors.Is(err, funcs.ErrNoAlertSamples) {
+				preout[v["Addr"]] = "unknown"
+				continue
+			}
 			if err != nil {
 				logrus.Error("[/api/topology.json] Check status ", err)
 				http.Error(w, "Check topology status failed", http.StatusInternalServerError)

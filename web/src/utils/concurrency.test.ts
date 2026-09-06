@@ -9,16 +9,25 @@ const delay = (milliseconds: number) =>
 
 test('mapWithConcurrency starts queued work while another worker is slow', async () => {
   let releaseSlow!: () => void
-  const slow = new Promise<void>((resolve) => { releaseSlow = resolve })
+  const slow = new Promise<void>((resolve) => {
+    releaseSlow = resolve
+  })
   let thirdStarted!: () => void
-  const third = new Promise<void>((resolve) => { thirdStarted = resolve })
+  const third = new Promise<void>((resolve) => {
+    thirdStarted = resolve
+  })
   const result = mapWithConcurrency([0, 1, 2], 2, async (value) => {
     if (value === 0) await slow
     if (value === 2) thirdStarted()
     return value
   })
   try {
-    await Promise.race([third, delay(1000).then(() => { throw new Error('queued work stalled') })])
+    await Promise.race([
+      third,
+      delay(1000).then(() => {
+        throw new Error('queued work stalled')
+      })
+    ])
   } finally {
     releaseSlow()
   }
@@ -28,25 +37,87 @@ test('mapWithConcurrency starts queued work while another worker is slow', async
 test('mapWithConcurrency does not start queued work after cancellation', async () => {
   const controller = new AbortController()
   const started: number[] = []
-  await assert.rejects(mapWithConcurrency([0, 1, 2, 3], 2, async (value) => {
-    started.push(value)
-    if (value === 0) controller.abort()
-    return value
-  }, controller.signal), { name: 'AbortError' })
+  await assert.rejects(
+    mapWithConcurrency(
+      [0, 1, 2, 3],
+      2,
+      async (value) => {
+        started.push(value)
+        if (value === 0) controller.abort()
+        return value
+      },
+      controller.signal
+    ),
+    { name: 'AbortError' }
+  )
   assert.deepEqual(started, [0])
 })
 
 test('mapWithConcurrency rejects cancellation before starting and after the last item', async () => {
   const controller = new AbortController()
   controller.abort()
-  await assert.rejects(mapWithConcurrency([1], 1, async () => {
-    assert.fail('canceled work must not start')
-  }, controller.signal), { name: 'AbortError' })
+  await assert.rejects(
+    mapWithConcurrency(
+      [1],
+      1,
+      async () => {
+        assert.fail('canceled work must not start')
+      },
+      controller.signal
+    ),
+    { name: 'AbortError' }
+  )
   const last = new AbortController()
-  await assert.rejects(mapWithConcurrency([1], 1, async (value) => {
-    last.abort()
-    return value
-  }, last.signal), { name: 'AbortError' })
+  await assert.rejects(
+    mapWithConcurrency(
+      [1],
+      1,
+      async (value) => {
+        last.abort()
+        return value
+      },
+      last.signal
+    ),
+    { name: 'AbortError' }
+  )
+})
+
+test('mapWithConcurrency stops queued work when active requests swallow cancellation', async () => {
+  const controller = new AbortController()
+  const started: number[] = []
+  let active = 0
+  const result = mapWithConcurrency(
+    [0, 1, 2, 3, 4],
+    2,
+    async (value) => {
+      started.push(value)
+      active += 1
+      try {
+        await new Promise<void>((_resolve, reject) => {
+          controller.signal.addEventListener('abort', () => reject(controller.signal.reason), {
+            once: true
+          })
+        })
+      } catch {
+        // Views handle request cancellation locally before the worker takes another item.
+        return null
+      } finally {
+        active -= 1
+      }
+      return value
+    },
+    controller.signal
+  )
+
+  assert.deepEqual(started, [0, 1])
+  const rejected = assert.rejects(result, { name: 'AbortError' })
+  controller.abort()
+  await rejected
+  assert.equal(active, 0)
+  assert.deepEqual(started, [0, 1])
+
+  const refreshed = await mapWithConcurrency([2, 3, 4], 2, async (value) => value)
+  assert.deepEqual(refreshed, [2, 3, 4])
 })
 
 test('mapWithConcurrency preserves input order and caps active work', async () => {

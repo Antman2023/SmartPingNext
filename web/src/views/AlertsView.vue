@@ -251,6 +251,8 @@ let configRequestId = 0
 let alertsRequestId = 0
 let configAbortController: AbortController | null = null
 let alertsAbortController: AbortController | null = null
+const archiveDatesByNode = new Map<string, string[]>()
+let alertsQueryDate: string | null = null
 const ALERT_CONCURRENCY = 4
 const failedNodes = computed(() => nodes.value.filter((node) => node.error).length)
 const lastUpdatedLabel = computed(() =>
@@ -274,12 +276,16 @@ const loadConfig = async () => {
       return
     }
     config.value = cfg
+    archiveDatesByNode.clear()
+    dates.value = []
+    alerts.value = []
+    lastUpdatedAt.value = null
 
     nodes.value = Object.values(cfg.Network)
       .filter((node) => node.Topology && node.Topology.length > 0)
       .map((node) => ({ name: node.Name, addr: node.Addr, loading: false, error: false }))
 
-    await loadAllAlerts()
+    await loadAlerts(selectedDate.value || undefined)
   } catch (error) {
     if (isRequestCanceled(error) || isUnmounted || requestId !== configRequestId) {
       return
@@ -310,6 +316,12 @@ const loadAlerts = async (date?: string) => {
   const requestId = ++alertsRequestId
   const port = config.value.Port
   const requestNodes = nodes.value
+  const queryDate = date || ''
+  if (alertsQueryDate !== queryDate) {
+    alertsQueryDate = queryDate
+    alerts.value = []
+    lastUpdatedAt.value = null
+  }
   alertsLoading.value = true
   alertsLoadError.value = false
   requestNodes.forEach((node) => {
@@ -317,39 +329,52 @@ const loadAlerts = async (date?: string) => {
     node.error = false
   })
   try {
-    const results = await mapWithConcurrency(requestNodes, ALERT_CONCURRENCY, async (node) => {
-      try {
-        const data = await getAlerts(`http://${node.addr}:${port}`, date, controller.signal)
-        return { node, data, error: false }
-      } catch (error) {
-        if (isRequestCanceled(error)) {
-          return { node, data: null, error: false }
+    const results = await mapWithConcurrency(
+      requestNodes,
+      ALERT_CONCURRENCY,
+      async (node) => {
+        try {
+          const data = await getAlerts(`http://${node.addr}:${port}`, date, controller.signal)
+          return { node, data, error: false }
+        } catch (error) {
+          if (isRequestCanceled(error)) {
+            return { node, data: null, error: false }
+          }
+          console.error(`获取 ${node.name} 报警记录失败`, error)
+          return { node, data: null, error: true }
         }
-        console.error(`获取 ${node.name} 报警记录失败`, error)
-        return { node, data: null, error: true }
-      }
-    })
+      },
+      controller.signal
+    )
     if (isUnmounted || requestId !== alertsRequestId) {
       return
     }
 
     results.forEach((result) => {
       result.node.error = result.error
+      if (result.data) {
+        archiveDatesByNode.set(result.node.addr, result.data.dates)
+      }
     })
     const successfulData = results
       .map((result) => result.data)
       .filter((data): data is AlertData => data !== null)
     alertsLoadError.value = requestNodes.length > 0 && successfulData.length === 0
 
-    if (date === undefined) {
-      const allDates = new Set<string>()
-      successfulData.forEach((data) => data.dates.forEach((item) => allDates.add(item)))
-      dates.value = Array.from(allDates).sort().reverse()
+    const allDates = new Set<string>()
+    requestNodes.forEach((node) => {
+      archiveDatesByNode.get(node.addr)?.forEach((date) => allDates.add(date))
+    })
+    dates.value = Array.from(allDates).sort().reverse()
+    if (successfulData.length > 0) {
+      lastUpdatedAt.value = new Date()
     }
 
     alerts.value = successfulData
       .flatMap((data) => data.logs)
       .sort((a, b) => b.Logtime.localeCompare(a.Logtime))
+  } catch (error) {
+    if (!isRequestCanceled(error)) throw error
   } finally {
     if (alertsAbortController === controller) {
       alertsAbortController = null
@@ -357,7 +382,6 @@ const loadAlerts = async (date?: string) => {
     if (!isUnmounted && requestId === alertsRequestId) {
       requestNodes.forEach((node) => (node.loading = false))
       alertsLoading.value = false
-      lastUpdatedAt.value = new Date()
     }
   }
 }

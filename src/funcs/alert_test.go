@@ -244,7 +244,7 @@ func TestCheckAlertStatus(t *testing.T) {
 		})
 	})
 
-	t.Run("true when no matching rows", func(t *testing.T) {
+	t.Run("unknown when no matching rows", func(t *testing.T) {
 		withFuncTestDB(t, schema, func(db *sql.DB) {
 			v := map[string]string{
 				"Thdchecksec": "600",
@@ -255,11 +255,8 @@ func TestCheckAlertStatus(t *testing.T) {
 			}
 
 			healthy, err := CheckAlertStatus(v)
-			if err != nil {
-				t.Fatalf("CheckAlertStatus returned error: %v", err)
-			}
-			if !healthy {
-				t.Fatalf("CheckAlertStatus should return true when count is zero and threshold is one")
+			if healthy || !errors.Is(err, ErrNoAlertSamples) {
+				t.Fatalf("CheckAlertStatus = %v, %v, want unknown with ErrNoAlertSamples", healthy, err)
 			}
 		})
 	})
@@ -298,6 +295,55 @@ func TestAlertWindowStartUsesMinuteSamples(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := alertWindowStart(now, tt.windowSeconds); !got.Equal(tt.want) {
 				t.Fatalf("alertWindowStart = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckAlertStatusIgnoresOutOfWindowAndOtherTargetSamples(t *testing.T) {
+	withFuncTestDB(t, []string{`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay TEXT, losspk TEXT);`}, func(db *sql.DB) {
+		for _, sample := range []struct{ stamp, target string }{
+			{"2026-09-06 11:49", "1.1.1.1"},
+			{"2026-09-06 12:01", "1.1.1.1"},
+			{"2026-09-06 12:00", "2.2.2.2"},
+		} {
+			if _, err := db.Exec(`INSERT INTO pinglog VALUES (?, ?, '20', '0')`, sample.stamp, sample.target); err != nil {
+				t.Fatal(err)
+			}
+		}
+		healthy, err := checkAlertStatusAt(map[string]string{
+			"Addr": "1.1.1.1", "Thdchecksec": "600", "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30",
+		}, time.Date(2026, 9, 6, 12, 0, 30, 0, time.Local))
+		if healthy || !errors.Is(err, ErrNoAlertSamples) {
+			t.Fatalf("status = %v, %v, want unknown", healthy, err)
+		}
+	})
+}
+
+func TestStartAlertWithoutSamplesPreservesPreviousState(t *testing.T) {
+	for _, previous := range []map[string]bool{{}, {"1.1.1.1": false}, {"1.1.1.1": true}} {
+		withFuncTestDB(t, []string{`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay TEXT, losspk TEXT);`}, func(_ *sql.DB) {
+			g.AlertStatusLock.Lock()
+			old := g.AlertStatus
+			g.AlertStatus = previous
+			before, existed := previous["1.1.1.1"]
+			g.AlertStatusLock.Unlock()
+			defer func() {
+				g.AlertStatusLock.Lock()
+				g.AlertStatus = old
+				g.AlertStatusLock.Unlock()
+			}()
+			g.Cfg.Network = map[string]g.NetworkMember{
+				g.Cfg.Addr: {Addr: g.Cfg.Addr, Topology: []map[string]string{{
+					"Addr": "1.1.1.1", "Thdchecksec": "600", "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30",
+				}}},
+			}
+			StartAlert()
+			g.AlertStatusLock.RLock()
+			after, exists := g.AlertStatus["1.1.1.1"]
+			g.AlertStatusLock.RUnlock()
+			if after != before || exists != existed {
+				t.Fatalf("unknown status changed alert state: %v/%v -> %v/%v", before, existed, after, exists)
 			}
 		})
 	}

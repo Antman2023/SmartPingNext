@@ -79,6 +79,7 @@ export default {
     selectedDate: 'Selected Time',
     issues: 'Issues',
     active: 'Active',
+    unknown: 'Unknown',
     alert: 'Alert'
   },
   charts: {

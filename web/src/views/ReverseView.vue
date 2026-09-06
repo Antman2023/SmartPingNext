@@ -277,7 +277,7 @@ const timeRanges = computed(() => [
 ])
 
 const loadedTargets = computed(
-  () => reverseTargets.value.filter((target) => !!target.chartData).length
+  () => reverseTargets.value.filter((target) => !target.loading && !!target.chartData).length
 )
 const failedTargets = computed(
   () => reverseTargets.value.filter((target) => !target.loading && !target.chartData).length
@@ -304,6 +304,7 @@ const loadConfig = async (proxyUrl?: string) => {
     }
 
     config.value = cfg
+    lastUpdatedAt.value = null
     currentAgent.value = cfg.Addr
 
     agents.value = Object.values(cfg.Network)
@@ -354,6 +355,7 @@ const loadAllCharts = async () => {
   chartAbortController = controller
   const requestId = ++chartRequestId
   const targets = [...reverseTargets.value]
+  targets.forEach((target) => (target.loading = true))
   isRefreshing.value = true
   try {
     await mapWithConcurrency(targets, 4,
@@ -366,7 +368,7 @@ const loadAllCharts = async () => {
     }
     if (!isUnmounted && requestId === chartRequestId) {
       isRefreshing.value = false
-      lastUpdatedAt.value = new Date()
+      targets.forEach((target) => (target.loading = false))
     }
   }
 }
@@ -381,6 +383,7 @@ const loadChartData = async (target: ReverseTarget, requestId: number, signal: A
       return
     }
     target.chartData = data
+    lastUpdatedAt.value = new Date()
   } catch (error) {
     if (isRequestCanceled(error) || isUnmounted || requestId !== chartRequestId) {
       return

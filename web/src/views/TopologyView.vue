@@ -240,7 +240,13 @@ const topologyLinks = computed<TopoLink[]>(() => {
 
 const monitoredNodes = computed(() => topologyNodes.value.filter((node) => node.monitored))
 const loadedNodes = computed(
-  () => monitoredNodes.value.length - loadingNodes.value.size - failedNodes.value.size
+  () =>
+    monitoredNodes.value.filter(
+      (node) =>
+        topologyStatus.value[node.id] &&
+        !loadingNodes.value.has(node.id) &&
+        !failedNodes.value.has(node.id)
+    ).length
 )
 const degradedLinks = computed(
   () => topologyLinks.value.filter((link) => link.color === 'red').length
@@ -268,6 +274,7 @@ const loadConfig = async () => {
     }
     config.value = cfg
     topologyStatus.value = {}
+    lastUpdatedAt.value = null
     await loadTopologyStatus()
   } catch (error) {
     if (isRequestCanceled(error) || isUnmounted || requestId !== configRequestId) {
@@ -312,37 +319,44 @@ const loadTopologyStatus = async () => {
   failedNodes.value = new Set()
 
   try {
-    await mapWithConcurrency(networkWithTopology, TOPOLOGY_CONCURRENCY, async ([addr, network]) => {
-      try {
-        const status = await getTopology(addr, cfg.Port, cfg.Addr, controller.signal)
-        if (isUnmounted || requestId !== topologyRequestId) {
-          return
+    await mapWithConcurrency(
+      networkWithTopology,
+      TOPOLOGY_CONCURRENCY,
+      async ([addr, network]) => {
+        try {
+          const status = await getTopology(addr, cfg.Port, cfg.Addr, controller.signal)
+          if (isUnmounted || requestId !== topologyRequestId) {
+            return
+          }
+          nextStatus[addr] = status
+          topologyStatus.value = { ...nextStatus }
+          lastUpdatedAt.value = new Date()
+        } catch (error) {
+          if (isRequestCanceled(error) || isUnmounted || requestId !== topologyRequestId) {
+            return
+          }
+          delete nextStatus[addr]
+          topologyStatus.value = { ...nextStatus }
+          failedNodes.value = new Set(failedNodes.value).add(addr)
+          console.error(`获取 ${network.Name} 拓扑状态失败`, error)
+        } finally {
+          if (!isUnmounted && requestId === topologyRequestId) {
+            const nextLoadingNodes = new Set(loadingNodes.value)
+            nextLoadingNodes.delete(addr)
+            loadingNodes.value = nextLoadingNodes
+          }
         }
-        nextStatus[addr] = status
-        topologyStatus.value = { ...nextStatus }
-      } catch (error) {
-        if (isRequestCanceled(error) || isUnmounted || requestId !== topologyRequestId) {
-          return
-        }
-        delete nextStatus[addr]
-        topologyStatus.value = { ...nextStatus }
-        failedNodes.value = new Set(failedNodes.value).add(addr)
-        console.error(`获取 ${network.Name} 拓扑状态失败`, error)
-      } finally {
-        if (!isUnmounted && requestId === topologyRequestId) {
-          const nextLoadingNodes = new Set(loadingNodes.value)
-          nextLoadingNodes.delete(addr)
-          loadingNodes.value = nextLoadingNodes
-        }
-      }
-    })
+      },
+      controller.signal
+    )
+  } catch (error) {
+    if (!isRequestCanceled(error)) throw error
   } finally {
     if (topologyAbortController === controller) {
       topologyAbortController = null
     }
     if (!isUnmounted && requestId === topologyRequestId) {
       isRefreshing.value = false
-      lastUpdatedAt.value = new Date()
     }
   }
 }
@@ -362,6 +376,9 @@ const getNodeStatus = (node: TopoNode) => {
   }
   if (node.color === 'red') {
     return t('common.alert')
+  }
+  if (node.color === 'gray') {
+    return t('common.unknown')
   }
   return t('common.active')
 }

@@ -49,6 +49,7 @@ db/
 Thumbs.db
 
 # Temporary files
+.go-cache/
 *.tmp
 *.temp
 .claude/

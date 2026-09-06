@@ -294,30 +294,37 @@ const runCheck = async () => {
   })
 
   try {
-    await mapWithConcurrency(checkedRows, CHECK_CONCURRENCY, async (row) => {
-      row.loading = true
+    await mapWithConcurrency(
+      checkedRows,
+      CHECK_CONCURRENCY,
+      async (row) => {
+        row.loading = true
 
-      try {
-        const result = await runTools(
-          `${row.addr}:${row.port}`,
-          normalizedTarget,
-          controller.signal
-        )
-        if (isUnmounted || requestId !== checkRequestId) {
-          return
+        try {
+          const result = await runTools(
+            `${row.addr}:${row.port}`,
+            normalizedTarget,
+            controller.signal
+          )
+          if (isUnmounted || requestId !== checkRequestId) {
+            return
+          }
+          row.result = result
+        } catch (error: unknown) {
+          if (isRequestCanceled(error) || isUnmounted || requestId !== checkRequestId) {
+            return
+          }
+          row.error = error instanceof Error ? error.message : t('tools.requestFailed')
+        } finally {
+          if (!isUnmounted && requestId === checkRequestId) {
+            row.loading = false
+          }
         }
-        row.result = result
-      } catch (error: unknown) {
-        if (isRequestCanceled(error) || isUnmounted || requestId !== checkRequestId) {
-          return
-        }
-        row.error = error instanceof Error ? error.message : t('tools.requestFailed')
-      } finally {
-        if (!isUnmounted && requestId === checkRequestId) {
-          row.loading = false
-        }
-      }
-    })
+      },
+      controller.signal
+    )
+  } catch (error) {
+    if (!isRequestCanceled(error)) throw error
   } finally {
     if (checkAbortController === controller) {
       checkAbortController = null
