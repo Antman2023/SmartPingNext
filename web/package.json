@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b --force && vite build --config vite.config.ts",
+    "build:embed": "npm run build && node scripts/sync-embed.mjs",
     "preview": "vite preview",
-    "test": "tsc -p tsconfig.test.json && node --test .test-dist/locales/locales.test.js .test-dist/utils/charts.test.js .test-dist/utils/concurrency.test.js .test-dist/utils/configValidation.test.js .test-dist/utils/requestCancellation.test.js .test-dist/utils/requestErrors.test.js .test-dist/utils/requestTimeouts.test.js .test-dist/views/mapping.test.js .test-dist/views/topology.test.js .test-dist/views/alerts.test.js .test-dist/views/monitors.test.js .test-dist/stores/config.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test .test-dist/locales/locales.test.js .test-dist/utils/charts.test.js .test-dist/utils/concurrency.test.js .test-dist/utils/configValidation.test.js .test-dist/utils/requestCancellation.test.js .test-dist/utils/requestErrors.test.js .test-dist/utils/requestTimeouts.test.js .test-dist/views/mapping.test.js .test-dist/views/topology.test.js .test-dist/views/alerts.test.js .test-dist/views/monitors.test.js .test-dist/stores/config.test.js .test-dist/views/tools.test.js .test-dist/components/charts/lifecycle.test.js .test-dist/views/config.test.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{vue,ts,tsx,js,jsx,json,scss,css}\""

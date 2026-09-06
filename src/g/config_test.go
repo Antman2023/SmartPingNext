@@ -120,6 +120,9 @@ func TestEnsureDatabaseIndexesOptimizesTargetTimeQueries(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay FLOAT)`); err != nil {
 		t.Fatalf("create pinglog: %v", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE alertlog (logtime TEXT)`); err != nil {
+		t.Fatalf("create alertlog: %v", err)
+	}
 
 	if err := ensureDatabaseIndexes(db); err != nil {
 		t.Fatalf("ensureDatabaseIndexes returned error: %v", err)
@@ -162,6 +165,54 @@ func TestEnsureDatabaseIndexesRejectsUnavailableSchema(t *testing.T) {
 	defer db.Close()
 	if err := ensureDatabaseIndexes(db); err == nil {
 		t.Fatal("ensureDatabaseIndexes should reject a database without pinglog")
+	}
+	if _, err := db.Exec(`CREATE TABLE pinglog (logtime TEXT, target TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDatabaseIndexes(db); err == nil {
+		t.Fatal("ensureDatabaseIndexes should reject a database without alertlog")
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, pingTargetTimeIndex).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("failed migration left a partially created index")
+	}
+}
+
+func TestEnsureDatabaseIndexesOptimizesAlertDates(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE pinglog (logtime TEXT, target TEXT);
+		CREATE TABLE alertlog (logtime TEXT);`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDatabaseIndexes(db); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT date(logtime) FROM alertlog GROUP BY date(logtime) ORDER BY date(logtime) DESC`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan += detail + "\n"
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan, alertDateIndex) || strings.Contains(plan, "USE TEMP B-TREE") {
+		t.Fatalf("alert dates should use their index without temporary sorting: %s", plan)
 	}
 }
 

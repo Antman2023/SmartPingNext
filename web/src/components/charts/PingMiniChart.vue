@@ -25,21 +25,22 @@ const themeStore = useThemeStore()
 const sidebarStore = useSidebarStore()
 let chart: EChartsType | null = null
 let isUnmounted = false
-const resizeTimers: number[] = []
+const resizeTimers = new Set<number>()
 
 const safeSetTimeout = (callback: () => void, delay: number) => {
   const timer = window.setTimeout(() => {
+    resizeTimers.delete(timer)
     if (!isUnmounted) {
       callback()
     }
   }, delay)
-  resizeTimers.push(timer)
+  resizeTimers.add(timer)
   return timer
 }
 
 const clearAllTimers = () => {
   resizeTimers.forEach(timer => window.clearTimeout(timer))
-  resizeTimers.length = 0
+  resizeTimers.clear()
 }
 
 const getChartOption = (): EChartsOption => {
@@ -55,7 +56,7 @@ const getChartOption = (): EChartsOption => {
 }
 
 const initChart = () => {
-  if (!chartRef.value) return
+  if (isUnmounted || !chartRef.value) return
   chart = echarts.init(chartRef.value)
   chart.setOption(getChartOption())
 }
@@ -84,6 +85,7 @@ onMounted(() => {
 onUnmounted(() => {
   isUnmounted = true
   clearAllTimers()
+  handleResize.cancel()
   chart?.dispose()
   chart = null
   window.removeEventListener('resize', handleResize)

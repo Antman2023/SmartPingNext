@@ -1,6 +1,7 @@
 import type { EChartsOption } from 'echarts'
 import type { TooltipComponentFormatterCallbackParams } from 'echarts'
 import type { PingLogData } from '@/types'
+import { escapeTooltipText, tooltipNumber } from './chartTooltip.js'
 
 // ECharts tooltip formatter 参数类型 (trigger: 'axis' 时为数组)
 interface TooltipFormatterParam {
@@ -70,16 +71,16 @@ export function getPingChartOption(
       formatter: (params: TooltipComponentFormatterCallbackParams) => {
         const items = params as TooltipFormatterParam[]
         if (!items || items.length === 0) return ''
-        let result = items[0].name + '<br/>'
+        let result = escapeTooltipText(items[0].name) + '<br/>'
         items.forEach((item) => {
-          const numericValue = parseFloat(String(item.value))
+          const numericValue = tooltipNumber(item.value)
           let value = '-'
-          if (Number.isFinite(numericValue)) {
+          if (numericValue !== null) {
             value = item.seriesName === labels.lossRate
               ? numericValue.toFixed(0) + '%'
               : numericValue.toFixed(2) + 'ms'
           }
-          result += item.marker + item.seriesName + ': ' + value + '<br/>'
+          result += item.marker + escapeTooltipText(item.seriesName) + ': ' + value + '<br/>'
         })
         return result
       }

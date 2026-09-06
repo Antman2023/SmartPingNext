@@ -15,7 +15,19 @@ LICENSE
 # Build artifacts
 bin/
 dist/
-node_modules/
+**/node_modules/
+web/dist/
+web/.test-dist/
+web/*.tsbuildinfo
+src/static/html/
+.go-cache/
+.cache/
+*.exe
+
+# Local runtime data (keep src/static/conf and src/static/db defaults)
+conf/
+db/
+logs/
 
 # Development files
 .claude/

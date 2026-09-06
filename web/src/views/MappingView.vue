@@ -149,6 +149,7 @@ import { getMapping, getProxyMapping } from '@/api/mapping'
 import { useSidebarStore } from '@/stores/sidebar'
 import { useThemeStore } from '@/stores/theme'
 import { displayName, formatTime } from '@/utils/format'
+import { formatMappingTooltip } from '@/utils/chartTooltip'
 import type { ChinaMapData, Config } from '@/types'
 
 const { t, locale } = useI18n()
@@ -336,12 +337,7 @@ const updateChart = (data: ChinaMapData) => {
     },
     tooltip: {
       trigger: 'item',
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      formatter: (params: any) => {
-        const delay = Number(params.value)
-        const delayText = Number.isFinite(delay) ? `${delay.toFixed(2)}ms` : '--'
-        return `${params.name}<br/>${params.seriesName}: ${delayText}`
-      }
+      formatter: (params) => formatMappingTooltip(Array.isArray(params) ? params[0] ?? {} : params)
     },
     legend: {
       orient: 'vertical',

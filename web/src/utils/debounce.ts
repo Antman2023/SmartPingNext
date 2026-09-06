@@ -6,18 +6,25 @@
 export function debounce<T extends (...args: unknown[]) => unknown>(
   fn: T,
   delay: number
-): (...args: Parameters<T>) => void {
+): ((...args: Parameters<T>) => void) & { cancel: () => void } {
   let timer: number | null = null
 
-  return function (this: unknown, ...args: Parameters<T>) {
+  const debounced = function (this: unknown, ...args: Parameters<T>) {
     if (timer !== null) {
       window.clearTimeout(timer)
     }
     timer = window.setTimeout(() => {
-      fn.apply(this, args)
       timer = null
+      fn.apply(this, args)
     }, delay)
   }
+  debounced.cancel = () => {
+    if (timer !== null) {
+      window.clearTimeout(timer)
+      timer = null
+    }
+  }
+  return debounced
 }
 
 /**

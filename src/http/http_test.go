@@ -628,6 +628,13 @@ func TestAlertsEndpointIncludesWholeSelectedDay(t *testing.T) {
 	if len(response) != 2 {
 		t.Fatalf("alerts response sections = %d, want 2", len(response))
 	}
+	var dates []string
+	if err := json.Unmarshal(response[0], &dates); err != nil {
+		t.Fatalf("decode alert dates: %v", err)
+	}
+	if got := strings.Join(dates, ","); got != "2026-09-03,2026-09-02,2026-09-01" {
+		t.Fatalf("alert dates = %s, want unique dates newest first", got)
+	}
 	var alerts []g.AlertLog
 	if err := json.Unmarshal(response[1], &alerts); err != nil {
 		t.Fatalf("decode alert rows: %v", err)

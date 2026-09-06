@@ -72,13 +72,14 @@ tar -xzf smartping-*.tar.gz
 # 前端
 cd web
 npm ci
-npm run build
-cp -r dist ../src/static/html
+npm run build:embed
 
 # 后端
 cd ..
 go build -o smartping src/smartping.go
 ```
+
+`build:embed` 支持 Windows、Linux 和 macOS，会在前端构建成功后替换 `src/static/html` 中的生成文件，避免重复复制产生嵌套目录或打包旧资源。仅开发前端时仍可使用 `npm run build`。
 
 ### Docker
 

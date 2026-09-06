@@ -32,6 +32,61 @@ func TestStartAlertSkipsOverlappingCheck(t *testing.T) {
 	}
 }
 
+type cancelOnQueuedAlertContext struct {
+	context.Context
+	cancel context.CancelFunc
+	target string
+}
+
+func (ctx cancelOnQueuedAlertContext) Err() error {
+	g.AlertStatusLock.RLock()
+	status, exists := g.AlertStatus[ctx.target]
+	g.AlertStatusLock.RUnlock()
+	if exists && !status {
+		ctx.cancel()
+	}
+	return ctx.Context.Err()
+}
+
+func TestStartAlertCancellationDuringChecksRestoresQueuedAlerts(t *testing.T) {
+	withFuncTestDB(t, []string{`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay TEXT, losspk TEXT);`}, func(db *sql.DB) {
+		const target = "192.0.2.1"
+		g.AlertStatusLock.Lock()
+		oldStatus := g.AlertStatus
+		g.AlertStatus = map[string]bool{}
+		g.AlertStatusLock.Unlock()
+		defer func() {
+			g.AlertStatusLock.Lock()
+			g.AlertStatus = oldStatus
+			g.AlertStatusLock.Unlock()
+		}()
+		g.Cfg.Network = map[string]g.NetworkMember{
+			g.Cfg.Addr: {Addr: g.Cfg.Addr, Topology: []map[string]string{
+				{"Addr": target, "Thdchecksec": "600", "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30"},
+				{"Addr": "192.0.2.2", "Thdchecksec": "600", "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30"},
+			}},
+		}
+		if _, err := db.Exec(`INSERT INTO pinglog VALUES (?, ?, '300', '0')`, time.Now().Format("2006-01-02 15:04"), target); err != nil {
+			t.Fatal(err)
+		}
+		base, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		StartAlertContext(cancelOnQueuedAlertContext{Context: base, cancel: cancel, target: target})
+		if base.Err() != context.Canceled {
+			t.Fatal("expected cancellation after the first alert was queued")
+		}
+		g.AlertStatusLock.RLock()
+		status, exists := g.AlertStatus[target]
+		g.AlertStatusLock.RUnlock()
+		if !exists || !status {
+			t.Fatal("queued alert must be eligible for retry after cancellation")
+		}
+		if got := atomic.LoadInt32(&alertRunning); got != 0 {
+			t.Fatalf("alertRunning = %d after cancellation, want 0", got)
+		}
+	})
+}
+
 func TestRunAlertTraceJobsBoundsConcurrencyAndProcessesEveryAlert(t *testing.T) {
 	const (
 		jobCount    = 9

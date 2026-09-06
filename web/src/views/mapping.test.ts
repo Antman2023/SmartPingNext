@@ -6,6 +6,7 @@ import ts from 'typescript'
 import * as vue from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import type { ChinaMapData } from '../types/index.js'
+import { formatMappingTooltip } from '../utils/chartTooltip.js'
 
 // Execute the actual view setup with controlled API responses and no browser renderer.
 const source = readFileSync(new URL('../../src/views/MappingView.vue', import.meta.url), 'utf8')
@@ -50,6 +51,7 @@ function createView(t: test.TestContext) {
     },
     '@/api/config': { fetchConfig: async () => ({ Addr: '127.0.0.1', Port: 8899, Network: {} }) },
     '@/api/mapping': { getMapping, getProxyMapping },
+    '@/utils/chartTooltip': { formatMappingTooltip },
     '@/stores/sidebar': { useSidebarStore: () => ({ isCollapsed: false }) },
     '@/stores/theme': { useThemeStore: () => ({ theme: 'light' }) },
     '@/utils/format': { displayName: (name: string) => name, formatTime: () => '12:00' }

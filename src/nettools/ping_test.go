@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -189,6 +190,100 @@ func TestICMPPoolRegisterRejectsCollision(t *testing.T) {
 	}
 	if _, ok := pool.register(42, nil); ok {
 		t.Fatalf("duplicate waiter registration should be rejected")
+	}
+}
+
+func TestICMPPoolOldCleanupPreservesReplacementWaiter(t *testing.T) {
+	localPool := &icmpPool{waiters: make(map[uint32]icmpWaiter)}
+	old, _ := localPool.register(42, nil)
+	if err := localPool.close(); err != nil {
+		t.Fatal(err)
+	}
+	replacement, ok := localPool.register(42, nil)
+	if !ok {
+		t.Fatal("replacement registration failed")
+	}
+	localPool.unregister(42, old)
+	localPool.dispatch(42, icmpResponse{down: true})
+	select {
+	case response := <-replacement:
+		if !response.down {
+			t.Fatal("unexpected response")
+		}
+	default:
+		t.Fatal("old request cleanup removed the replacement waiter")
+	}
+	localPool.unregister(42, replacement)
+	if len(localPool.waiters) != 0 {
+		t.Fatal("replacement request cleanup retained its waiter")
+	}
+}
+
+func TestICMPPoolIgnoresResponsesFromClosedConnection(t *testing.T) {
+	openConnection := func() net.PacketConn {
+		conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { conn.Close() })
+		return conn
+	}
+	old := openConnection()
+	current := openConnection()
+	localPool := &icmpPool{conn: old, waiters: make(map[uint32]icmpWaiter)}
+	if err := localPool.close(); err != nil {
+		t.Fatal(err)
+	}
+	localPool.conn = current
+	responses, _ := localPool.register(42, nil)
+	localPool.dispatchFrom(old, 42, icmpResponse{down: true})
+	if len(responses) != 0 {
+		t.Fatal("old connection response reached the new waiter")
+	}
+	localPool.dispatchFrom(current, 42, icmpResponse{down: true})
+	if len(responses) != 1 {
+		t.Fatal("current connection response was dropped")
+	}
+}
+
+func TestICMPPoolConcurrentSendAndCloseReleasesWaiters(t *testing.T) {
+	// UDP exercises the lifecycle and IPv4 socket options without raw-socket privileges.
+	receiver, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	localPool := &icmpPool{listenPacket: func(_, _ string) (net.PacketConn, error) {
+		return net.ListenPacket("udp4", "127.0.0.1:0")
+	}}
+	defer localPool.close()
+	var workers sync.WaitGroup
+	for id := 0; id < 4; id++ {
+		workers.Add(1)
+		go func(id int) {
+			defer workers.Done()
+			for seq := 0; seq < 20; seq++ {
+				result := localPool.sendICMP(id, seq, 64, []byte{0}, receiver.LocalAddr(), time.Millisecond)
+				if result.Error != nil && !errors.Is(result.Error, net.ErrClosed) {
+					t.Errorf("send during close: %v", result.Error)
+				}
+			}
+		}(id)
+	}
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		for i := 0; i < 20; i++ {
+			if err := localPool.close(); err != nil {
+				t.Errorf("concurrent close: %v", err)
+			}
+		}
+	}()
+	workers.Wait()
+	localPool.mu.RLock()
+	defer localPool.mu.RUnlock()
+	if len(localPool.waiters) != 0 {
+		t.Fatalf("completed requests left %d waiters", len(localPool.waiters))
 	}
 }
 

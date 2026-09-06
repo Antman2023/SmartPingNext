@@ -935,10 +935,12 @@ const handleSave = async () => {
   const controller = new AbortController()
   saveAbortController = controller
   saving.value = true
+  const submittedConfig = JSON.parse(JSON.stringify(formConfig)) as Config
+  const submittedSnapshot = serializeConfig(submittedConfig)
   try {
-    await configStore.saveConfig(formConfig, password.value, controller.signal)
+    await configStore.saveConfig(submittedConfig, password.value, controller.signal)
     if (!isUnmounted) {
-      savedSnapshot.value = serializeConfig(formConfig)
+      savedSnapshot.value = submittedSnapshot
       validationAttempted.value = false
       ElMessage.success(t('common.saveSuccess'))
     }
@@ -1136,7 +1138,7 @@ const showAddNode = () => {
 }
 
 const addNode = () => {
-  if (!newNodeName.value || !newNodeAddr.value) {
+  if (!newNodeName.value.trim() || !newNodeAddr.value.trim()) {
     ElMessage.warning(t('config.pleaseEnterNodeAndIP'))
     return
   }
@@ -1200,7 +1202,7 @@ const showEditNode = (row: NetworkListItem) => {
 }
 
 const saveEditNode = () => {
-  if (!editNodeName.value || !editNodeAddr.value) {
+  if (!editNodeName.value.trim() || !editNodeAddr.value.trim()) {
     ElMessage.warning(t('config.pleaseEnterNodeAndIP'))
     return
   }
@@ -1272,7 +1274,6 @@ const editPingConfig = (row: NetworkListItem) => {
   const currentPingList = formConfig.Network[row.Addr]?.Ping || []
 
   pingTargetList.value = Object.entries(formConfig.Network)
-    .filter(([addr]) => addr !== row.Addr)
     .map(([addr, network]) => ({
       Name: network.Name,
       Addr: addr,

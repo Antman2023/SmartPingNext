@@ -29,6 +29,7 @@ const (
 	maxLocalConfigBytes   = 16 << 20
 	configFilePermissions = 0600
 	pingTargetTimeIndex   = "pinglog_target_logtime"
+	alertDateIndex        = "alertlog_date"
 	databaseBusyTimeoutMs = 5000
 	databaseMaxOpenConns  = 16
 	databaseMaxIdleConns  = 4
@@ -235,8 +236,20 @@ func ensureDatabaseIndexes(db *sql.DB) error {
 	if db == nil {
 		return errors.New("database is nil")
 	}
-	_, err := db.Exec("CREATE INDEX IF NOT EXISTS " + pingTargetTimeIndex + " ON pinglog(target, logtime)")
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, query := range []string{
+		"CREATE INDEX IF NOT EXISTS " + pingTargetTimeIndex + " ON pinglog(target, logtime)",
+		"CREATE INDEX IF NOT EXISTS " + alertDateIndex + " ON alertlog(date(logtime))",
+	} {
+		if _, err := tx.Exec(query); err != nil {
+			return fmt.Errorf("create database index: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func SaveCloudConfig(url string) (Config, error) {

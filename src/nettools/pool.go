@@ -70,6 +70,11 @@ func embeddedEchoWaiterKey(data []byte) (uint32, bool) {
 func (p *icmpPool) init() error {
 	p.initMu.Lock()
 	defer p.initMu.Unlock()
+	return p.initLocked()
+}
+
+// initLocked requires initMu to be held by the caller.
+func (p *icmpPool) initLocked() error {
 	if p.conn != nil {
 		return nil
 	}
@@ -110,10 +115,21 @@ func (p *icmpPool) register(key uint32, destination net.Addr) (chan icmpResponse
 }
 
 // unregister 移除等待者
-func (p *icmpPool) unregister(key uint32) {
+func (p *icmpPool) unregister(key uint32, responses chan icmpResponse) {
 	p.mu.Lock()
-	delete(p.waiters, key)
+	// A closed pool may already have a new request using the same identifier.
+	if waiter, exists := p.waiters[key]; exists && waiter.responses == responses {
+		delete(p.waiters, key)
+	}
 	p.mu.Unlock()
+}
+
+func (p *icmpPool) dispatchFrom(conn net.PacketConn, key uint32, resp icmpResponse) {
+	p.initMu.Lock()
+	defer p.initMu.Unlock()
+	if p.conn == conn {
+		p.dispatch(key, resp)
+	}
 }
 
 // dispatch 将响应分发给对应等待者
@@ -161,7 +177,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 				continue
 			}
 			key := waiterKey(echo.ID, echo.Seq)
-			p.dispatch(key, icmpResponse{addr: addr, final: true})
+			p.dispatchFrom(conn, key, icmpResponse{addr: addr, final: true})
 
 		case ipv4.ICMPTypeTimeExceeded:
 			te, ok := msg.Body.(*icmp.TimeExceeded)
@@ -172,7 +188,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 			if !ok {
 				continue
 			}
-			p.dispatch(key, icmpResponse{addr: addr})
+			p.dispatchFrom(conn, key, icmpResponse{addr: addr})
 
 		case ipv4.ICMPTypeDestinationUnreachable:
 			du, ok := msg.Body.(*icmp.DstUnreach)
@@ -183,7 +199,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 			if !ok {
 				continue
 			}
-			p.dispatch(key, icmpResponse{addr: addr, down: true})
+			p.dispatchFrom(conn, key, icmpResponse{addr: addr, down: true})
 		}
 	}
 }
@@ -221,19 +237,24 @@ func (p *icmpPool) sendICMPContext(ctx context.Context, id, seq, ttl int, msg []
 	if err := ctx.Err(); err != nil {
 		return ICMP{Error: err}
 	}
-	if err := p.init(); err != nil {
+	// Keep initialization and registration in the same lifecycle as the send.
+	p.initMu.Lock()
+	if err := p.initLocked(); err != nil {
+		p.initMu.Unlock()
 		return ICMP{Error: err}
 	}
 
 	key := waiterKey(id, seq)
 	ch, registered := p.register(key, dest)
 	if !registered {
+		p.initMu.Unlock()
 		return ICMP{Error: errors.New("icmp request identifier collision")}
 	}
-	defer p.unregister(key)
+	defer p.unregister(key, ch)
 
 	// SetTTL + WriteTo 必须原子执行
 	p.sendMu.Lock()
+	p.initMu.Unlock()
 	if p.conn == nil || p.ipconn == nil {
 		p.sendMu.Unlock()
 		return ICMP{Error: net.ErrClosed}

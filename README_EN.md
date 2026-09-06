@@ -72,13 +72,14 @@ Requires Go 1.24+ and Node.js 20.19+ or 22.12+.
 # Frontend
 cd web
 npm ci
-npm run build
-cp -r dist ../src/static/html
+npm run build:embed
 
 # Backend
 cd ..
 go build -o smartping src/smartping.go
 ```
+
+`build:embed` works on Windows, Linux, and macOS. After a successful frontend build, it replaces the generated files in `src/static/html`, avoiding nested copies and stale bundled assets. Use `npm run build` when you only need the frontend output.
 
 ### Docker
 

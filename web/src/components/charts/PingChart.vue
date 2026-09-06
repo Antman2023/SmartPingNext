@@ -25,7 +25,7 @@ const themeStore = useThemeStore()
 const sidebarStore = useSidebarStore()
 let chart: EChartsType | null = null
 let isUnmounted = false
-const resizeTimers: number[] = []
+const resizeTimers = new Set<number>()
 
 const saveAsImage = () => {
   if (chart) {
@@ -66,21 +66,22 @@ const getChartOption = (): EChartsOption => {
 
 const safeSetTimeout = (callback: () => void, delay: number) => {
   const timer = window.setTimeout(() => {
+    resizeTimers.delete(timer)
     if (!isUnmounted) {
       callback()
     }
   }, delay)
-  resizeTimers.push(timer)
+  resizeTimers.add(timer)
   return timer
 }
 
 const clearAllTimers = () => {
   resizeTimers.forEach(timer => window.clearTimeout(timer))
-  resizeTimers.length = 0
+  resizeTimers.clear()
 }
 
 const initChart = () => {
-  if (!chartRef.value) return
+  if (isUnmounted || !chartRef.value) return
   if (chart) {
     chart.dispose()
   }
@@ -90,6 +91,7 @@ const initChart = () => {
 }
 
 const updateChart = () => {
+  if (isUnmounted) return
   if (!chart) {
     initChart()
     return
@@ -124,6 +126,7 @@ watch(() => sidebarStore.isCollapsed, () => {
 
 onMounted(async () => {
   await nextTick()
+  if (isUnmounted) return
   initChart()
   window.addEventListener('resize', handleResize)
 })
@@ -131,6 +134,7 @@ onMounted(async () => {
 onUnmounted(() => {
   isUnmounted = true
   clearAllTimers()
+  handleResize.cancel()
   chart?.dispose()
   chart = null
   window.removeEventListener('resize', handleResize)

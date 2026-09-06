@@ -42,7 +42,8 @@ func StartAlertContext(ctx context.Context) {
 	pendingAlerts := make([]g.AlertLog, 0)
 	for _, v := range selfConfig.Topology {
 		if ctx.Err() != nil {
-			return
+			// Let the canceled job runner return queued alerts for retry.
+			break
 		}
 		if v["Addr"] != selfConfig.Addr {
 			sFlag, err := CheckAlertStatusContext(ctx, v)
@@ -51,7 +52,7 @@ func StartAlertContext(ctx context.Context) {
 					continue
 				}
 				if ctx.Err() != nil {
-					return
+					break
 				}
 				logrus.Error("[func:StartAlert] Check status error ", err)
 				continue

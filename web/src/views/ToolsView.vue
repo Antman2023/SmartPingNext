@@ -234,6 +234,7 @@ const loadConfig = async () => {
     }
     config.value = cfg
     target.value = cfg.Addr
+    lastRunAt.value = null
 
     results.value = Object.values(cfg.Network)
       .filter((node) => node.Smartping)
@@ -288,7 +289,7 @@ const runCheck = async () => {
   target.value = normalizedTarget
   checking.value = true
   results.value.forEach((row) => {
-    row.loading = false
+    row.loading = row.checked
     row.result = null
     row.error = null
   })
@@ -298,8 +299,6 @@ const runCheck = async () => {
       checkedRows,
       CHECK_CONCURRENCY,
       async (row) => {
-        row.loading = true
-
         try {
           const result = await runTools(
             `${row.addr}:${row.port}`,

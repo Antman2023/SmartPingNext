@@ -203,7 +203,7 @@ func configApiRoutes(mux *http.ServeMux) {
 		dayEnd := selectedDate.AddDate(0, 0, 1).Format("2006-01-02 15:04")
 		listpreout := []string{}
 		datapreout := []g.AlertLog{}
-		querySql := "select date(logtime) as ldate from alertlog group by date(logtime) order by logtime desc"
+		querySql := "select date(logtime) as ldate from alertlog group by date(logtime) order by date(logtime) desc"
 		rows, err := g.Db.QueryContext(r.Context(), querySql)
 		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
