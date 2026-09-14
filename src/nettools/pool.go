@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -20,9 +21,11 @@ const (
 
 // icmpResponse 是 readLoop 分发给等待者的响应
 type icmpResponse struct {
-	addr  net.Addr
-	final bool // EchoReply
-	down  bool // DestinationUnreachable
+	addr              net.Addr
+	receivedAt        time.Time // Captured before parsing and dispatching the packet.
+	quotedDestination net.Addr  // Original destination quoted by an ICMP error.
+	final             bool      // EchoReply
+	down              bool      // DestinationUnreachable
 }
 
 type icmpWaiter struct {
@@ -138,6 +141,9 @@ func (p *icmpPool) dispatch(key uint32, resp icmpResponse) {
 	defer p.mu.RUnlock()
 	waiter, ok := p.waiters[key]
 	if ok {
+		if resp.quotedDestination != nil && !sameIPAddress(resp.quotedDestination, waiter.destination) {
+			return
+		}
 		if resp.final && !sameIPAddress(resp.addr, waiter.destination) {
 			return
 		}
@@ -163,6 +169,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 			continue
 		}
 
+		receivedAt := time.Now()
 		// Go 的 IPConn.ReadFrom 已通过 stripIPv4Header 剥离 IP 头，
 		// 此处 buf[:n] 即为纯 ICMP 载荷。
 		msg, err := icmp.ParseMessage(1, buf[:n])
@@ -177,7 +184,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 				continue
 			}
 			key := waiterKey(echo.ID, echo.Seq)
-			p.dispatchFrom(conn, key, icmpResponse{addr: addr, final: true})
+			p.dispatchFrom(conn, key, icmpResponse{addr: addr, receivedAt: receivedAt, final: true})
 
 		case ipv4.ICMPTypeTimeExceeded:
 			te, ok := msg.Body.(*icmp.TimeExceeded)
@@ -188,7 +195,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 			if !ok {
 				continue
 			}
-			p.dispatchFrom(conn, key, icmpResponse{addr: addr})
+			p.dispatchFrom(conn, key, icmpResponse{addr: addr, receivedAt: receivedAt, quotedDestination: &net.IPAddr{IP: net.IPv4(te.Data[16], te.Data[17], te.Data[18], te.Data[19])}})
 
 		case ipv4.ICMPTypeDestinationUnreachable:
 			du, ok := msg.Body.(*icmp.DstUnreach)
@@ -199,7 +206,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 			if !ok {
 				continue
 			}
-			p.dispatchFrom(conn, key, icmpResponse{addr: addr, down: true})
+			p.dispatchFrom(conn, key, icmpResponse{addr: addr, receivedAt: receivedAt, down: true, quotedDestination: &net.IPAddr{IP: net.IPv4(du.Data[16], du.Data[17], du.Data[18], du.Data[19])}})
 		}
 	}
 }
@@ -269,37 +276,102 @@ func (p *icmpPool) sendICMPContext(ctx context.Context, id, seq, ttl int, msg []
 		return ICMP{Error: err}
 	}
 	sendOn := time.Now()
-	_, err = p.conn.WriteTo(msg, dest)
+	err = writeICMPPacketContext(ctx, p.conn, msg, dest, sendOn.Add(timeout))
 	p.sendMu.Unlock()
 	if err != nil {
+		var networkError net.Error
+		if ctx.Err() == nil && errors.As(err, &networkError) && networkError.Timeout() {
+			return ICMP{Timeout: true}
+		}
 		return ICMP{Error: err}
 	}
 
 	return waitForICMPResponse(ctx, ch, sendOn, timeout, dest)
 }
 
+type icmpPacketWriter interface {
+	SetWriteDeadline(time.Time) error
+	WriteTo([]byte, net.Addr) (int, error)
+}
+
+// The caller must hold sendMu until this returns: deadlines belong to the
+// shared socket, and a cancellation callback must not outlive its own write.
+func writeICMPPacketContext(ctx context.Context, conn icmpPacketWriter, message []byte, destination net.Addr, deadline time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	callbackDone := make(chan struct{})
+	stopCancellation := context.AfterFunc(ctx, func() {
+		defer close(callbackDone)
+		_ = conn.SetWriteDeadline(time.Now())
+	})
+	written, err := conn.WriteTo(message, destination)
+	if !stopCancellation() {
+		<-callbackDone
+	}
+	if contextError := ctx.Err(); contextError != nil {
+		return contextError
+	}
+	if err == nil && written != len(message) {
+		return io.ErrShortWrite
+	}
+	return err
+}
+
 func waitForICMPResponse(ctx context.Context, ch <-chan icmpResponse, sendOn time.Time, timeout time.Duration, destination net.Addr) ICMP {
-	timer := time.NewTimer(timeout)
+	timer := time.NewTimer(time.Until(sendOn.Add(timeout)))
 	defer timer.Stop()
+	expired := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return ICMP{Error: err}
+		}
+		var resp icmpResponse
+		var ok bool
+		// A response received within the deadline remains valid even when its
+		// consumer resumes after the timer fires. Drain queued responses first.
 		select {
-		case resp, ok := <-ch:
-			if !ok {
-				return ICMP{Error: net.ErrClosed}
+		case resp, ok = <-ch:
+		default:
+			if expired {
+				return ICMP{Timeout: true}
 			}
-			if resp.final && !sameIPAddress(resp.addr, destination) {
+			select {
+			case resp, ok = <-ch:
+			case <-timer.C:
+				expired = true
 				continue
+			case <-ctx.Done():
+				return ICMP{Error: ctx.Err()}
 			}
-			return ICMP{
-				Addr:  resp.addr,
-				RTT:   time.Since(sendOn),
-				Final: resp.final,
-				Down:  resp.down,
-			}
-		case <-timer.C:
+		}
+		if err := ctx.Err(); err != nil {
+			return ICMP{Error: err}
+		}
+		if !ok {
+			return ICMP{Error: net.ErrClosed}
+		}
+		if resp.final && !sameIPAddress(resp.addr, destination) {
+			continue
+		}
+		rtt := resp.receivedAt.Sub(sendOn)
+		if rtt < 0 {
+			continue
+		}
+		if rtt > timeout {
 			return ICMP{Timeout: true}
-		case <-ctx.Done():
-			return ICMP{Error: ctx.Err()}
+		}
+		return ICMP{
+			Addr:  resp.addr,
+			RTT:   rtt,
+			Final: resp.final,
+			Down:  resp.down,
 		}
 	}
 }

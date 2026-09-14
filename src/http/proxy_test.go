@@ -224,13 +224,40 @@ func TestHandleProxyUsesValidatedTarget(t *testing.T) {
 		if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
 			t.Fatalf("handleProxy Content-Type = %q, want application/json", got)
 		}
-		if got := recorder.Body.String(); got != "{\n\t\"status\": \"ok\"\n}\n" {
-			t.Fatalf("handleProxy body = %q, want indented JSON ending in newline", got)
+		if got := recorder.Body.String(); got != `{"status":"ok"}` {
+			t.Fatalf("handleProxy body = %q, want original remote JSON", got)
 		}
 		if requests.Load() != 1 {
 			t.Fatalf("remote requests = %d, want 1", requests.Load())
 		}
 	})
+}
+
+func TestHandleProxyPreservesJSONWithoutExpandingResponse(t *testing.T) {
+	for name, body := range map[string]string{
+		"nested":         strings.Repeat("[", 2048) + "0" + strings.Repeat("]", 2048),
+		"precise values": ` {"integer":9007199254740993,"decimal":1.234567890123456789,"escaped":"\u4e2d\n","items":[null,true]} `,
+	} {
+		t.Run(name, func(t *testing.T) {
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			defer remote.Close()
+			withProxyConfig(proxyTestConfig(t, remote.URL), func() {
+				recorder := httptest.NewRecorder()
+				handleProxy(recorder, proxyRequest(remote.URL+"/api/config.json"))
+				if recorder.Code != http.StatusOK {
+					t.Fatalf("status = %d, want 200", recorder.Code)
+				}
+				if recorder.Body.Len() != len(body) {
+					t.Fatalf("response expanded from %d to %d bytes", len(body), recorder.Body.Len())
+				}
+				if recorder.Body.String() != body {
+					t.Fatal("proxy changed JSON values or encoding")
+				}
+			})
+		})
+	}
 }
 
 func TestHandleProxyReturnsTooManyRequestsWhenConcurrencyIsFull(t *testing.T) {

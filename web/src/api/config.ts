@@ -1,5 +1,31 @@
 import request, { proxyRequestConfig } from './index'
+import axios from 'axios'
 import type { Config } from '@/types'
+
+export type PasswordVerificationResult = 'valid' | 'invalid' | 'rate-limited'
+
+export const verifyPassword = async (
+  password: string,
+  signal: AbortSignal
+): Promise<PasswordVerificationResult> => {
+  // Credential failures are expected results here, so bypass the shared
+  // business-error interceptor while retaining the application's API settings.
+  const response = await axios.post<unknown>(
+    '/verify-password.json',
+    new URLSearchParams({ password }),
+    {
+      baseURL: request.defaults.baseURL,
+      timeout: request.defaults.timeout,
+      signal,
+      validateStatus: (status) => (status >= 200 && status < 300) || status === 429
+    }
+  )
+  if (response.status === 429) return 'rate-limited'
+  const result = response.data
+  return typeof result === 'object' && result !== null && 'status' in result && result.status === 'true'
+    ? 'valid'
+    : 'invalid'
+}
 
 export const fetchConfig = (signal?: AbortSignal): Promise<Config> => {
   return request.get('/config.json', { signal })

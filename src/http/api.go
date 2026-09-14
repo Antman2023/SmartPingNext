@@ -1,7 +1,6 @@
 package http
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -627,15 +626,14 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, o, http.StatusServiceUnavailable)
 		return
 	}
-	var out bytes.Buffer
-	out.Grow(len(body) + 1)
-	if err := json.Indent(&out, body, "", "\t"); err != nil {
+	if !json.Valid(body) {
 		http.Error(w, "Invalid Remote JSON Response", http.StatusBadGateway)
 		return
 	}
-	_ = out.WriteByte('\n')
+	// Preserve the bounded response: indentation can amplify nested JSON
+	// quadratically and would allocate a second, potentially much larger body.
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	if _, err := w.Write(out.Bytes()); err != nil {
+	if _, err := w.Write(body); err != nil {
 		logrus.Debug("[func:/api/proxy.json] Write response: ", err)
 	}
 }

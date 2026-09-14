@@ -39,7 +39,9 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': {
           target: proxyTarget,
-          changeOrigin: true
+          // The Go server compares Origin with Host for configuration POSTs.
+          // Preserve both browser headers so development requests stay same-origin.
+          changeOrigin: false
         }
       }
     },

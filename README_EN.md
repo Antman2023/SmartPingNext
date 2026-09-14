@@ -81,6 +81,37 @@ go build -o smartping src/smartping.go
 
 `build:embed` works on Windows, Linux, and macOS. After a successful frontend build, it replaces the generated files in `src/static/html`, avoiding nested copies and stale bundled assets. Use `npm run build` when you only need the frontend output.
 
+### Local Development and Validation
+
+After building the frontend as above, start the built executable: `./smartping` on Linux/macOS, or build with `go build -o smartping.exe ./src` and run `.\smartping.exe` on Windows. In another terminal, enter `web` and run `npm run dev`. Open the development URL printed in the terminal (port 3000 by default); API requests are proxied to `http://localhost:8899`.
+
+Runtime configuration, databases, and logs are stored beside the executable. Use a build at a fixed location to retain development data instead of a temporary `go run` executable.
+
+Override these settings in `web/.env.development.local` and restart the development server:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `VITE_PROXY_TARGET` | `http://localhost:8899` | Backend address for the development proxy |
+| `VITE_API_BASE_URL` | `/api` | Browser API prefix, including configuration and password verification |
+| `VITE_API_TIMEOUT` | `15000` | Ordinary API timeout in milliseconds; remote node proxy requests allow additional response time |
+| `VITE_DEFAULT_TIME_RANGE` | `6` | Default hours in forward and reverse details, from 1 minute to 31 days; invalid values fall back to 6 hours |
+
+When using the development proxy, keep the `/api` prefix and change only `VITE_PROXY_TARGET`. The proxy preserves the browser's `Host` and `Origin` headers for the backend's configuration request origin checks. `VITE_` variables are included in frontend code and must not contain passwords. Changes for production require rebuilding both the frontend and the Go executable.
+
+```bash
+# From web: tests and lint, including local proxy integration tests
+npm test
+npm run lint
+
+# From the project root: backend tests and static analysis
+go test ./src/...
+go vet ./src/...
+```
+
+Configuration imports accept files up to 16 MiB. Imported changes must be saved before they apply to the node. Password verification failures or timeouts during import and export preserve current edits.
+
+On Windows, install Go and Zig on PATH, then run `pwsh -File scripts/test-race-windows.ps1` from the project root for Go race detection. The helper uses `zig cc`, adds the Windows synchronization library and a fixed loading mode for race test executables, and restores environment variables on exit. Release builds still do not require CGO. This workflow was verified with Go 1.27.1, Zig 0.16.0, and Windows amd64.
+
 ### Docker
 
 Multi-arch images are supported: `linux/amd64`, `linux/arm64`, `linux/arm/v7`

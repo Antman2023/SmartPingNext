@@ -215,6 +215,7 @@ import { fetchConfig, fetchProxyConfig } from '@/api/config'
 import { getPingData, getProxyPingData } from '@/api/ping'
 import { displayName, formatDateTime, formatTime } from '@/utils/format'
 import { mapWithConcurrency } from '@/utils/concurrency'
+import { isValidTimeRange, normalizeTimeRangeHours } from '@/utils/timeRange'
 import type { Config, PingLogData } from '@/types'
 
 const pingMiniChartModule = import('@/components/charts/PingMiniChart.vue')
@@ -406,7 +407,7 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
   agent.loading = false
 }
 
-const DEFAULT_TIME_RANGE_HOURS = Number(import.meta.env.VITE_DEFAULT_TIME_RANGE) || 6
+const DEFAULT_TIME_RANGE_HOURS = normalizeTimeRangeHours(import.meta.env.VITE_DEFAULT_TIME_RANGE)
 
 const showDetail = async (target: PingTarget) => {
   detailRequestId++
@@ -432,7 +433,7 @@ const loadDetailData = async () => {
   const targetIp = currentTargetIp.value
   const start = startTime.value
   const end = endTime.value
-  if (start && end && start > end) {
+  if (!isValidTimeRange(start, end)) {
     detailLoading.value = false
     ElMessage.warning(t('common.invalidTimeRange'))
     return
@@ -521,6 +522,7 @@ const refreshMonitor = () => {
 }
 
 const refreshDetailIfVisible = () => {
+  if (!isValidTimeRange(startTime.value, endTime.value)) return
   if (document.visibilityState === 'visible' && detailVisible.value && !detailLoading.value) {
     loadDetailData()
   }

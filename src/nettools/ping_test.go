@@ -10,8 +10,59 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 )
+
+func TestICMPReadLoopFiltersQuotedDestination(t *testing.T) {
+	for _, unreachable := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unreachable-%t", unreachable), func(t *testing.T) {
+			conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			localPool := &icmpPool{conn: conn, waiters: make(map[uint32]icmpWaiter)}
+			t.Cleanup(func() { localPool.close() })
+			destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+			responses, _ := localPool.register(waiterKey(123, 456), destination)
+			startedAt := time.Now()
+			go localPool.readLoop(conn)
+			for _, target := range []string{"192.0.2.2", "192.0.2.1"} {
+				// Include IP options to exercise the variable quoted header length.
+				const headerLength = 24
+				quoted := make([]byte, headerLength+8)
+				quoted[0], quoted[9] = 0x46, 1
+				copy(quoted[16:20], net.ParseIP(target).To4())
+				quoted[headerLength] = byte(ipv4.ICMPTypeEcho)
+				binary.BigEndian.PutUint16(quoted[headerLength+4:], 123)
+				binary.BigEndian.PutUint16(quoted[headerLength+6:], 456)
+				message := icmp.Message{Type: ipv4.ICMPTypeTimeExceeded, Body: &icmp.TimeExceeded{Data: quoted}}
+				if unreachable {
+					message.Type = ipv4.ICMPTypeDestinationUnreachable
+					message.Body = &icmp.DstUnreach{Data: quoted}
+				}
+				packet, err := message.Marshal(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := conn.WriteTo(packet, conn.LocalAddr()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			select {
+			case response := <-responses:
+				if response.receivedAt.Before(startedAt) || response.receivedAt.After(time.Now()) {
+					t.Fatalf("invalid packet receive time: %v", response.receivedAt)
+				}
+				if !sameIPAddress(response.quotedDestination, destination) || response.down != unreachable || response.final {
+					t.Fatalf("incorrect error response delivered: %+v", response)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("matching router response was not delivered")
+			}
+		})
+	}
+}
 
 func TestWaiterKeyUsesIdentifierAndSequence(t *testing.T) {
 	base := waiterKey(100, 200)
@@ -147,11 +198,12 @@ func TestWaitForICMPResponseHonorsCanceledContext(t *testing.T) {
 
 func TestWaitForICMPResponseIgnoresFinalReplyFromUnexpectedSource(t *testing.T) {
 	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	sentAt := time.Now()
 	responses := make(chan icmpResponse, 2)
-	responses <- icmpResponse{addr: &net.IPAddr{IP: net.ParseIP("198.51.100.1")}, final: true}
-	responses <- icmpResponse{addr: destination, final: true}
+	responses <- icmpResponse{addr: &net.IPAddr{IP: net.ParseIP("198.51.100.1")}, receivedAt: time.Now(), final: true}
+	responses <- icmpResponse{addr: destination, receivedAt: time.Now(), final: true}
 
-	result := waitForICMPResponse(context.Background(), responses, time.Now(), time.Second, destination)
+	result := waitForICMPResponse(context.Background(), responses, sentAt, time.Second, destination)
 	if !result.Final || !sameIPAddress(result.Addr, destination) {
 		t.Fatalf("waitForICMPResponse returned unexpected final response: %#v", result)
 	}
@@ -160,12 +212,88 @@ func TestWaitForICMPResponseIgnoresFinalReplyFromUnexpectedSource(t *testing.T) 
 func TestWaitForICMPResponseAcceptsIntermediateRouter(t *testing.T) {
 	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
 	router := &net.IPAddr{IP: net.ParseIP("198.51.100.1")}
+	sentAt := time.Now()
 	responses := make(chan icmpResponse, 1)
-	responses <- icmpResponse{addr: router}
+	responses <- icmpResponse{addr: router, receivedAt: time.Now()}
 
-	result := waitForICMPResponse(context.Background(), responses, time.Now(), time.Second, destination)
+	result := waitForICMPResponse(context.Background(), responses, sentAt, time.Second, destination)
 	if result.Final || !sameIPAddress(result.Addr, router) {
 		t.Fatalf("waitForICMPResponse rejected intermediate router response: %#v", result)
+	}
+}
+
+func TestWaitForICMPResponseExcludesDispatchDelayFromRTT(t *testing.T) {
+	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	router := &net.IPAddr{IP: net.ParseIP("198.51.100.1")}
+	// Model a fast response whose consumer was delayed by local scheduling.
+	// Historical timestamps make the check deterministic without sleeping.
+	sentAt := time.Now().Add(-10 * time.Second)
+	wantRTT := 1250 * time.Microsecond
+	for name, response := range map[string]icmpResponse{
+		"echo reply":    {addr: destination, final: true},
+		"time exceeded": {addr: router},
+		"unreachable":   {addr: router, down: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			response.receivedAt = sentAt.Add(wantRTT)
+			responses := make(chan icmpResponse, 1)
+			responses <- response
+			result := waitForICMPResponse(context.Background(), responses, sentAt, time.Minute, destination)
+			if result.RTT != wantRTT || result.Error != nil || result.Timeout {
+				t.Fatalf("response = %+v, want RTT %v without dispatch delay", result, wantRTT)
+			}
+		})
+	}
+}
+
+func TestWaitForICMPResponseUsesSendDeadline(t *testing.T) {
+	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	sentAt := time.Now().Add(-time.Minute)
+	for name, receivedAt := range map[string]time.Time{
+		"on time queued reply": sentAt.Add(time.Millisecond),
+		"late queued reply":    sentAt.Add(20 * time.Second),
+		"no reply":             {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			responses := make(chan icmpResponse, 1)
+			if !receivedAt.IsZero() {
+				responses <- icmpResponse{addr: destination, receivedAt: receivedAt, final: true}
+			}
+			result := waitForICMPResponse(ctx, responses, sentAt, 10*time.Second, destination)
+			wantTimeout := name != "on time queued reply"
+			if result.Timeout != wantTimeout || result.Error != nil || result.Final == wantTimeout {
+				t.Fatalf("result = %+v, want timeout %t", result, wantTimeout)
+			}
+		})
+	}
+}
+
+func TestWaitForICMPResponseCancellationWinsOverQueuedReply(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	for attempt := 0; attempt < 32; attempt++ {
+		sentAt := time.Now()
+		responses := make(chan icmpResponse, 1)
+		responses <- icmpResponse{addr: destination, receivedAt: time.Now(), final: true}
+		result := waitForICMPResponse(ctx, responses, sentAt, time.Second, destination)
+		if !errors.Is(result.Error, context.Canceled) || result.Final || result.Timeout {
+			t.Fatalf("canceled request returned %+v", result)
+		}
+	}
+}
+
+func TestWaitForICMPResponseIgnoresReplyBeforeSend(t *testing.T) {
+	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
+	sentAt := time.Now()
+	responses := make(chan icmpResponse, 2)
+	responses <- icmpResponse{addr: destination, receivedAt: sentAt.Add(-time.Millisecond), final: true}
+	responses <- icmpResponse{addr: destination, receivedAt: sentAt.Add(time.Millisecond), final: true}
+	result := waitForICMPResponse(context.Background(), responses, sentAt, time.Second, destination)
+	if result.RTT != time.Millisecond || !result.Final || result.Error != nil || result.Timeout {
+		t.Fatalf("stale packet affected result: %+v", result)
 	}
 }
 

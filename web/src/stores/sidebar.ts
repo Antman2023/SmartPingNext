@@ -1,15 +1,25 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
+function getStoredCollapse(): boolean {
+  try {
+    return localStorage.getItem('sidebar-collapsed') === 'true'
+  } catch {
+    return false
+  }
+}
+
 export const useSidebarStore = defineStore('sidebar', () => {
-  const isCollapsed = ref(
-    localStorage.getItem('sidebar-collapsed') === 'true'
-  )
+  const isCollapsed = ref(getStoredCollapse())
   const isMobileOpen = ref(false)
 
   const toggleCollapse = () => {
     isCollapsed.value = !isCollapsed.value
-    localStorage.setItem('sidebar-collapsed', String(isCollapsed.value))
+    try {
+      localStorage.setItem('sidebar-collapsed', String(isCollapsed.value))
+    } catch {
+      // Keep the control usable when browser storage is unavailable.
+    }
   }
 
   const toggleMobile = () => {

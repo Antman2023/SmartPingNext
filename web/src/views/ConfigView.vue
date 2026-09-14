@@ -589,6 +589,7 @@ import {
 } from 'element-plus'
 import { useConfigStore } from '@/stores/config'
 import { isRequestCanceled } from '@/api'
+import { verifyPassword, type PasswordVerificationResult } from '@/api/config'
 import {
   CONFIG_LIMITS,
   isValidIPv4,
@@ -854,7 +855,7 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
     return null
   }
 
-  const network: Record<string, unknown> = {}
+  const network: Record<string, unknown> = Object.create(null)
   for (const [addr, rawMember] of Object.entries(value.Network)) {
     if (
       !isRecord(rawMember) ||
@@ -880,7 +881,7 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
     }
   }
 
-  const chinaMap: Record<string, unknown> = {}
+  const chinaMap: Record<string, unknown> = Object.create(null)
   if (isRecord(value.Chinamap)) {
     for (const [province, rawProviders] of Object.entries(value.Chinamap)) {
       if (!isRecord(rawProviders)) {
@@ -962,28 +963,6 @@ const handleSave = async () => {
   }
 }
 
-type PasswordVerificationResult = 'valid' | 'invalid' | 'rate-limited'
-
-const verifyPassword = async (
-  pwd: string,
-  signal: AbortSignal
-): Promise<PasswordVerificationResult> => {
-  const response = await fetch('/api/verify-password.json', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ password: pwd }),
-    signal
-  })
-  if (response.status === 429) {
-    return 'rate-limited'
-  }
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`)
-  }
-  const result: unknown = await response.json()
-  return isRecord(result) && result.status === 'true' ? 'valid' : 'invalid'
-}
-
 const handleExport = async () => {
   if (importExportBusy.value || saving.value) {
     return
@@ -1050,6 +1029,10 @@ const handleImportFile = async (file: UploadFile) => {
     return
   }
   const rawFile = file.raw
+  if (rawFile.size > CONFIG_LIMITS.importBytes) {
+    ElMessage.error(t('config.configTooLarge'))
+    return
+  }
   if (!importExportPassword.value) {
     ElMessage.warning(t('common.pleaseEnterPassword'))
     return
@@ -1456,15 +1439,14 @@ const addProvince = () => {
   }
 
   const provinceName = newProvinceName.value.trim()
-  if (formConfig.Chinamap[provinceName]) {
+  if (Object.prototype.hasOwnProperty.call(formConfig.Chinamap, provinceName)) {
     ElMessage.warning(t('config.provinceExists'))
     return
   }
 
-  formConfig.Chinamap[provinceName] = {
-    ctcc: [],
-    cucc: [],
-    cmcc: []
+  formConfig.Chinamap = {
+    ...formConfig.Chinamap,
+    [provinceName]: { ctcc: [], cucc: [], cmcc: [] }
   }
 
   addProvinceVisible.value = false

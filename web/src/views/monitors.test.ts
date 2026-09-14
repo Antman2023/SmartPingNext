@@ -6,6 +6,7 @@ import ts from 'typescript'
 import * as vue from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import { mapWithConcurrency } from '../utils/concurrency.js'
+import { isValidTimeRange, normalizeTimeRangeHours } from '../utils/timeRange.js'
 import type { PingLogData } from '../types/index.js'
 
 interface Target {
@@ -16,6 +17,9 @@ interface Target {
   fromPort: number
 }
 interface MonitorSetup {
+  showDetail: (target: Target) => Promise<void>
+  startTime: vue.Ref<string>
+  endTime: vue.Ref<string>
   pingTargets?: vue.Ref<Target[]>
   reverseTargets?: vue.Ref<Target[]>
   loadedTargets: vue.ComputedRef<number>
@@ -49,13 +53,14 @@ for (const name of ['DashboardView', 'ReverseView']) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
   }).outputText.replace(/import\.meta\.env/g, 'testEnv')
 
-  function createView(t: test.TestContext) {
+  function createView(t: test.TestContext, defaultTimeRange?: string) {
     const getPing = t.mock.fn(async (): Promise<PingLogData> => sample)
+    const warning = t.mock.fn(() => {})
     const document = { visibilityState: 'visible' }
     const dependencies: Record<string, unknown> = {
       vue: { ...vue, onMounted: () => {}, onUnmounted: () => {} },
       'vue-i18n': { useI18n: () => ({ t: (key: string) => key }) },
-      'element-plus': { ElMessage: { error: () => {} } },
+      'element-plus': { ElMessage: { error: () => {}, warning } },
       '@element-plus/icons-vue': {},
       '@/plugins/elementPlusMonitorStyles': {},
       '@/components/common/MonitorRefreshControl.vue': {},
@@ -69,12 +74,13 @@ for (const name of ['DashboardView', 'ReverseView']) {
       },
       '@/api/ping': { getPingData: getPing, getProxyPingData: getPing },
       '@/utils/concurrency': { mapWithConcurrency },
-      '@/utils/format': { displayName: (value: string) => value, formatTime: () => '12:00' }
+      '@/utils/timeRange': { isValidTimeRange, normalizeTimeRangeHours },
+      '@/utils/format': { displayName: (value: string) => value, formatTime: () => '12:00', formatDateTime: (date: Date) => date.toISOString().slice(0, 16).replace('T', ' ') }
     }
     const exports: { default?: { setup: (props: object, context: object) => MonitorSetup } } = {}
     runInNewContext(compiled, {
       exports,
-      testEnv: {},
+      testEnv: { VITE_DEFAULT_TIME_RANGE: defaultTimeRange },
       AbortController,
       document,
       console: { error: () => {} },
@@ -86,6 +92,8 @@ for (const name of ['DashboardView', 'ReverseView']) {
     const scope = vue.effectScope()
     t.after(() => scope.stop())
     const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
+    view.startTime.value = '2026-09-06 06:00'
+    view.endTime.value = '2026-09-06 12:00'
     const targets = (view.pingTargets || view.reverseTargets)!
     targets.value = Array.from({ length: 6 }, (_, index) => ({
       targetIp: `192.0.2.${index + 1}`,
@@ -94,8 +102,47 @@ for (const name of ['DashboardView', 'ReverseView']) {
       loading: false,
       chartData: null
     }))
-    return { view, targets, getPing, document }
+    return { view, targets, getPing, document, warning }
   }
+
+  test(`${name}: detail respects valid time ranges and falls back for invalid settings`, async (t) => {
+    for (const [input, hours] of [
+      ['12', 12], ['0.5', 0.5], ['744', 744], ['-1', 6], ['0', 6],
+      ['Infinity', 6], ['NaN', 6], ['745', 6], ['0.001', 6], ['', 6]
+    ] as const) {
+      const { view, targets } = createView(t, input)
+      await view.showDetail(targets.value[0]!)
+      const duration = Date.parse(view.endTime.value) - Date.parse(view.startTime.value)
+      assert.equal(duration, hours * 60 * 60 * 1000, `configured hours: ${input}`)
+    }
+  })
+
+  test(`${name}: invalid detail dates retain the chart and pause automatic requests`, async (t) => {
+    const { view, targets, getPing, warning } = createView(t)
+    await view.showDetail(targets.value[0]!)
+    const chart = view.detailData.value
+    const calls = getPing.mock.callCount()
+    for (const [start, end] of [
+      ['', '2026-09-06 12:00'], ['2026-09-06 12:00', ''],
+      ['2026-09-07 12:00', '2026-09-06 12:00'],
+      ['2026-08-01 12:00', '2026-09-06 12:00'],
+      ['2026-02-30 12:00', '2026-03-01 12:00']
+    ]) {
+      view.startTime.value = start!
+      view.endTime.value = end!
+      await view.loadDetailData()
+      const notices = warning.mock.callCount()
+      view.refreshDetailIfVisible()
+      assert.equal(warning.mock.callCount(), notices)
+      assert.equal(getPing.mock.callCount(), calls)
+      assert.equal(view.detailData.value, chart)
+      assert.equal(view.detailLoading.value, false)
+    }
+    view.startTime.value = '2026-08-06 12:00'
+    view.endTime.value = '2026-09-06 12:00'
+    await view.loadDetailData()
+    assert.equal(getPing.mock.callCount(), calls + 1)
+  })
 
   test(`${name}: queued targets are loading rather than failed`, async (t) => {
     const { view, targets, getPing } = createView(t)

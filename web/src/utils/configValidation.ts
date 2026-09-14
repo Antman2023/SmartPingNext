@@ -1,6 +1,7 @@
 import type { Config, TopologyConfig } from '@/types'
 
 export const CONFIG_LIMITS = {
+  importBytes: 16 * 1024 * 1024,
   timeout: { min: 1, max: 60 },
   archive: { min: 1, max: 36500 },
   refresh: { min: 1, max: 1440 },

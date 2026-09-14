@@ -10,9 +10,13 @@ function isLocaleCode(locale: string | null): locale is LocaleCode {
 }
 
 function getInitialLocale(): LocaleCode {
-  const storedLocale = localStorage.getItem('locale')
-  if (isLocaleCode(storedLocale)) {
-    return storedLocale
+  try {
+    const storedLocale = localStorage.getItem('locale')
+    if (isLocaleCode(storedLocale)) {
+      return storedLocale
+    }
+  } catch {
+    // Browser storage can be disabled; fall back to the system language.
   }
 
   const systemLocale = navigator.languages[0] || navigator.language
@@ -24,7 +28,11 @@ export const useLocaleStore = defineStore('locale', () => {
 
   const setLocale = (newLocale: LocaleCode) => {
     locale.value = newLocale
-    localStorage.setItem('locale', newLocale)
+    try {
+      localStorage.setItem('locale', newLocale)
+    } catch {
+      // Keep language switching available without persistent storage.
+    }
   }
 
   return {

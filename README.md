@@ -81,6 +81,37 @@ go build -o smartping src/smartping.go
 
 `build:embed` 支持 Windows、Linux 和 macOS，会在前端构建成功后替换 `src/static/html` 中的生成文件，避免重复复制产生嵌套目录或打包旧资源。仅开发前端时仍可使用 `npm run build`。
 
+### 本地开发与验证
+
+完成上述前端构建后，启动上一步构建的程序（Linux/macOS 使用 `./smartping`；Windows 可先执行 `go build -o smartping.exe ./src`，再运行 `.\smartping.exe`），再打开另一个终端进入 `web` 并运行 `npm run dev`。浏览器访问终端显示的开发地址（默认端口 3000），API 请求会代理到 `http://localhost:8899`。
+
+运行时配置、数据库和日志存放在可执行文件旁的目录中。为保留开发数据，使用固定位置的构建产物，而非 `go run` 的临时程序。
+
+可在 `web/.env.development.local` 中覆盖以下设置，修改后重启开发服务：
+
+| 变量 | 默认值 | 用途 |
+|------|--------|------|
+| `VITE_PROXY_TARGET` | `http://localhost:8899` | 开发代理的后端地址 |
+| `VITE_API_BASE_URL` | `/api` | 浏览器请求的 API 前缀，包含配置和密码验证接口 |
+| `VITE_API_TIMEOUT` | `15000` | 普通 API 请求超时，单位为毫秒；节点代理请求会留出额外响应时间 |
+| `VITE_DEFAULT_TIME_RANGE` | `6` | 正向与反向详情的默认小时数，允许 1 分钟至 31 天；无效值回退到 6 小时 |
+
+使用开发代理时保留 `/api` 前缀，只修改 `VITE_PROXY_TARGET`。代理保留浏览器的 `Host` 和 `Origin`，以兼容后端对配置操作的来源检查。`VITE_` 变量会进入前端代码，不能用于保存密码；生产环境修改这些变量后需要重新构建前端及 Go 程序。
+
+```bash
+# web 目录：测试与静态检查（包括本地代理集成测试）
+npm test
+npm run lint
+
+# 项目根目录：后端测试与静态检查
+go test ./src/...
+go vet ./src/...
+```
+
+配置导入仅接受不超过 16 MiB 的文件，导入后仍需保存才会应用到节点。导入、导出密码验证失败或超时不会丢弃当前编辑内容。
+
+Windows 上可使用 Zig 运行 Go 数据竞争检测：安装 Go 和 Zig 并加入 PATH 后，在项目根目录执行 `pwsh -File scripts/test-race-windows.ps1`。脚本使用 `zig cc`，为 race 测试补充 Windows 同步库和固定加载方式，并在退出时恢复环境变量；正式构建仍不依赖 CGO。此流程已在 Go 1.27.1、Zig 0.16.0、Windows amd64 上验证。
+
 ### Docker
 
 支持多架构镜像：`linux/amd64`、`linux/arm64`、`linux/arm/v7`
