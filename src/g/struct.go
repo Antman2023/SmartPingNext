@@ -33,6 +33,16 @@ type PingSt struct {
 	MaxDelay float64
 }
 
+// UpdateLoss derives the whole-percent packet loss from the probe counters.
+// With no probes, callers decide whether the result is missing or a failure.
+func (p *PingSt) UpdateLoss() {
+	if p.SendPk > 0 {
+		// Probe counts are bounded by configuration. Multiply before dividing to
+		// avoid floating-point rounding turning an exact 29% loss into 28%.
+		p.LossPk = (p.SendPk - p.RevcPk) * 100 / p.SendPk
+	}
+}
+
 type PingLog struct {
 	Logtime  string
 	Maxdelay string

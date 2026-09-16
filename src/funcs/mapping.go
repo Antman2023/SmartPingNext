@@ -116,10 +116,9 @@ func MappingTaskContext(ctx context.Context, carrier string, province string, ip
 					logrus.Debug("[func:StartChinaMapPing IcmpPing] ID:", i, " IP:", ip)
 				} else {
 					logrus.Debug("[func:StartChinaMapPing IcmpPing] ID:", i, " IP:", ip, " | ", err)
-					stat.LossPk = stat.LossPk + 1
 				}
 				stat.SendPk = stat.SendPk + 1
-				stat.LossPk = int((float64(stat.LossPk) / float64(stat.SendPk)) * 100)
+				stat.UpdateLoss()
 				if stat.RevcPk > 0 {
 					stat.AvgDelay = stat.AvgDelay / float64(stat.RevcPk)
 				} else {

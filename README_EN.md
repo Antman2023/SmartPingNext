@@ -64,6 +64,8 @@ tar -xzf smartping-*.tar.gz
 
 On first run, the app creates `conf/`, `db/`, and `logs/` automatically and extracts default config files.
 
+File logs are routed to `info.log`, `debug.log`, and `error.log`. Each file rotates before a write would exceed 10 MiB, retaining up to 3 backups (`.1` is newest, `.3` oldest); older backups are deleted. Rotation accounts for existing file sizes after a restart. A single oversized entry is kept intact and may exceed the limit. The default log level is `info`; set `SMARTPING_LOG_LEVEL` to change it. Standard output remains enabled, with retention managed by the runtime, such as Docker.
+
 ### Build from Source
 
 Requires Go 1.24+ and Node.js 20.19+ or 22.12+.

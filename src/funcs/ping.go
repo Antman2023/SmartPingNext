@@ -199,7 +199,6 @@ func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, ping
 	logrus.Info("Start Ping " + t.Addr + "..")
 	stat := g.PingSt{}
 	stat.MinDelay = -1
-	lossPK := 0
 	ipaddr, err := nettools.ResolveIPv4Context(ctx, t.Addr)
 	roundStart := roundTime.Add(targetOffset)
 	if err == nil {
@@ -228,10 +227,9 @@ func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, ping
 				logrus.Debug("[func:StartPing IcmpPing] ID:", i, " IP:", t.Addr)
 			} else {
 				logrus.Debug("[func:StartPing IcmpPing] ID:", i, " IP:", t.Addr, "| err:", pingErr)
-				lossPK = lossPK + 1
 			}
 			stat.SendPk = stat.SendPk + 1
-			stat.LossPk = int((float64(lossPK) / float64(stat.SendPk)) * 100)
+			stat.UpdateLoss()
 		}
 		if stat.RevcPk > 0 {
 			stat.AvgDelay = stat.AvgDelay / float64(stat.RevcPk)

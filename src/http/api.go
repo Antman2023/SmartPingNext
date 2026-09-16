@@ -347,7 +347,6 @@ func configApiRoutes(mux *http.ServeMux) {
 		}
 		preout.Ping = g.PingSt{}
 		preout.Ping.MinDelay = -1
-		lossPK := 0
 		ipaddr, err := resolveToolIPAddrContext(r.Context(), target)
 		if err != nil {
 			if r.Context().Err() != nil {
@@ -409,11 +408,9 @@ func configApiRoutes(mux *http.ServeMux) {
 					preout.Ping.MinDelay = delay
 				}
 				preout.Ping.RevcPk = preout.Ping.RevcPk + 1
-			} else {
-				lossPK = lossPK + 1
 			}
 			preout.Ping.SendPk = preout.Ping.SendPk + 1
-			preout.Ping.LossPk = int((float64(lossPK) / float64(preout.Ping.SendPk)) * 100)
+			preout.Ping.UpdateLoss()
 		}
 		if preout.Ping.RevcPk > 0 {
 			preout.Ping.AvgDelay = preout.Ping.AvgDelay / float64(preout.Ping.RevcPk)

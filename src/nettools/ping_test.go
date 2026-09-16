@@ -508,3 +508,49 @@ func TestICMPPoolCloseReleasesAndResetsConnection(t *testing.T) {
 		t.Fatalf("second close should be idempotent, got: %v", err)
 	}
 }
+
+func TestICMPPoolUnexpectedCloseReleasesWaitersAndReconnects(t *testing.T) {
+	localPool := &icmpPool{listenPacket: func(_, _ string) (net.PacketConn, error) {
+		return net.ListenPacket("udp4", "127.0.0.1:0")
+	}}
+	t.Cleanup(func() { localPool.close() })
+	if err := localPool.init(); err != nil {
+		t.Fatal(err)
+	}
+	localPool.initMu.Lock()
+	old := localPool.conn
+	responses, _ := localPool.register(42, nil)
+	localPool.initMu.Unlock()
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case _, ok := <-responses:
+		if ok {
+			t.Fatal("closed connection returned a response")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("unexpected connection closure did not release pending requests")
+	}
+	if err := localPool.init(); err != nil {
+		t.Fatal(err)
+	}
+	localPool.initMu.Lock()
+	current := localPool.conn
+	replacement, _ := localPool.register(42, nil)
+	localPool.initMu.Unlock()
+	if current == nil || current == old {
+		t.Fatal("pool did not replace the closed connection")
+	}
+	// A delayed old reader must not tear down the replacement connection.
+	localPool.readLoop(old)
+	localPool.dispatchFrom(current, 42, icmpResponse{down: true})
+	select {
+	case response, ok := <-replacement:
+		if !ok || !response.down {
+			t.Fatal("old reader disrupted the replacement request")
+		}
+	default:
+		t.Fatal("replacement connection did not dispatch the response")
+	}
+}

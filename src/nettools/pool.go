@@ -161,6 +161,7 @@ func (p *icmpPool) readLoop(conn net.PacketConn) {
 		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
+				p.closeFrom(conn)
 				return
 			}
 			// 瞬态错误（Windows WSAECONNRESET 等），继续读取
@@ -218,6 +219,21 @@ func CloseICMPPool() error {
 func (p *icmpPool) close() error {
 	p.initMu.Lock()
 	defer p.initMu.Unlock()
+	return p.closeLocked()
+}
+
+// A reader may exit after a replacement socket has already been opened.
+// Only reset the lifecycle that belongs to this reader.
+func (p *icmpPool) closeFrom(conn net.PacketConn) {
+	p.initMu.Lock()
+	defer p.initMu.Unlock()
+	if p.conn == conn {
+		_ = p.closeLocked()
+	}
+}
+
+// closeLocked requires initMu, preserving the initialization/send lock order.
+func (p *icmpPool) closeLocked() error {
 	p.sendMu.Lock()
 	defer p.sendMu.Unlock()
 	var err error

@@ -15,7 +15,7 @@ import (
 
 type managedLogHook struct {
 	mu      sync.RWMutex
-	writers map[logrus.Level]*os.File
+	writers map[logrus.Level]*rotatingLogFile
 }
 
 var (
@@ -42,7 +42,7 @@ func (hook *managedLogHook) Fire(entry *logrus.Entry) error {
 	return err
 }
 
-func (hook *managedLogHook) replace(writers map[logrus.Level]*os.File) error {
+func (hook *managedLogHook) replace(writers map[logrus.Level]*rotatingLogFile) error {
 	hook.mu.Lock()
 	defer hook.mu.Unlock()
 	oldWriters := hook.writers
@@ -54,8 +54,8 @@ func (hook *managedLogHook) close() error {
 	return hook.replace(nil)
 }
 
-func closeLogWriters(writers map[logrus.Level]*os.File) error {
-	uniqueFiles := make(map[*os.File]struct{})
+func closeLogWriters(writers map[logrus.Level]*rotatingLogFile) error {
+	uniqueFiles := make(map[*rotatingLogFile]struct{})
 	for _, file := range writers {
 		if file != nil {
 			uniqueFiles[file] = struct{}{}
@@ -87,7 +87,7 @@ func InitLogger(root string) error {
 		return errors.Join(err, infoFile.Close(), debugFile.Close())
 	}
 
-	writers := map[logrus.Level]*os.File{
+	writers := map[logrus.Level]*rotatingLogFile{
 		logrus.InfoLevel:  infoFile,
 		logrus.DebugLevel: debugFile,
 		logrus.TraceLevel: debugFile,
@@ -130,10 +130,6 @@ func CloseLogger() error {
 	return applicationLogHook.close()
 }
 
-func openLogFile(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("open log file %s: %w", path, err)
-	}
-	return f, nil
+func openLogFile(path string) (*rotatingLogFile, error) {
+	return openRotatingLogFile(path, logFileMaxBytes, logFileBackups)
 }

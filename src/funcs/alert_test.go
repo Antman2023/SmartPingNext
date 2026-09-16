@@ -22,6 +22,31 @@ func TestStartAlertContextDoesNotStartWhenCanceled(t *testing.T) {
 	}
 }
 
+func TestMeasuredLossAtThresholdTriggersAlert(t *testing.T) {
+	withFuncTestDB(t, []string{`CREATE TABLE pinglog (
+		logtime TEXT, target TEXT, maxdelay TEXT, mindelay TEXT, avgdelay TEXT,
+		sendpk INTEGER, revcpk INTEGER, losspk TEXT, UNIQUE(logtime, target));`}, func(db *sql.DB) {
+		now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.Local)
+		stat := g.PingSt{SendPk: 100, RevcPk: 71, MinDelay: 10, AvgDelay: 10, MaxDelay: 10}
+		stat.UpdateLoss()
+		PingStorageContext(context.Background(), stat, "192.0.2.1", now.Format("2006-01-02 15:04"))
+		var loss int
+		if err := db.QueryRow(`SELECT losspk FROM pinglog`).Scan(&loss); err != nil {
+			t.Fatal(err)
+		}
+		if loss != 29 {
+			t.Errorf("stored loss = %d%%, want 29%%", loss)
+		}
+		healthy, err := checkAlertStatusAt(map[string]string{
+			"Addr": "192.0.2.1", "Thdchecksec": "60", "Thdoccnum": "1",
+			"Thdavgdelay": "200", "Thdloss": "29",
+		}, now)
+		if err != nil || healthy {
+			t.Fatalf("loss at threshold should alert: healthy=%v, error=%v", healthy, err)
+		}
+	})
+}
+
 func TestStartAlertSkipsOverlappingCheck(t *testing.T) {
 	atomic.StoreInt32(&alertRunning, 1)
 	defer atomic.StoreInt32(&alertRunning, 0)
