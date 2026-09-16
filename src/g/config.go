@@ -360,6 +360,46 @@ type alertRuleIdentity struct {
 	occurrences  string
 }
 
+// RecordAlertCheck returns whether this result starts a new alert episode.
+// Results from removed or changed rules cannot update the current state.
+func RecordAlertCheck(localAddr string, rule map[string]string, healthy bool) bool {
+	CfgLock.RLock()
+	defer CfgLock.RUnlock()
+	target := rule["Addr"]
+	if localAddr != Cfg.Addr || target == "" || target == localAddr {
+		return false
+	}
+	matched := false
+	for _, current := range Cfg.Network[localAddr].Topology {
+		if current["Addr"] == target && ruleIdentity(current) == ruleIdentity(rule) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return false
+	}
+	// Keep the same lock order as SetConfig, holding the config read lock
+	// until the state transition is published.
+	AlertStatusLock.Lock()
+	defer AlertStatusLock.Unlock()
+	previous, exists := AlertStatus[target]
+	if AlertStatus == nil {
+		AlertStatus = make(map[string]bool)
+	}
+	AlertStatus[target] = healthy
+	return !healthy && (!exists || previous)
+}
+
+func ruleIdentity(rule map[string]string) alertRuleIdentity {
+	return alertRuleIdentity{
+		checkSeconds: rule["Thdchecksec"],
+		loss:         rule["Thdloss"],
+		averageDelay: rule["Thdavgdelay"],
+		occurrences:  rule["Thdoccnum"],
+	}
+}
+
 func reconcileAlertStatuses(previous, next Config, current map[string]bool) map[string]bool {
 	reconciled := make(map[string]bool)
 	if previous.Addr == "" || previous.Addr != next.Addr {
@@ -389,12 +429,7 @@ func alertRuleIdentities(config Config) map[string]alertRuleIdentity {
 		if target == "" || target == config.Addr {
 			continue
 		}
-		identities[target] = alertRuleIdentity{
-			checkSeconds: rule["Thdchecksec"],
-			loss:         rule["Thdloss"],
-			averageDelay: rule["Thdavgdelay"],
-			occurrences:  rule["Thdoccnum"],
-		}
+		identities[target] = ruleIdentity(rule)
 	}
 	return identities
 }
@@ -519,11 +554,11 @@ func normalizeIP(value string) string {
 }
 
 func GetBaseInt(key string, defaultValue int) int {
-	config := ConfigSnapshot()
-	if config.Base == nil {
-		return defaultValue
-	}
-	v, ok := config.Base[key]
+	// Copy only the scalar under the lock; a full snapshot would clone every
+	// node and topology rule on each proxy request just to read its timeout.
+	CfgLock.RLock()
+	v, ok := Cfg.Base[key]
+	CfgLock.RUnlock()
 	if !ok || v <= 0 {
 		return defaultValue
 	}

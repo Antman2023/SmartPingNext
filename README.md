@@ -112,6 +112,8 @@ go vet ./src/...
 
 配置导入仅接受不超过 16 MiB 的文件，导入后仍需保存才会应用到节点。导入、导出密码验证失败或超时不会丢弃当前编辑内容。
 
+在线检测、定时 Ping、地图探测及告警 MTR 的域名解析最多等待 5 秒；调用方取消或更短的截止时间会提前结束解析。直接填写 IPv4 地址会跳过 DNS。
+
 Windows 上可使用 Zig 运行 Go 数据竞争检测：安装 Go 和 Zig 并加入 PATH 后，在项目根目录执行 `pwsh -File scripts/test-race-windows.ps1`。脚本使用 `zig cc`，为 race 测试补充 Windows 同步库和固定加载方式，并在退出时恢复环境变量；正式构建仍不依赖 CGO。此流程已在 Go 1.27.1、Zig 0.16.0、Windows amd64 上验证。
 
 ### Docker

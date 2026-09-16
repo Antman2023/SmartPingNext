@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -318,6 +319,33 @@ func TestGetBaseInt(t *testing.T) {
 		if got := GetBaseInt("Bad", 20); got != 20 {
 			t.Fatalf("GetBaseInt non-positive value = %d, want 20", got)
 		}
+	})
+}
+
+func TestGetBaseIntDuringConfigUpdates(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		SetConfig(Config{})
+		if got := GetBaseInt("Timeout", 20); got != 20 {
+			t.Fatalf("nil base timeout = %d, want 20", got)
+		}
+		var workers sync.WaitGroup
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			for i := 0; i < 1000; i++ {
+				SetConfig(Config{Base: map[string]int{"Timeout": i%3 - 1}})
+			}
+		}()
+		go func() {
+			defer workers.Done()
+			for i := 0; i < 1000; i++ {
+				if got := GetBaseInt("Timeout", 20); got != 20 && got != 1 {
+					t.Errorf("concurrent timeout = %d, want 1 or fallback 20", got)
+					return
+				}
+			}
+		}()
+		workers.Wait()
 	})
 }
 

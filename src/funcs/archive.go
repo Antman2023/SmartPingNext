@@ -29,10 +29,7 @@ func ClearArchiveContext(ctx context.Context) {
 	defer atomic.StoreInt32(&archiveRunning, 0)
 
 	logrus.Info("[func:ClearArchive] ", "starting run ClearArchive ")
-	archiveDays := g.ConfigSnapshot().Base["Archive"]
-	if archiveDays <= 0 {
-		archiveDays = 30
-	}
+	archiveDays := g.GetBaseInt("Archive", 30)
 	cutoffDate := time.Now().AddDate(0, 0, -archiveDays).Format("2006-01-02")
 	err := clearArchiveBeforeContext(ctx, cutoffDate)
 	if err != nil {

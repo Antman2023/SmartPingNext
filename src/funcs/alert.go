@@ -57,16 +57,7 @@ func StartAlertContext(ctx context.Context) {
 				logrus.Error("[func:StartAlert] Check status error ", err)
 				continue
 			}
-			g.AlertStatusLock.Lock()
-			if sFlag {
-				g.AlertStatus[v["Addr"]] = true
-			}
-			_, haskey := g.AlertStatus[v["Addr"]]
-			shouldAlert := (!haskey && !sFlag) || (!sFlag && g.AlertStatus[v["Addr"]])
-			if shouldAlert {
-				g.AlertStatus[v["Addr"]] = false
-			}
-			g.AlertStatusLock.Unlock()
+			shouldAlert := g.RecordAlertCheck(config.Addr, v, sFlag)
 
 			if shouldAlert {
 				logrus.Debug("[func:StartAlert] ", v["Addr"]+" Alert!")

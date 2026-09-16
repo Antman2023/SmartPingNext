@@ -5,10 +5,18 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"time"
 )
 
+const dnsLookupTimeout = 5 * time.Second
+
 // ResolveIPv4Context resolves an IPv4 literal or host name and honors cancellation.
+// Hostname lookups have a bounded wait even for background monitoring tasks.
 func ResolveIPv4Context(ctx context.Context, address string) (*net.IPAddr, error) {
+	return resolveIPv4Context(ctx, address, net.DefaultResolver.LookupIP)
+}
+
+func resolveIPv4Context(ctx context.Context, address string, lookup func(context.Context, string, string) ([]net.IP, error)) (*net.IPAddr, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -24,7 +32,12 @@ func ResolveIPv4Context(ctx context.Context, address string) (*net.IPAddr, error
 		return &net.IPAddr{IP: ipv4Address}, nil
 	}
 
-	addresses, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	lookupCtx, cancel := context.WithTimeout(ctx, dnsLookupTimeout)
+	defer cancel()
+	addresses, err := lookup(lookupCtx, "ip4", host)
+	if ctxErr := lookupCtx.Err(); ctxErr != nil {
+		return nil, ctxErr
+	}
 	if err != nil {
 		return nil, err
 	}
