@@ -7,7 +7,10 @@ export function syncEmbeddedFiles(source, staticDirectory) {
   if (!fs.statSync(join(source, 'index.html')).isFile()) {
     throw new Error('Build the frontend before synchronizing embedded files.')
   }
-  if (fs.realpathSync(staticRoot) !== staticRoot) {
+  // An ancestor may legitimately be a symlink (for example, /var points to
+  // /private/var on macOS). Only reject a redirect at the directory whose
+  // contents this function replaces.
+  if (fs.lstatSync(staticRoot).isSymbolicLink()) {
     throw new Error('The static directory must not redirect outside the project.')
   }
 

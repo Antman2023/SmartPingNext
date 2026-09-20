@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
-import { tmpdir } from 'node:os'
+import { platform, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { syncEmbeddedFiles } from './sync-embed-files.mjs'
@@ -43,6 +43,40 @@ test('copy failure preserves the old build and cleans partial staging files', (t
   assert.throws(() => syncEmbeddedFiles(source, staticRoot), /copy failed/)
   assert.equal(fs.readFileSync(join(destination, 'index.html'), 'utf8'), 'old index')
   assert.deepEqual(fs.readdirSync(staticRoot), ['html'])
+})
+
+test('sync allows a symbolic-link ancestor', (t) => {
+  const root = fs.mkdtempSync(join(tmpdir(), 'smartping-embed-link-test-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const realRoot = join(root, 'real')
+  const linkedRoot = join(root, 'linked')
+  const source = join(realRoot, 'dist')
+  const staticRoot = join(linkedRoot, 'static')
+  fs.mkdirSync(source, { recursive: true })
+  fs.mkdirSync(join(realRoot, 'static'))
+  fs.writeFileSync(join(source, 'index.html'), 'new index')
+  fs.symlinkSync(realRoot, linkedRoot, platform() === 'win32' ? 'junction' : 'dir')
+
+  syncEmbeddedFiles(source, staticRoot)
+
+  assert.equal(fs.readFileSync(join(staticRoot, 'html', 'index.html'), 'utf8'), 'new index')
+})
+
+test('sync rejects a symbolic-link static directory', (t) => {
+  const root = fs.mkdtempSync(join(tmpdir(), 'smartping-embed-redirect-test-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const source = join(root, 'dist')
+  const redirected = join(root, 'redirected')
+  const staticRoot = join(root, 'static')
+  fs.mkdirSync(source)
+  fs.mkdirSync(redirected)
+  fs.writeFileSync(join(source, 'index.html'), 'new index')
+  fs.symlinkSync(redirected, staticRoot, platform() === 'win32' ? 'junction' : 'dir')
+
+  assert.throws(
+    () => syncEmbeddedFiles(source, staticRoot),
+    /must not redirect outside the project/
+  )
 })
 
 test('install failure restores the previous build', (t) => {
