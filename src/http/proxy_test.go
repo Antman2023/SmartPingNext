@@ -411,6 +411,32 @@ func TestHandleProxyStopsAfterRemoteError(t *testing.T) {
 	})
 }
 
+func TestHandleProxyBoundsNestedJSONAndPreservesValues(t *testing.T) {
+	// Indenting this small payload adds millions of whitespace bytes. Keep
+	// exact number and string encodings, including integers beyond float64.
+	const depth = 2048
+	value := `{"number":9007199254740993,"text":" spaced  text \u4e2d ","values":[true,null,1.2300e+10]}`
+	body := strings.Repeat("[", depth) + " \n " + value + " \t " + strings.Repeat("]", depth)
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer remote.Close()
+
+	withProxyConfig(proxyTestConfig(t, remote.URL), func() {
+		recorder := httptest.NewRecorder()
+		handleProxy(recorder, proxyRequest(remote.URL+"/api/config.json"))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("handleProxy status = %d, want %d", recorder.Code, http.StatusOK)
+		}
+		if recorder.Body.Len() > len(body)+1 {
+			t.Fatalf("proxy expanded %d-byte remote JSON to %d bytes", len(body), recorder.Body.Len())
+		}
+		if recorder.Body.String() != body {
+			t.Fatal("proxy changed the bounded remote JSON body")
+		}
+	})
+}
+
 func TestHandleProxyRejectsInvalidJSON(t *testing.T) {
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("not-json"))

@@ -415,6 +415,52 @@ func TestICMPPoolConcurrentSendAndCloseReleasesWaiters(t *testing.T) {
 	}
 }
 
+func TestICMPPoolReaderRetiresUnexpectedlyClosedConnection(t *testing.T) {
+	localPool := &icmpPool{listenPacket: func(_, _ string) (net.PacketConn, error) {
+		return net.ListenPacket("udp4", "127.0.0.1:0")
+	}}
+	defer localPool.close()
+	if err := localPool.init(); err != nil {
+		t.Fatal(err)
+	}
+	localPool.initMu.Lock()
+	old := localPool.conn
+	responses, _ := localPool.register(42, nil)
+	localPool.initMu.Unlock()
+	// Simulate a socket closing outside the pool's normal close path.
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case _, open := <-responses:
+		if open {
+			t.Fatal("closed socket returned a probe response")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reader did not release the pending probe")
+	}
+	if err := localPool.init(); err != nil {
+		t.Fatalf("reinitialize after unexpected close: %v", err)
+	}
+	localPool.initMu.Lock()
+	replacement := localPool.conn
+	currentResponses, _ := localPool.register(42, nil)
+	localPool.initMu.Unlock()
+	if replacement == old {
+		t.Fatal("initialization reused the closed socket")
+	}
+	localPool.retireClosedConnection(old)
+	localPool.dispatchFrom(replacement, 42, icmpResponse{down: true})
+	select {
+	case response, open := <-currentResponses:
+		if !open || !response.down {
+			t.Fatal("old reader retired the replacement connection")
+		}
+	default:
+		t.Fatal("replacement connection did not deliver a response")
+	}
+}
+
 func TestICMPPoolDispatchFiltersUnexpectedFinalSource(t *testing.T) {
 	destination := &net.IPAddr{IP: net.ParseIP("192.0.2.1")}
 	router := &net.IPAddr{IP: net.ParseIP("198.51.100.1")}

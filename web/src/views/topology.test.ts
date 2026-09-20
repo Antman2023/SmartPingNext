@@ -1,3 +1,4 @@
+import { preloadAsync } from '../utils/preloadAsync.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -71,7 +72,8 @@ function createView(t: test.TestContext) {
     '@/api/config': { fetchConfig: async () => config },
     '@/api/topology': { getTopology },
     '@/utils/concurrency': { mapWithConcurrency },
-    '@/utils/format': { displayName: (name: string) => name, formatTime: () => '12:00' }
+    '@/utils/preloadAsync': { preloadAsync },
+      '@/utils/format': { displayName: (name: string) => name, formatTime: () => '12:00' }
   }
   const exports: { default?: { setup: (props: object, context: object) => TopologySetup } } = {}
   runInNewContext(compiled, {

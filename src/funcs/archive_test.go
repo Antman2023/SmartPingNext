@@ -3,10 +3,52 @@ package funcs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"smartping/src/g"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestClearArchiveContinuesAfterIndependentTableFailures(t *testing.T) {
+	withFuncTestDB(t, []string{`CREATE TABLE pinglog (logtime TEXT);`}, func(db *sql.DB) {
+		if _, err := db.Exec(`INSERT INTO pinglog(logtime) VALUES (?), (?), (?)`,
+			"2020-12-31 23:59", "2021-01-01 00:00", "2022-01-01 00:00"); err != nil {
+			t.Fatal(err)
+		}
+		err := clearArchiveBefore("2021-01-01")
+		if err == nil || !strings.Contains(err.Error(), "alertlog") || !strings.Contains(err.Error(), "mappinglog") {
+			t.Fatalf("expected both failed table names, got %v", err)
+		}
+		var count int
+		if err := db.QueryRow(`SELECT count(*) FROM pinglog`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 2 {
+			t.Fatalf("remaining rows = %d, want cutoff and newer rows retained", count)
+		}
+	})
+}
+
+func TestClearArchiveBeforeCancellationPreservesRows(t *testing.T) {
+	withFuncTestDB(t, []string{`CREATE TABLE pinglog (logtime TEXT);`}, func(db *sql.DB) {
+		if _, err := db.Exec(`INSERT INTO pinglog(logtime) VALUES ('2020-01-01')`); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := clearArchiveBeforeContext(ctx, "2021-01-01"); !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected cancellation, got %v", err)
+		}
+		var count int
+		if err := db.QueryRow(`SELECT count(*) FROM pinglog`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("canceled cleanup left %d rows, want 1", count)
+		}
+	})
+}
 
 func TestClearArchiveContextDoesNotStartWhenCanceled(t *testing.T) {
 	atomic.StoreInt32(&archiveRunning, 0)

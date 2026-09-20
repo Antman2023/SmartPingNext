@@ -62,7 +62,7 @@
               <el-tooltip :content="$t('config.viewRawConfig')">
                 <el-link
                   type="primary"
-                  href="/api/config.json"
+                  :href="configUrl"
                   target="_blank"
                   :aria-label="$t('config.viewRawConfig')"
                   :title="$t('config.viewRawConfig')"
@@ -589,7 +589,7 @@ import {
 } from 'element-plus'
 import { useConfigStore } from '@/stores/config'
 import { isRequestCanceled } from '@/api'
-import { verifyPassword, type PasswordVerificationResult } from '@/api/config'
+import { getConfigUrl, verifyConfigPassword, type PasswordVerificationResult } from '@/api/config'
 import {
   CONFIG_LIMITS,
   isValidIPv4,
@@ -601,6 +601,7 @@ import type { Config, NetworkMember, TopologyConfig } from '@/types'
 
 const { t } = useI18n()
 const configStore = useConfigStore()
+const configUrl = getConfigUrl()
 const password = ref('')
 const importExportPassword = ref('')
 const loadingConfig = ref(false)
@@ -862,10 +863,10 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
       typeof rawMember.Name !== 'string' ||
       typeof rawMember.Addr !== 'string' ||
       (rawMember.Smartping !== undefined && typeof rawMember.Smartping !== 'boolean') ||
-      (rawMember.Ping !== undefined &&
+      (rawMember.Ping != null &&
         (!Array.isArray(rawMember.Ping) ||
           rawMember.Ping.some((target) => typeof target !== 'string'))) ||
-      (rawMember.Topology !== undefined &&
+      (rawMember.Topology != null &&
         (!Array.isArray(rawMember.Topology) ||
           rawMember.Topology.some(
             (rule) =>
@@ -876,6 +877,7 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
     }
     network[addr] = {
       ...rawMember,
+      Smartping: rawMember.Smartping ?? false,
       Ping: Array.isArray(rawMember.Ping) ? rawMember.Ping : [],
       Topology: Array.isArray(rawMember.Topology) ? rawMember.Topology : []
     }
@@ -884,13 +886,13 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
   const chinaMap: Record<string, unknown> = Object.create(null)
   if (isRecord(value.Chinamap)) {
     for (const [province, rawProviders] of Object.entries(value.Chinamap)) {
-      if (!isRecord(rawProviders)) {
+      if (rawProviders != null && !isRecord(rawProviders)) {
         return null
       }
       for (const provider of ['ctcc', 'cucc', 'cmcc']) {
-        const addresses = rawProviders[provider]
+        const addresses = rawProviders?.[provider]
         if (
-          addresses !== undefined &&
+          addresses != null &&
           (!Array.isArray(addresses) || addresses.some((address) => typeof address !== 'string'))
         ) {
           return null
@@ -898,9 +900,9 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
       }
       chinaMap[province] = {
         ...rawProviders,
-        ctcc: Array.isArray(rawProviders.ctcc) ? rawProviders.ctcc : [],
-        cucc: Array.isArray(rawProviders.cucc) ? rawProviders.cucc : [],
-        cmcc: Array.isArray(rawProviders.cmcc) ? rawProviders.cmcc : []
+        ctcc: Array.isArray(rawProviders?.ctcc) ? rawProviders.ctcc : [],
+        cucc: Array.isArray(rawProviders?.cucc) ? rawProviders.cucc : [],
+        cmcc: Array.isArray(rawProviders?.cmcc) ? rawProviders.cmcc : []
       }
     }
   }
@@ -975,8 +977,9 @@ const handleExport = async () => {
   const controller = new AbortController()
   passwordVerificationAbortController = controller
   exporting.value = true
+  let passwordVerified = false
   try {
-    const verification = await verifyPassword(importExportPassword.value, controller.signal)
+    const verification = await verifyConfigPassword(importExportPassword.value, controller.signal)
     if (isUnmounted) {
       return
     }
@@ -989,25 +992,29 @@ const handleExport = async () => {
       return
     }
 
+    passwordVerified = true
     const exportConfig = JSON.parse(JSON.stringify(formConfig)) as Record<string, unknown>
     delete exportConfig.Password
     delete exportConfig.Ver
 
     const blob = new Blob([JSON.stringify(exportConfig, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `smartping-config-${new Date().toISOString().slice(0, 10)}.json`
-    link.click()
-    URL.revokeObjectURL(url)
+    try {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `smartping-config-${new Date().toISOString().slice(0, 10)}.json`
+      link.click()
+    } finally {
+      URL.revokeObjectURL(url)
+    }
 
     ElMessage.success(t('config.configExported'))
   } catch (error) {
     if (!isUnmounted && !isRequestCanceled(error)) {
-      ElMessage.error(t('config.passwordVerifyFailed'))
+      ElMessage.error(t(passwordVerified ? 'config.configExportFailed' : 'config.passwordVerifyFailed'))
     }
     if (!isRequestCanceled(error)) {
-      console.error('密码验证失败', error)
+      console.error(passwordVerified ? '配置导出失败' : '密码验证失败', error)
     }
   } finally {
     if (passwordVerificationAbortController === controller) {
@@ -1029,8 +1036,8 @@ const handleImportFile = async (file: UploadFile) => {
     return
   }
   const rawFile = file.raw
-  if (rawFile.size > CONFIG_LIMITS.importBytes) {
-    ElMessage.error(t('config.configTooLarge'))
+  if (rawFile.size > CONFIG_LIMITS.importFileBytes) {
+    ElMessage.error(t('config.configFileTooLarge'))
     return
   }
   if (!importExportPassword.value) {
@@ -1044,7 +1051,7 @@ const handleImportFile = async (file: UploadFile) => {
   try {
     let verification: PasswordVerificationResult
     try {
-      verification = await verifyPassword(importExportPassword.value, controller.signal)
+      verification = await verifyConfigPassword(importExportPassword.value, controller.signal)
     } catch (error) {
       if (!isUnmounted && !isRequestCanceled(error)) {
         ElMessage.error(t('config.passwordVerifyFailed'))
@@ -1068,10 +1075,11 @@ const handleImportFile = async (file: UploadFile) => {
     }
 
     try {
-      const importedConfig = normalizeImportedConfig(JSON.parse(await rawFile.text()))
+      const content = await rawFile.text()
       if (isUnmounted) {
         return
       }
+      const importedConfig = normalizeImportedConfig(JSON.parse(content))
 
       if (!importedConfig) {
         ElMessage.error(t('config.configInvalid'))
@@ -1100,6 +1108,9 @@ const handleImportFile = async (file: UploadFile) => {
 
       ElMessage.success(t('config.configImported'))
     } catch (error) {
+      if (isUnmounted || isRequestCanceled(error)) {
+        return
+      }
       ElMessage.error(t('config.configParseFailed'))
       console.error('配置文件解析失败', error)
     }

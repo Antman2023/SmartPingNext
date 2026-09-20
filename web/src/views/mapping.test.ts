@@ -1,6 +1,10 @@
+import { preserveLegendSelection } from '../utils/chartInteraction.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { setImmediate } from 'node:timers/promises'
+import { SVGRenderer } from 'echarts/renderers'
+import { echarts } from '../utils/echartsMap.js'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import * as vue from 'vue'
@@ -16,6 +20,8 @@ const compiled = ts.transpileModule(compileScript(descriptor, { id: 'mapping-tes
 }).outputText
 
 interface MappingSetup {
+  agents: vue.Ref<Array<{ name: string; addr: string; loading: boolean }>>
+  switchAgent: (agent: { name: string; addr: string; loading: boolean }) => Promise<void>
   selectedDate: vue.Ref<string>
   currentBaseUrl: vue.Ref<string>
   currentAgent: vue.Ref<string>
@@ -24,6 +30,8 @@ interface MappingSetup {
   mappingError: vue.Ref<boolean>
   mappingLoading: vue.Ref<boolean>
   chart: { clear: () => void }
+  isMapReady: vue.Ref<boolean>
+  updateChart: (data: ChinaMapData) => void
   loadMappingData: () => Promise<void>
   loadConfig: () => Promise<void>
 }
@@ -35,12 +43,13 @@ const sample = (name: string): ChinaMapData => ({
 })
 
 function createView(t: test.TestContext) {
+  const locale = vue.ref('zh-CN')
   const getMapping = t.mock.fn(async (): Promise<ChinaMapData> => sample('local'))
   const getProxyMapping = t.mock.fn(async (): Promise<ChinaMapData> => sample('remote'))
   const clear = t.mock.fn()
   const dependencies: Record<string, unknown> = {
     vue: { ...vue, onMounted: () => {}, onUnmounted: () => {} },
-    'vue-i18n': { useI18n: () => ({ t: (key: string) => key, locale: vue.ref('zh-CN') }) },
+    'vue-i18n': { useI18n: () => ({ t: (key: string) => `${locale.value}:${key}`, locale }) },
     'element-plus': { ElMessage: { error: () => {} } },
     '@element-plus/icons-vue': {},
     '@/plugins/elementPlusMappingStyles': {},
@@ -51,6 +60,7 @@ function createView(t: test.TestContext) {
     },
     '@/api/config': { fetchConfig: async () => ({ Addr: '127.0.0.1', Port: 8899, Network: {} }) },
     '@/api/mapping': { getMapping, getProxyMapping },
+    '@/utils/chartInteraction': { preserveLegendSelection },
     '@/utils/chartTooltip': { formatMappingTooltip },
     '@/stores/sidebar': { useSidebarStore: () => ({ isCollapsed: false }) },
     '@/stores/theme': { useThemeStore: () => ({ theme: 'light' }) },
@@ -60,6 +70,8 @@ function createView(t: test.TestContext) {
   runInNewContext(compiled, {
     exports,
     AbortController,
+    document: { documentElement: {} },
+    window: { getComputedStyle: () => ({ getPropertyValue: () => '' }) },
     console: { error: () => {} },
     require: (name: string) => {
       assert.ok(name in dependencies, `Unexpected dependency: ${name}`)
@@ -70,8 +82,42 @@ function createView(t: test.TestContext) {
   t.after(() => scope.stop())
   const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
   view.chart = { clear }
-  return { view, getMapping, getProxyMapping, clear }
+  return { view, getMapping, getProxyMapping, clear, locale }
 }
+
+test('map legend selection survives repeated language changes without duplicate series', async (t) => {
+  echarts.use(SVGRenderer)
+  echarts.registerMap('china', {
+    type: 'FeatureCollection',
+    features: [{ type: 'Feature', properties: { name: '广东', cp: [1, 1] },
+      geometry: { type: 'Polygon', coordinates: [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]] } }]
+  })
+  const chart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width: 640, height: 480 })
+  t.after(() => chart.dispose())
+  const { view, locale } = createView(t)
+  view.chart = chart
+  view.isMapReady.value = true
+  view.latestData.value = sample('map')
+  view.updateChart(view.latestData.value)
+  chart.dispatchAction({ type: 'legendUnSelect', name: 'zh-CN:mapping.telecom' })
+  for (const language of ['en-US', 'zh-CN', 'en-US']) {
+    locale.value = language
+    await setImmediate()
+    const option = chart.getOption() as {
+      series: Array<{ id: string; name: string }>
+      legend: Array<{ selected: Record<string, boolean> }>
+    }
+    assert.equal(option.series.length, 3)
+    assert.equal(option.series[0]!.id, 'ctcc')
+    assert.equal(option.series[0]!.name, `${language}:mapping.telecom`)
+    assert.equal(option.legend[0]!.selected[`${language}:mapping.telecom`], false)
+    assert.equal(option.legend[0]!.selected[`${language}:mapping.unicom`], true)
+  }
+  chart.clear()
+  view.updateChart(sample('new query'))
+  const option = chart.getOption() as { legend: Array<{ selected: Record<string, boolean> }> }
+  assert.notEqual(option.legend[0]!.selected['en-US:mapping.telecom'], false)
+})
 
 test('changing map source clears old data even when the new source fails', async (t) => {
   const { view, getProxyMapping, clear } = createView(t)
@@ -142,4 +188,30 @@ test('reloading configuration returns map requests to the local node', async (t)
   assert.equal(getProxyMapping.mock.callCount(), 1)
   assert.equal(getMapping.mock.callCount(), 1)
   assert.equal(view.latestData.value?.text, 'local')
+})
+
+test('switching back to the local map uses the direct API and releases source loading states', async (t) => {
+  const { view, getMapping, getProxyMapping } = createView(t)
+  const currentData = () => view.latestData.value
+  await view.loadConfig()
+  view.agents.value = [
+    { name: 'local', addr: '127.0.0.1', loading: false },
+    { name: 'remote', addr: '192.0.2.1', loading: false }
+  ]
+  await view.switchAgent(view.agents.value[1]!)
+  assert.equal(view.currentBaseUrl.value, 'http://192.0.2.1:8899')
+  assert.equal(view.latestData.value?.text, 'remote')
+  assert.equal(getProxyMapping.mock.callCount(), 1)
+  getProxyMapping.mock.mockImplementation(async () => { throw new Error('proxy unavailable') })
+  const pending = view.switchAgent(view.agents.value[0]!)
+  assert.equal(view.agents.value[0]!.loading, true)
+  assert.equal(currentData(), null)
+  await pending
+  assert.equal(view.currentBaseUrl.value, '')
+  assert.equal(view.currentAgent.value, '127.0.0.1')
+  assert.equal(view.latestData.value?.text, 'local')
+  assert.equal(view.mappingError.value, false)
+  assert.equal(getMapping.mock.callCount(), 2)
+  assert.equal(getProxyMapping.mock.callCount(), 1)
+  assert.ok(view.agents.value.every((agent) => !agent.loading))
 })

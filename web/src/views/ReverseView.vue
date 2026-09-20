@@ -156,6 +156,7 @@
             :placeholder="$t('dashboard.startTime')"
             format="YYYY-MM-DD HH:mm"
             value-format="YYYY-MM-DD HH:mm"
+            @change="useCustomTimeRange"
           />
           <el-date-picker
             v-model="endTime"
@@ -163,6 +164,7 @@
             :placeholder="$t('dashboard.endTime')"
             format="YYYY-MM-DD HH:mm"
             value-format="YYYY-MM-DD HH:mm"
+            @change="useCustomTimeRange"
           />
           <el-button type="primary" :loading="detailLoading" @click="loadDetailData">
             {{ $t('common.query') }}
@@ -213,13 +215,14 @@ import MonitorRefreshControl from '@/components/common/MonitorRefreshControl.vue
 import { isRequestCanceled } from '@/api'
 import { fetchConfig, fetchProxyConfig } from '@/api/config'
 import { getProxyPingData } from '@/api/ping'
+import { preloadAsync } from '@/utils/preloadAsync'
 import { displayName, formatDateTime, formatTime } from '@/utils/format'
 import { mapWithConcurrency } from '@/utils/concurrency'
 import { isValidTimeRange, normalizeTimeRangeHours } from '@/utils/timeRange'
+import { resolveRefreshInterval } from '@/utils/refreshInterval'
 import type { Config, PingLogData } from '@/types'
 
-const pingMiniChartModule = import('@/components/charts/PingMiniChart.vue')
-const PingMiniChart = defineAsyncComponent(() => pingMiniChartModule)
+const PingMiniChart = defineAsyncComponent(preloadAsync(() => import('@/components/charts/PingMiniChart.vue')))
 const PingChart = defineAsyncComponent(() => import('@/components/charts/PingChart.vue'))
 
 interface ReverseTarget {
@@ -238,12 +241,16 @@ const currentAgent = ref('')
 const reverseTargets = ref<ReverseTarget[]>([])
 
 const detailVisible = ref(false)
-const detailTitle = ref('')
+const detailSourceName = ref('')
+const detailTitle = computed(() =>
+  `${displayName(detailSourceName.value)} -> ${displayName(config.value?.Name || '')}`
+)
 const detailData = ref<PingLogData | null>(null)
 const detailLoading = ref(false)
 const detailError = ref(false)
 const startTime = ref('')
 const endTime = ref('')
+const relativeTimeRangeHours = ref<number | null>(null)
 const currentTarget = ref<ReverseTarget | null>(null)
 const pingChartRef = ref<{ saveAsImage: () => void } | null>(null)
 
@@ -262,7 +269,7 @@ let detailRequestId = 0
 let configAbortController: AbortController | null = null
 let chartAbortController: AbortController | null = null
 let detailAbortController: AbortController | null = null
-const refreshInterval = computed(() => Math.max(config.value?.Base.Refresh || 1, 1) * 60 * 1000)
+const refreshInterval = computed(() => resolveRefreshInterval(config.value?.Base.Refresh))
 const lastUpdatedLabel = computed(() =>
   lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
 )
@@ -413,7 +420,7 @@ const showDetail = async (target: ReverseTarget) => {
   detailData.value = null
   detailLoading.value = false
   detailError.value = false
-  detailTitle.value = `${displayName(target.fromName)} -> ${displayName(config.value?.Name || '')}`
+  detailSourceName.value = target.fromName
   currentTarget.value = target
   setTimeRange(DEFAULT_TIME_RANGE_HOURS, false)
   detailVisible.value = true
@@ -430,6 +437,9 @@ const loadDetailData = async () => {
   const requestId = ++detailRequestId
   const target = currentTarget.value
   const baseUrl = `http://${target.fromAddr}:${target.fromPort}`
+  if (relativeTimeRangeHours.value !== null) {
+    setTimeRange(relativeTimeRangeHours.value, false)
+  }
   const start = startTime.value
   const end = endTime.value
   if (!isValidTimeRange(start, end)) {
@@ -469,7 +479,12 @@ const loadDetailData = async () => {
   }
 }
 
+const useCustomTimeRange = () => {
+  relativeTimeRangeHours.value = null
+}
+
 const setTimeRange = (hours: number, shouldLoad = true) => {
+  relativeTimeRangeHours.value = hours
   const end = new Date()
   const start = new Date(end.getTime() - hours * 60 * 60 * 1000)
   startTime.value = formatDateTime(start)
@@ -520,7 +535,7 @@ const refreshMonitor = () => {
 const refreshDetailIfVisible = () => {
   if (!isValidTimeRange(startTime.value, endTime.value)) return
   if (document.visibilityState === 'visible' && detailVisible.value && !detailLoading.value) {
-    loadDetailData()
+    return loadDetailData()
   }
 }
 

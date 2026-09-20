@@ -1,11 +1,45 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { mapWithConcurrency } from './concurrency.js'
 
 const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, milliseconds)
   })
+
+test('mapWithConcurrency stops dispatching queued tasks after an asynchronous failure', async () => {
+  const failure = new Error('failed request')
+  const started: number[] = []
+  let releaseSlow!: () => void
+  const slow = new Promise<void>((resolve) => { releaseSlow = resolve })
+  const result = mapWithConcurrency([0, 1, 2, 3, 4], 2, async (value) => {
+    started.push(value)
+    if (value === 0) throw failure
+    await slow
+    return value
+  })
+  try {
+    await assert.rejects(result, (error) => error === failure)
+    assert.deepEqual(started, [0, 1])
+  } finally {
+    releaseSlow()
+  }
+  // Let the other active worker resume and attempt to take its next item.
+  await setImmediate()
+  assert.deepEqual(started, [0, 1])
+  assert.deepEqual(await mapWithConcurrency([2, 3], 2, async (value) => value), [2, 3])
+})
+
+test('mapWithConcurrency does not start other workers after a synchronous mapper failure', async () => {
+  const failure = new Error('invalid task')
+  const started: number[] = []
+  await assert.rejects(mapWithConcurrency([0, 1, 2], 3, (value) => {
+    started.push(value)
+    throw failure
+  }), (error) => error === failure)
+  assert.deepEqual(started, [0])
+})
 
 test('mapWithConcurrency starts queued work while another worker is slow', async () => {
   let releaseSlow!: () => void

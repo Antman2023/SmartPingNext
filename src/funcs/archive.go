@@ -2,6 +2,8 @@ package funcs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"smartping/src/g"
 	"sync/atomic"
 	"time"
@@ -48,12 +50,16 @@ func clearArchiveBefore(cutoffDate string) error {
 }
 
 func clearArchiveBeforeContext(ctx context.Context, cutoffDate string) error {
+	var cleanupErrors []error
 	for _, table := range []string{"alertlog", "mappinglog", "pinglog"} {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(cleanupErrors, err)...)
+		}
 		if err := clearArchiveTableBeforeContext(ctx, table, cutoffDate); err != nil {
-			return err
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("clean archive table %s: %w", table, err))
 		}
 	}
-	return nil
+	return errors.Join(cleanupErrors...)
 }
 
 func clearArchiveTableBefore(table, cutoffDate string) error {

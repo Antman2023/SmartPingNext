@@ -1,3 +1,4 @@
+import { preserveLegendSelection } from '../../utils/chartInteraction.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -37,14 +38,15 @@ for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
     const { descriptor } = parse(source)
     let mounted!: () => void | Promise<void>
     let unmounted!: () => void
-    const chart = { setOption: t.mock.fn(), resize: t.mock.fn(), dispose: t.mock.fn() }
+    const chart = { getOption: () => ({}), setOption: t.mock.fn(), resize: t.mock.fn(), dispose: t.mock.fn() }
     const init = t.mock.fn(() => chart)
     const dependencies: Record<string, unknown> = {
       vue: { ...vue, onMounted: (fn: typeof mounted) => { mounted = fn }, onUnmounted: (fn: typeof unmounted) => { unmounted = fn } },
       'vue-i18n': { useI18n: () => ({ t: (key: string) => key, locale: vue.ref('zh-CN') }) },
       '@/stores/theme': { useThemeStore: () => ({ theme: 'light' }) },
       '@/stores/sidebar': { useSidebarStore: () => ({ isCollapsed: false }) },
-      '@/utils/charts': { getPingChartOption: () => ({}), getPingMiniChartOption: () => ({}) },
+      '@/utils/chartInteraction': { preserveLegendSelection },
+    '@/utils/charts': { getPingChartOption: () => ({}), getPingMiniChartOption: () => ({}) },
       '@/utils/debounce': debounceExports,
       '@/utils/echartsLine': { echarts: { init } },
       '@/utils/echartsGraph': { echarts: { init } }

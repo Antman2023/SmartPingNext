@@ -266,6 +266,26 @@ const loadConfig = async () => {
   }
 }
 
+const isToolsResult = (value: unknown): value is ToolsResult => {
+  if (typeof value !== 'object' || value === null) return false
+  const result = value as Record<string, unknown>
+  if (
+    result.status !== 'true' ||
+    typeof result.ip !== 'string' ||
+    typeof result.error !== 'string' ||
+    typeof result.ping !== 'object' ||
+    result.ping === null
+  )
+    return false
+  const ping = result.ping as Record<string, unknown>
+  if (!['SendPk', 'RevcPk', 'LossPk', 'MinDelay', 'AvgDelay', 'MaxDelay'].every(
+    (key) => typeof ping[key] === 'number' && Number.isFinite(ping[key]) && ping[key] >= 0
+  )) return false
+  return Number.isSafeInteger(ping.SendPk) && Number.isSafeInteger(ping.RevcPk) &&
+    Number.isInteger(ping.LossPk) && (ping.LossPk as number) <= 100 &&
+    (ping.RevcPk as number) <= (ping.SendPk as number)
+}
+
 const runCheck = async () => {
   if (checking.value) {
     return
@@ -307,6 +327,9 @@ const runCheck = async () => {
           )
           if (isUnmounted || requestId !== checkRequestId) {
             return
+          }
+          if (!isToolsResult(result)) {
+            throw new Error(t('tools.invalidResponse'))
           }
           row.result = result
         } catch (error: unknown) {

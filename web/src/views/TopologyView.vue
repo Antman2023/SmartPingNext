@@ -146,11 +146,11 @@ import { isRequestCanceled } from '@/api'
 import { fetchConfig } from '@/api/config'
 import { getTopology } from '@/api/topology'
 import { mapWithConcurrency } from '@/utils/concurrency'
+import { preloadAsync } from '@/utils/preloadAsync'
 import { displayName, formatTime } from '@/utils/format'
 import type { Config } from '@/types'
 
-const topologyGraphModule = import('@/components/charts/TopologyGraph.vue')
-const TopologyGraph = defineAsyncComponent(() => topologyGraphModule)
+const TopologyGraph = defineAsyncComponent(preloadAsync(() => import('@/components/charts/TopologyGraph.vue')))
 
 const router = useRouter()
 const { t } = useI18n()

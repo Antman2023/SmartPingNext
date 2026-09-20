@@ -6,11 +6,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -195,7 +197,7 @@ func TestEnsureDatabaseIndexesOptimizesAlertDates(t *testing.T) {
 	if err := ensureDatabaseIndexes(db); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT date(logtime) FROM alertlog GROUP BY date(logtime) ORDER BY date(logtime) DESC`)
+	rows, err := db.Query(`EXPLAIN QUERY PLAN SELECT DISTINCT date(logtime) FROM alertlog ORDER BY date(logtime) DESC`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,6 +475,145 @@ func TestSetConfigReconcilesAlertStatusWithTopologyRules(t *testing.T) {
 		SetConfig(changedLocal)
 		if len(AlertStatus) != 0 {
 			t.Fatalf("local node change retained alert state: %#v", AlertStatus)
+		}
+	})
+}
+
+func TestRecordAlertCheckRejectsStaleRules(t *testing.T) {
+	for _, change := range []string{"Thdchecksec", "Thdloss", "Thdavgdelay", "Thdoccnum", "remove", "source"} {
+		for _, healthy := range []bool{false, true} {
+			t.Run(change+"/healthy="+fmt.Sprint(healthy), func(t *testing.T) {
+				withGlobalConfigState(t, func() {
+					const source, target = "127.0.0.1", "192.0.2.1"
+					rule := map[string]string{"Addr": target, "Thdchecksec": "600", "Thdloss": "30", "Thdavgdelay": "200", "Thdoccnum": "2"}
+					SetConfig(Config{Addr: source, Network: map[string]NetworkMember{
+						source: {Addr: source, Topology: []map[string]string{rule}},
+					}})
+					AlertStatus = map[string]bool{target: false}
+					// Simulate a config save after a check has read its rule but
+					// before its database query returns.
+					next := ConfigSnapshot()
+					member := next.Network[source]
+					switch change {
+					case "remove":
+						member.Topology = nil
+					case "source":
+						next.Addr = "127.0.0.2"
+					default:
+						member.Topology[0][change] = "1"
+					}
+					next.Network[source] = member
+					SetConfig(next)
+					if RecordAlertCheck(source, rule, healthy) {
+						t.Fatal("stale check queued an alert")
+					}
+					if _, exists := AlertStatus[target]; exists {
+						t.Fatal("stale check recreated discarded alert state")
+					}
+					if change != "remove" && change != "source" {
+						currentRule := member.Topology[0]
+						if !RecordAlertCheck(source, currentRule, false) {
+							t.Fatal("current rule could not queue its first alert")
+						}
+						RecordAlertCheck(source, rule, true)
+						if AlertStatus[target] {
+							t.Fatal("stale recovery overwrote current rule's active alert")
+						}
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestRecordAlertCheckTransitionsSurviveUnrelatedConfigChanges(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		const source, target = "127.0.0.1", "192.0.2.1"
+		rule := map[string]string{"Addr": target, "Name": "before", "Thdchecksec": "600", "Thdloss": "30", "Thdavgdelay": "200", "Thdoccnum": "2"}
+		SetConfig(Config{Addr: source, Network: map[string]NetworkMember{
+			source: {Addr: source, Topology: []map[string]string{rule}},
+		}})
+		AlertStatus = nil
+		if !RecordAlertCheck(source, rule, false) {
+			t.Fatal("initial unhealthy check did not queue an alert")
+		}
+		next := ConfigSnapshot()
+		next.Name = "renamed local node"
+		next.Network[source].Topology[0]["Name"] = "renamed target"
+		SetConfig(next)
+		if RecordAlertCheck(source, rule, false) {
+			t.Fatal("unrelated config edit caused a duplicate alert")
+		}
+		if RecordAlertCheck(source, rule, true) || !AlertStatus[target] {
+			t.Fatal("healthy check did not restore status without an alert")
+		}
+		if !RecordAlertCheck(source, rule, false) {
+			t.Fatal("new failure after recovery did not queue an alert")
+		}
+	})
+}
+
+func TestConcurrentConfigReplacementSnapshotsAndAlertChecks(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		const source, target = "127.0.0.1", "192.0.2.1"
+		makeConfig := func(value int) Config {
+			return Config{
+				Addr: source,
+				Base: map[string]int{"Timeout": value},
+				Network: map[string]NetworkMember{source: {
+					Addr: source,
+					Topology: []map[string]string{{
+						"Addr": target, "Thdchecksec": "600", "Thdloss": fmt.Sprint(value),
+						"Thdavgdelay": "200", "Thdoccnum": "2",
+					}},
+				}},
+			}
+		}
+		first, second := makeConfig(10), makeConfig(20)
+		SetConfig(first)
+		var workers sync.WaitGroup
+		start := make(chan struct{})
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			for i := 0; i < 200; i++ {
+				SetConfig(second)
+				SetConfig(first)
+			}
+		}()
+		for worker := 0; worker < 4; worker++ {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				<-start
+				for i := 0; i < 200; i++ {
+					snapshot := ConfigSnapshot()
+					rule := snapshot.Network[source].Topology[0]
+					if rule["Thdloss"] != fmt.Sprint(snapshot.Base["Timeout"]) {
+						t.Error("snapshot combined fields from different configurations")
+					}
+					if value := GetBaseInt("Timeout", -1); value != 10 && value != 20 {
+						t.Errorf("unexpected concurrent base value: %d", value)
+					}
+					RecordAlertCheck(source, rule, i%2 == 0)
+				}
+			}()
+		}
+		close(start)
+		workers.Wait()
+		// Once removal completes, none of the previously observed rules may
+		// recreate alert state, regardless of which configuration won earlier.
+		removed := makeConfig(30)
+		removed.Network[source] = NetworkMember{Addr: source}
+		SetConfig(removed)
+		for _, previous := range []Config{first, second} {
+			if RecordAlertCheck(source, previous.Network[source].Topology[0], false) {
+				t.Error("removed rule scheduled an alert")
+			}
+		}
+		if len(AlertStatus) != 0 {
+			t.Fatalf("removed topology retained states: %v", AlertStatus)
 		}
 	})
 }
@@ -893,6 +1034,85 @@ func TestSaveCloudConfigDoesNotOverwriteNewerLocalConfig(t *testing.T) {
 			t.Fatalf("stale cloud request overwrote newer config: %#v", got)
 		}
 	})
+}
+
+type observedConfigContext struct {
+	context.Context
+	checked chan struct{}
+	once    sync.Once
+}
+
+func (ctx *observedConfigContext) Err() error {
+	err := ctx.Context.Err()
+	ctx.once.Do(func() { close(ctx.checked) })
+	return err
+}
+
+func TestApplyCloudConfigCanceledWhileWaitingForSave(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint("changed=", changed), func(t *testing.T) {
+			withGlobalConfigState(t, func() {
+				const endpoint = "http://127.0.0.1/config.json"
+				Root = t.TempDir()
+				if err := os.Mkdir(filepath.Join(Root, "conf"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				original := Config{
+					Name: "local", Addr: "127.0.0.1", Port: 8899,
+					Base:     map[string]int{"Timeout": 5, "Refresh": 1, "Archive": 30},
+					Topology: map[string]string{"Tline": "1", "Tsymbolsize": "70"},
+					Mode:     map[string]string{"Type": "cloud", "Endpoint": endpoint, "Status": "false"},
+					Network:  map[string]NetworkMember{"127.0.0.1": {Name: "local", Addr: "127.0.0.1"}},
+				}
+				if err := ApplyConfig(original); err != nil {
+					t.Fatal(err)
+				}
+				before := ConfigSnapshot()
+				filename := filepath.Join(Root, "conf", "config.json")
+				diskBefore, err := os.ReadFile(filename)
+				if err != nil {
+					t.Fatal(err)
+				}
+				downloaded := cloneConfig(original)
+				if changed {
+					downloaded.Base["Archive"] = 60
+				}
+				base, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				ctx := &observedConfigContext{Context: base, checked: make(chan struct{})}
+				done := make(chan error, 1)
+				configSaveLock.Lock()
+				go func() { done <- applyCloudConfigContext(ctx, downloaded, endpoint) }()
+				select {
+				case <-ctx.checked:
+				case <-time.After(time.Second):
+					configSaveLock.Unlock()
+					t.Fatal("cloud apply did not start")
+				}
+				cancel()
+				configSaveLock.Unlock()
+				if err := <-done; !errors.Is(err, context.Canceled) {
+					t.Fatalf("apply error = %v, want cancellation", err)
+				}
+				if !reflect.DeepEqual(ConfigSnapshot(), before) {
+					t.Fatal("canceled apply changed config or synchronization status")
+				}
+				diskAfter, err := os.ReadFile(filename)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(diskBefore, diskAfter) {
+					t.Fatal("canceled apply changed saved configuration")
+				}
+				if err := applyCloudConfigContext(context.Background(), downloaded, endpoint); err != nil {
+					t.Fatalf("subsequent sync failed: %v", err)
+				}
+				if ConfigSnapshot().Mode["Status"] != "true" {
+					t.Fatal("subsequent sync did not succeed")
+				}
+			})
+		})
+	}
 }
 
 func TestSaveConfig(t *testing.T) {

@@ -15,7 +15,17 @@ export class ApiError extends Error {
 
 interface AxiosErrorResponse {
   status: number
-  data?: { message?: string; info?: string; error?: string }
+  data?: unknown
+}
+
+function responseMessage(data: unknown, fields: string[]): string | undefined {
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return undefined
+  const record = data as Record<string, unknown>
+  for (const field of fields) {
+    const value = record[field]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return undefined
 }
 
 interface AxiosError {
@@ -55,7 +65,7 @@ export function handleNetworkError(error: unknown): ApiError {
       switch (status) {
         case 400:
           return new ApiError(
-            data?.info || data?.message || i18n.global.t('common.badRequest'),
+            responseMessage(data, ['info', 'message']) || i18n.global.t('common.badRequest'),
             status
           )
         case 401:
@@ -68,7 +78,7 @@ export function handleNetworkError(error: unknown): ApiError {
           return new ApiError(i18n.global.t('common.tooManyRequests'), status)
         case 500:
           return new ApiError(
-            data?.info || data?.message || i18n.global.t('common.serverError'),
+            responseMessage(data, ['info', 'message']) || i18n.global.t('common.serverError'),
             status
           )
         case 502:
@@ -79,9 +89,7 @@ export function handleNetworkError(error: unknown): ApiError {
           return new ApiError(i18n.global.t('common.gatewayTimeout'), status)
         default:
           return new ApiError(
-            data?.info ||
-              data?.message ||
-              data?.error ||
+            responseMessage(data, ['info', 'message', 'error']) ||
               i18n.global.t('common.requestFailedWithStatus', { status }),
             status
           )

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, onScopeDispose, ref, watch } from 'vue'
 
 export type ThemeMode = 'light' | 'dark'
 export type ThemePreference = ThemeMode | 'system'
@@ -43,6 +43,10 @@ export const useThemeStore = defineStore('theme', () => {
     preference.value === 'system' ? systemTheme.value : preference.value
   )
   let initialized = false
+  let mediaQuery: MediaQueryList | null = null
+  const updateSystemTheme = (event: MediaQueryListEvent) => {
+    systemTheme.value = event.matches ? 'dark' : 'light'
+  }
 
   const setTheme = (newPreference: ThemePreference) => {
     preference.value = newPreference
@@ -54,11 +58,9 @@ export const useThemeStore = defineStore('theme', () => {
 
   const initTheme = () => {
     if (!initialized) {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+      mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
       systemTheme.value = getSystemTheme(mediaQuery)
-      mediaQuery.addEventListener('change', (event) => {
-        systemTheme.value = event.matches ? 'dark' : 'light'
-      })
+      mediaQuery.addEventListener('change', updateSystemTheme)
       initialized = true
     }
     applyTheme(theme.value)
@@ -70,6 +72,11 @@ export const useThemeStore = defineStore('theme', () => {
 
   watch(preference, (newPreference) => {
     storePreference(newPreference)
+  })
+
+  onScopeDispose(() => {
+    mediaQuery?.removeEventListener('change', updateSystemTheme)
+    mediaQuery = null
   })
 
   return {

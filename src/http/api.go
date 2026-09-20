@@ -44,13 +44,12 @@ func configApiRoutes(mux *http.ServeMux) {
 			return
 		}
 		form := r.URL.Query()
-		if len(form["ip"]) == 0 {
-			o := "Missing Param !"
-			http.Error(w, o, http.StatusNotAcceptable)
+		targets := form["ip"]
+		if len(targets) != 1 || strings.TrimSpace(targets[0]) == "" {
+			http.Error(w, "Invalid target parameter", http.StatusNotAcceptable)
 			return
 		}
-		var tableip string
-		tableip = form["ip"][0]
+		tableip := targets[0]
 		requestTime := time.Now()
 		timeStartValue, timeEndValue, err := resolvePingTimeRange(form, requestTime, g.LocalTimezone)
 		if err != nil {
@@ -89,11 +88,8 @@ func configApiRoutes(mux *http.ServeMux) {
 			return
 		} else {
 			start := time.Now()
-			// Use map for O(1) lookup instead of linear search
-			timeIndexMap := make(map[string]int, len(lastcheck))
-			for i, t := range lastcheck {
-				timeIndexMap[t] = i
-			}
+			// Build the lookup only when samples exist; empty histories need no index.
+			var timeIndexMap map[string]int
 
 			for rows.Next() {
 				l := new(g.PingLog)
@@ -105,6 +101,12 @@ func configApiRoutes(mux *http.ServeMux) {
 					return
 				}
 
+				if timeIndexMap == nil {
+					timeIndexMap = make(map[string]int, len(lastcheck))
+					for i, timestamp := range lastcheck {
+						timeIndexMap[timestamp] = i
+					}
+				}
 				if idx, exists := timeIndexMap[l.Logtime]; exists {
 					maxdelay[idx] = l.Maxdelay
 					mindelay[idx] = l.Mindelay
@@ -190,8 +192,12 @@ func configApiRoutes(mux *http.ServeMux) {
 		config := g.ConfigSnapshot()
 		form := r.URL.Query()
 		dtb := time.Now().Format("2006-01-02")
-		if len(form["date"]) > 0 {
-			dtb = strings.Replace(form["date"][0], "alertlog-", "", -1)
+		if dates, exists := form["date"]; exists {
+			if len(dates) != 1 {
+				http.Error(w, "Invalid date", http.StatusNotAcceptable)
+				return
+			}
+			dtb = strings.TrimPrefix(dates[0], "alertlog-")
 		}
 		selectedDate, err := time.ParseInLocation("2006-01-02", dtb, g.LocalTimezone)
 		if err != nil {
@@ -202,7 +208,7 @@ func configApiRoutes(mux *http.ServeMux) {
 		dayEnd := selectedDate.AddDate(0, 0, 1).Format("2006-01-02 15:04")
 		listpreout := []string{}
 		datapreout := []g.AlertLog{}
-		querySql := "select date(logtime) as ldate from alertlog group by date(logtime) order by date(logtime) desc"
+		querySql := "select distinct date(logtime) as ldate from alertlog order by date(logtime) desc"
 		rows, err := g.Db.QueryContext(r.Context(), querySql)
 		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
@@ -537,14 +543,25 @@ func emptyMappingData() map[string][]g.MapVal {
 }
 
 func decodeMappingData(raw string) (map[string][]g.MapVal, error) {
-	stored := make(map[string][]g.MapVal)
+	// Pointers distinguish an actual zero measurement from missing or null fields.
+	type storedSample struct {
+		Name  *string  `json:"name"`
+		Value *float64 `json:"value"`
+	}
+	stored := make(map[string][]storedSample)
 	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
 		return nil, err
 	}
 	normalized := emptyMappingData()
 	for carrier := range normalized {
-		if values := stored[carrier]; values != nil {
-			normalized[carrier] = values
+		for _, sample := range stored[carrier] {
+			if sample.Name == nil || sample.Value == nil {
+				return nil, errors.New("mapping sample is missing a name or value")
+			}
+			if *sample.Value < 0 {
+				return nil, errors.New("mapping sample has a negative delay")
+			}
+			normalized[carrier] = append(normalized[carrier], g.MapVal{Name: *sample.Name, Value: *sample.Value})
 		}
 	}
 	return normalized, nil

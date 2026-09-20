@@ -292,7 +292,7 @@ func SaveCloudConfigContext(ctx context.Context, url string) (Config, error) {
 	if err := ctx.Err(); err != nil {
 		return config, err
 	}
-	if err := applyCloudConfig(config, url); err != nil {
+	if err := applyCloudConfigContext(ctx, config, url); err != nil {
 		return config, err
 	}
 	return config, nil
@@ -577,9 +577,17 @@ func ApplyConfig(config Config) error {
 	return applyConfigLocked(config)
 }
 
-func applyCloudConfig(downloaded Config, endpoint string) error {
+func applyCloudConfigContext(ctx context.Context, downloaded Config, endpoint string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	configSaveLock.Lock()
 	defer configSaveLock.Unlock()
+	// A local save may hold the lock after the download has finished. Do not
+	// publish a canceled cloud task when that save finally releases the lock.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	current := ConfigSnapshot()
 	if current.Mode["Type"] != "cloud" || current.Mode["Endpoint"] != endpoint {
@@ -603,7 +611,11 @@ func applyCloudConfig(downloaded Config, endpoint string) error {
 	if err := ValidateConfig(published); err != nil {
 		return fmt.Errorf("invalid cloud config: %w", err)
 	}
-	if cloudConfigEqual(current, published) {
+	unchanged := cloudConfigEqual(current, published)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if unchanged {
 		SetConfig(published)
 		return nil
 	}

@@ -14,6 +14,19 @@ const (
 	indexCacheControl          = "no-cache"
 )
 
+// Failed asset requests must not inherit immutable caching or be cached
+// heuristically while a deployment is replacing its generated files.
+type staticResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (w staticResponseWriter) WriteHeader(status int) {
+	if status >= http.StatusBadRequest {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
 func setStaticCacheHeaders(w http.ResponseWriter, path string, spaFallback bool) {
 	if spaFallback || path == "/" || path == "/index.html" {
 		w.Header().Set("Cache-Control", indexCacheControl)
@@ -55,14 +68,14 @@ func configIndexRoutes(mux *http.ServeMux) {
 		// 静态资源文件（有扩展名）直接服务
 		if path.Ext(r.URL.Path) != "" {
 			setStaticCacheHeaders(w, r.URL.Path, false)
-			fileServer.ServeHTTP(w, r)
+			fileServer.ServeHTTP(staticResponseWriter{w}, r)
 			return
 		}
 
 		// SPA 路由：所有其他路径返回 index.html
 		setStaticCacheHeaders(w, r.URL.Path, true)
 		r.URL.Path = "/"
-		fileServer.ServeHTTP(w, r)
+		fileServer.ServeHTTP(staticResponseWriter{w}, r)
 	})
 
 }

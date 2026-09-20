@@ -9,13 +9,20 @@ export async function mapWithConcurrency<T, R>(
   const requestedWorkers = Number.isFinite(concurrency) ? Math.floor(concurrency) : 1
   const workerCount = Math.min(Math.max(requestedWorkers, 1), items.length)
   let nextIndex = 0
+  let failed = false
 
   const workers = Array.from({ length: workerCount }, async () => {
-    while (nextIndex < items.length) {
-      signal?.throwIfAborted()
-      const index = nextIndex
-      nextIndex += 1
-      results[index] = await mapper(items[index] as T, index)
+    try {
+      while (!failed && nextIndex < items.length) {
+        signal?.throwIfAborted()
+        const index = nextIndex
+        nextIndex += 1
+        results[index] = await mapper(items[index] as T, index)
+      }
+    } catch (error) {
+      // The caller has failed this batch; do not dispatch more queued requests.
+      failed = true
+      throw error
     }
   })
 

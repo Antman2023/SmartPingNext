@@ -116,6 +116,17 @@ go vet ./src/...
 
 Windows 上可使用 Zig 运行 Go 数据竞争检测：安装 Go 和 Zig 并加入 PATH 后，在项目根目录执行 `pwsh -File scripts/test-race-windows.ps1`。脚本使用 `zig cc`，为 race 测试补充 Windows 同步库和固定加载方式，并在退出时恢复环境变量；正式构建仍不依赖 CGO。此流程已在 Go 1.27.1、Zig 0.16.0、Windows amd64 上验证。
 
+资源同步会先完整复制到临时目录，再替换旧版。复制失败会保留旧版，替换失败会尝试恢复旧版；如果恢复也失败，命令会报告保留的备份路径，便于手动恢复。
+
+部署到子路径（例如 `/smartping/`）时，先在 `web/.env.local` 设置 `VITE_API_BASE_URL=/smartping/api`，然后在 `web/` 下运行：
+
+```bash
+npm run build -- --base=/smartping/
+node scripts/sync-embed.mjs
+```
+
+随后重新构建后端。反向代理需要将 `/smartping/` 下的请求转发给 SmartPing，并去掉该前缀（例如 `/smartping/api/config.json` 转发为 `/api/config.json`）。前端路由与静态资源会使用构建时指定的基路径。
+
 ### Docker
 
 支持多架构镜像：`linux/amd64`、`linux/arm64`、`linux/arm/v7`

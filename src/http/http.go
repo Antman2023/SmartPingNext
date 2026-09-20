@@ -303,7 +303,7 @@ func resolvePingTimeRange(values url.Values, now time.Time, location *time.Locat
 	if !hasStart && !hasEnd {
 		return start, end, nil
 	}
-	if !hasStart || !hasEnd || len(startRaw) == 0 || len(endRaw) == 0 || startRaw[0] == "" || endRaw[0] == "" {
+	if !hasStart || !hasEnd || len(startRaw) != 1 || len(endRaw) != 1 || startRaw[0] == "" || endRaw[0] == "" {
 		return time.Time{}, time.Time{}, errors.New("Invalid Time Range!")
 	}
 
@@ -334,10 +334,11 @@ func resolveMappingDataKey(values url.Values, now time.Time, location *time.Loca
 	if len(raw) != 1 || raw[0] == "" {
 		return "", errors.New("Invalid Mapping Time!")
 	}
-	if _, err := time.ParseInLocation("2006-01-02 15:04", raw[0], location); err != nil {
+	parsed, err := time.ParseInLocation("2006-01-02 15:04", raw[0], location)
+	if err != nil {
 		return "", errors.New("Invalid Mapping Time!")
 	}
-	return raw[0], nil
+	return parsed.Format("2006-01-02 15:04"), nil
 }
 
 func completedPingTimelineSize(lastcheck []string, populated []bool, now time.Time, location *time.Location) int {

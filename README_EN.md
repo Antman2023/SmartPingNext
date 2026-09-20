@@ -116,6 +116,17 @@ Hostname resolution for online tools, scheduled Ping, mapping probes, and alert 
 
 On Windows, install Go and Zig on PATH, then run `pwsh -File scripts/test-race-windows.ps1` from the project root for Go race detection. The helper uses `zig cc`, adds the Windows synchronization library and a fixed loading mode for race test executables, and restores environment variables on exit. Release builds still do not require CGO. This workflow was verified with Go 1.27.1, Zig 0.16.0, and Windows amd64.
 
+Synchronization completes a temporary copy before replacing the previous build. Copy failures leave the previous build intact, and replacement failures trigger a rollback. If rollback also fails, the command reports the retained backup path for manual recovery.
+
+For deployment under a path such as `/smartping/`, set `VITE_API_BASE_URL=/smartping/api` in `web/.env.local`, then run from `web/`:
+
+```bash
+npm run build -- --base=/smartping/
+node scripts/sync-embed.mjs
+```
+
+Rebuild the backend afterward. Configure your reverse proxy to forward requests under `/smartping/` to SmartPing with that prefix removed (for example, `/smartping/api/config.json` becomes `/api/config.json`). Frontend routes and static assets use the base path specified at build time.
+
 ### Docker
 
 Multi-arch images are supported: `linux/amd64`, `linux/arm64`, `linux/arm/v7`

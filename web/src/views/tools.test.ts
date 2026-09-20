@@ -122,6 +122,53 @@ test('tools configuration reload resets the previous run timestamp', async (t) =
   )
 })
 
+test('tools isolates malformed success payloads and accepts valid zero measurements', async (t) => {
+  const { view, runTools } = createView(t)
+  await view.loadConfig()
+  const sample = await runTools('node', 'target')
+  const malformed: unknown[] = [
+    null,
+    {},
+    { ...sample, ip: 42 },
+    { ...sample, error: {} },
+    { ...sample, status: 'unexpected' },
+    { ...sample, ping: null },
+    ...Object.keys(sample.ping).flatMap((key) =>
+      [undefined, '1.2', NaN, Infinity, -1].map((value) => ({
+        ...sample,
+        ping: { ...sample.ping, [key]: value }
+      }))
+    ),
+    ...[
+      { SendPk: 1.5 }, { RevcPk: 0.5 }, { SendPk: Number.MAX_SAFE_INTEGER + 1 },
+      { RevcPk: sample.ping.SendPk + 1 }, { LossPk: 101 }, { LossPk: 0.5 }
+    ].map((fields) => ({ ...sample, ping: { ...sample.ping, ...fields } }))
+  ]
+  for (const response of malformed) {
+    runTools.mock.mockImplementation(async (base) =>
+      base.startsWith('192.0.2.1:') ? (response as ToolsResult) : sample
+    )
+    await view.runCheck()
+    assert.equal(view.checking.value, false)
+    assert.equal(view.results.value[0]!.result, null)
+    assert.ok(view.results.value[0]!.error)
+    assert.equal(view.results.value.filter((row) => row.result?.status === 'true').length, 5)
+    assert.ok(view.results.value.every((row) => !row.loading))
+  }
+  runTools.mock.mockImplementation(async () => ({
+    ...sample,
+    ping: { ...sample.ping, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 }
+  }))
+  await view.runCheck()
+  assert.ok(view.results.value.every((row) => !row.error && row.result?.ping.AvgDelay === 0))
+  runTools.mock.mockImplementation(async () => ({
+    ...sample,
+    ping: { SendPk: 5, RevcPk: 0, LossPk: 100, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 }
+  }))
+  await view.runCheck()
+  assert.ok(view.results.value.every((row) => !row.error && row.result?.ping.LossPk === 100))
+})
+
 test('tools configuration reload cancels queued work and ignores late responses', async (t) => {
   const { view, runTools } = createView(t)
   await view.loadConfig()

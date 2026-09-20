@@ -1,14 +1,119 @@
 package g
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sirupsen/logrus"
 )
+
+func TestLoggerFailedReinitializationPreservesActiveFiles(t *testing.T) {
+	logger := logrus.StandardLogger()
+	oldOutput, oldFormatter := logger.Out, logger.Formatter
+	oldLevel, oldReportCaller := logger.Level, logger.ReportCaller
+	defer func() {
+		_ = CloseLogger()
+		logrus.SetOutput(oldOutput)
+		logrus.SetFormatter(oldFormatter)
+		logrus.SetLevel(oldLevel)
+		logrus.SetReportCaller(oldReportCaller)
+	}()
+	t.Setenv("SMARTPING_LOG_LEVEL", "info")
+	root := t.TempDir()
+	if err := InitLogger(root); err != nil {
+		t.Fatal(err)
+	}
+	logrus.SetOutput(io.Discard)
+	for _, blockedFile := range []string{"debug.log", "error.log"} {
+		t.Run(blockedFile, func(t *testing.T) {
+			failedRoot := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(failedRoot, "logs", blockedFile), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := InitLogger(failedRoot); err == nil {
+				t.Fatal("expected initialization failure")
+			}
+			logrus.Info("retained-after-" + blockedFile)
+			assertLogFileContains(t, filepath.Join(root, "logs", "info.log"), "retained-after-"+blockedFile, "unexpected-record")
+			// On Windows, leaked open handles prevent this directory rename.
+			if err := os.Rename(filepath.Join(failedRoot, "logs"), filepath.Join(failedRoot, "closed-logs")); err != nil {
+				t.Fatalf("partially opened log files were not released: %v", err)
+			}
+		})
+	}
+}
+
+func TestManagedLogHookConcurrentReplacementRetainsEveryRecord(t *testing.T) {
+	root := t.TempDir()
+	hook := &managedLogHook{}
+	t.Cleanup(func() { _ = hook.close() })
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.JSONFormatter{DisableTimestamp: true})
+	var paths []string
+	install := func(index int) {
+		t.Helper()
+		path := filepath.Join(root, fmt.Sprintf("%d.log", index))
+		file, err := openLogFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+		if err := hook.replace(map[logrus.Level]*rotatingLogFile{logrus.InfoLevel: file}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	install(0)
+	const workers, records = 8, 100
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			<-start
+			for record := 0; record < records; record++ {
+				entry := logrus.NewEntry(logger)
+				entry.Level = logrus.InfoLevel
+				entry.Message = fmt.Sprintf("worker-%d-record-%d", worker, record)
+				if err := hook.Fire(entry); err != nil {
+					t.Errorf("write during replacement: %v", err)
+				}
+			}
+		}(worker)
+	}
+	close(start)
+	for index := 1; index <= 16; index++ {
+		install(index)
+	}
+	wg.Wait()
+	if err := hook.close(); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool)
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(content)), "\n") {
+			if line == "" {
+				continue
+			}
+			if seen[line] {
+				t.Fatalf("duplicate log record: %s", line)
+			}
+			seen[line] = true
+		}
+	}
+	if len(seen) != workers*records {
+		t.Fatalf("got %d records, want %d", len(seen), workers*records)
+	}
+}
 
 func TestLoggerRoutesLevelsAndClosesFilesAcrossReinitialization(t *testing.T) {
 	logger := logrus.StandardLogger()

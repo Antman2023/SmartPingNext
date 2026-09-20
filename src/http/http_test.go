@@ -560,6 +560,56 @@ func TestPingEndpointDistinguishesMissingSamplesAndPreservesQueryTimezone(t *tes
 	}
 }
 
+func TestPingEndpointRejectsAmbiguousOrEmptyTargetsBeforeDatabaseAccess(t *testing.T) {
+	oldConfig, oldDatabase := g.ConfigSnapshot(), g.Db
+	defer func() {
+		g.Db = oldDatabase
+		g.SetConfig(oldConfig)
+	}()
+	g.Db = nil
+	g.SetConfig(g.Config{Addr: "127.0.0.1", Network: map[string]g.NetworkMember{}})
+	handler := newAppHandler()
+	for _, query := range []string{
+		"", "ip=", "ip=+%09", "ip=192.0.2.1&ip=192.0.2.2", "ip=192.0.2.1&ip=192.0.2.1",
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/ping.json?"+query, nil))
+		if response.Code != http.StatusNotAcceptable {
+			t.Fatalf("query %q returned %d: %s", query, response.Code, response.Body.String())
+		}
+	}
+}
+
+func BenchmarkEmptyPingHistory(b *testing.B) {
+	oldConfig, oldDatabase, oldTimezone := g.ConfigSnapshot(), g.Db, g.LocalTimezone
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer func() {
+		database.Close()
+		g.Db, g.LocalTimezone = oldDatabase, oldTimezone
+		g.SetConfig(oldConfig)
+	}()
+	if _, err := database.Exec(`CREATE TABLE pinglog (logtime TEXT, target TEXT, maxdelay TEXT, mindelay TEXT, avgdelay TEXT, losspk TEXT)`); err != nil {
+		b.Fatal(err)
+	}
+	g.Db, g.LocalTimezone = database, time.UTC
+	g.SetConfig(g.Config{Addr: "127.0.0.1", Network: map[string]g.NetworkMember{}})
+	handler := newAppHandler()
+	query := url.Values{"ip": {"192.0.2.1"}, "starttime": {"2026-01-01 00:00"}, "endtime": {"2026-02-01 00:00"}}
+	path := "/api/ping.json?" + query.Encode()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			b.Fatalf("status %d: %s", response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestAlertsEndpointIncludesWholeSelectedDay(t *testing.T) {
 	oldConfig := g.ConfigSnapshot()
 	oldDatabase := g.Db
@@ -651,6 +701,72 @@ func TestAlertsEndpointIncludesWholeSelectedDay(t *testing.T) {
 			t.Fatalf("selected-day alert times = %#v, missing %s", alertTimes, expected)
 		}
 	}
+	t.Run("legacy date prefix", func(t *testing.T) {
+		legacy := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/api/alert.json?date=alertlog-2026-09-02", nil)
+		newAppHandler().ServeHTTP(legacy, request)
+		if legacy.Code != http.StatusOK || legacy.Body.String() != recorder.Body.String() {
+			t.Fatalf("legacy date response differs: status %d, body %s", legacy.Code, legacy.Body.String())
+		}
+	})
+	t.Run("database scan errors release rows and permit recovery", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			logtime any
+			target  any
+			message string
+		}{
+			{name: "invalid date", logtime: "invalid timestamp", target: "bad-date", message: "Read alert dates failed"},
+			{name: "null record field", logtime: "2026-09-02 12:00", target: nil, message: "Read alert data failed"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				result, err := database.Exec("INSERT INTO alertlog(logtime, targetip, targetname, tracert) VALUES (?, ?, 'broken', 'trace')", tc.logtime, tc.target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				id, err := result.LastInsertId()
+				if err != nil {
+					t.Fatal(err)
+				}
+				failed := httptest.NewRecorder()
+				newAppHandler().ServeHTTP(failed, httptest.NewRequest(http.MethodGet, "/api/alert.json?date=2026-09-02", nil))
+				if failed.Code != http.StatusInternalServerError || strings.TrimSpace(failed.Body.String()) != tc.message {
+					t.Fatalf("scan error response = %d %q", failed.Code, failed.Body.String())
+				}
+				if stats := database.Stats(); stats.InUse != 0 {
+					t.Fatalf("query connection remains in use after scan failure: %+v", stats)
+				}
+				if _, err := database.Exec("DELETE FROM alertlog WHERE rowid = ?", id); err != nil {
+					t.Fatal(err)
+				}
+				recovered := httptest.NewRecorder()
+				newAppHandler().ServeHTTP(recovered, httptest.NewRequest(http.MethodGet, "/api/alert.json?date=2026-09-02", nil))
+				if recovered.Code != http.StatusOK || recovered.Body.String() != recorder.Body.String() {
+					t.Fatalf("recovery response = %d %q", recovered.Code, recovered.Body.String())
+				}
+			})
+		}
+	})
+	t.Run("reject malformed dates before querying the database", func(t *testing.T) {
+		g.Db = nil
+		defer func() { g.Db = database }()
+		for _, query := range []string{
+			"date=2026-09-02&date=2026-09-03",
+			"date=2026-09-02&date=2026-09-02",
+			"date=2026-alertlog-09-02",
+			"date=alertlog-alertlog-2026-09-02",
+			"date=2026-09-02alertlog-",
+			"date=2026-02-30",
+			"date=",
+		} {
+			invalid := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/api/alert.json?"+query, nil)
+			newAppHandler().ServeHTTP(invalid, request)
+			if invalid.Code != http.StatusNotAcceptable {
+				t.Fatalf("query %q status = %d, want %d", query, invalid.Code, http.StatusNotAcceptable)
+			}
+		}
+	})
 }
 
 func TestAppHandlerSavesConfigAndProtectsServerFields(t *testing.T) {
@@ -839,7 +955,7 @@ func TestIndexRoutesDistinguishAPISPARoutesAndStaticFiles(t *testing.T) {
 			{name: "API root", requestPath: "/api", wantStatus: http.StatusNotFound},
 			{name: "SPA route", requestPath: "/topology", wantStatus: http.StatusOK, wantIndex: true, wantCacheControl: indexCacheControl},
 			{name: "SPA route below dotted directory", requestPath: "/site.v2/topology", wantStatus: http.StatusOK, wantIndex: true, wantCacheControl: indexCacheControl},
-			{name: "missing static asset", requestPath: "/assets/missing.js", wantStatus: http.StatusNotFound},
+			{name: "missing static asset", requestPath: "/assets/missing.js", wantStatus: http.StatusNotFound, wantCacheControl: "no-store"},
 		}
 
 		for _, tt := range tests {
@@ -917,6 +1033,26 @@ func TestResolvePingTimeRange(t *testing.T) {
 	})
 
 	cases := map[string]url.Values{
+		"duplicate start": {
+			"starttime": {"2026-07-10 12:00", "2026-07-11 12:00"},
+			"endtime":   {"2026-07-17 12:00"},
+		},
+		"duplicate end": {
+			"starttime": {"2026-07-10 12:00"},
+			"endtime":   {"2026-07-17 12:00", "2026-07-18 12:00"},
+		},
+		"identical repeated values": {
+			"starttime": {"2026-07-10 12:00", "2026-07-10 12:00"},
+			"endtime":   {"2026-07-17 12:00", "2026-07-17 12:00"},
+		},
+		"empty start values": {
+			"starttime": {},
+			"endtime":   {"2026-07-17 12:00"},
+		},
+		"empty end value": {
+			"starttime": {"2026-07-10 12:00"},
+			"endtime":   {""},
+		},
 		"missing end": {
 			"starttime": {"2026-07-10 12:00"},
 		},
@@ -942,6 +1078,28 @@ func TestResolvePingTimeRange(t *testing.T) {
 	}
 }
 
+func TestResolvePingTimeRangeBoundaries(t *testing.T) {
+	location := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, location)
+	for _, minutes := range []int{0, maxPingRangeMinutes, maxPingRangeMinutes + 1} {
+		startValue := now.Add(-time.Duration(minutes) * time.Minute)
+		values := url.Values{
+			"starttime": {startValue.Format("2006-01-02 15:04")},
+			"endtime":   {now.Format("2006-01-02 15:04")},
+		}
+		start, end, err := resolvePingTimeRange(values, now, location)
+		if minutes > maxPingRangeMinutes {
+			if err == nil {
+				t.Fatal("range one minute above the limit was accepted")
+			}
+			continue
+		}
+		if err != nil || !start.Equal(startValue) || !end.Equal(now) {
+			t.Fatalf("range %d minutes: got %v to %v, error %v", minutes, start, end, err)
+		}
+	}
+}
+
 func TestResolveMappingDataKey(t *testing.T) {
 	location := time.FixedZone("UTC+8", 8*60*60)
 	now := time.Date(2026, 9, 2, 4, 30, 45, 0, time.UTC)
@@ -964,6 +1122,40 @@ func TestResolveMappingDataKey(t *testing.T) {
 	for _, values := range invalidValues {
 		if _, err := resolveMappingDataKey(values, now, location); err == nil {
 			t.Fatalf("resolveMappingDataKey should reject %#v", values)
+		}
+	}
+}
+
+func TestMappingEndpointNormalizesAcceptedTimeFormats(t *testing.T) {
+	oldConfig, oldDatabase, oldTimezone := g.ConfigSnapshot(), g.Db, g.LocalTimezone
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		database.Close()
+		g.Db, g.LocalTimezone = oldDatabase, oldTimezone
+		g.SetConfig(oldConfig)
+	}()
+	if _, err := database.Exec(`CREATE TABLE mappinglog (logtime TEXT, mapjson TEXT);
+		INSERT INTO mappinglog VALUES ('2026-09-01 08:05', '{"ctcc":[{"name":"Shanghai","value":12}],"cucc":[],"cmcc":[]}');`); err != nil {
+		t.Fatal(err)
+	}
+	g.Db = database
+	g.LocalTimezone = time.FixedZone("UTC+8", 8*60*60)
+	g.SetConfig(g.Config{Name: "local", Addr: "127.0.0.1", Network: map[string]g.NetworkMember{}})
+	var baseline string
+	for _, input := range []string{"2026-09-01 08:05", "2026-09-01 8:05", "2026-09-01  08:05"} {
+		response := httptest.NewRecorder()
+		query := url.Values{"d": {input}}
+		newAppHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/mapping.json?"+query.Encode(), nil))
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Shanghai") {
+			t.Fatalf("time %q returned %d %s; want stored sample", input, response.Code, response.Body.String())
+		}
+		if baseline == "" {
+			baseline = response.Body.String()
+		} else if response.Body.String() != baseline {
+			t.Fatalf("equivalent time %q returned different data: %s", input, response.Body.String())
 		}
 	}
 }
@@ -1050,6 +1242,28 @@ func TestDecodeMappingDataNormalizesResponseShape(t *testing.T) {
 
 	if _, err := decodeMappingData(`[]`); err == nil {
 		t.Fatal("decodeMappingData should reject non-object data")
+	}
+}
+
+func TestDecodeMappingDataRejectsIncompleteSamples(t *testing.T) {
+	for _, raw := range []string{
+		`{"ctcc":[null]}`,
+		`{"ctcc":[{}]}`,
+		`{"ctcc":[{"name":"Shanghai"}]}`,
+		`{"ctcc":[{"name":"Shanghai","value":null}]}`,
+		`{"cucc":[{"value":12}]}`,
+		`{"cmcc":[{"name":null,"value":12}]}`,
+		`{"ctcc":[{"name":"Shanghai","value":-1}]}`,
+		`{"cucc":[{"name":"Shanghai","value":-0.001}]}`,
+		`{"cmcc":[{"name":"Shanghai","value":-1e100}]}`,
+	} {
+		if data, err := decodeMappingData(raw); err == nil {
+			t.Errorf("accepted incomplete sample %s as %#v", raw, data)
+		}
+	}
+	data, err := decodeMappingData(`{"ctcc":[{"name":"Shanghai","value":0}],"cmcc":[{"name":"Beijing","value":2000}]}`)
+	if err != nil || len(data["ctcc"]) != 1 || data["ctcc"][0].Value != 0 || len(data["cmcc"]) != 1 || data["cmcc"][0].Value != 2000 {
+		t.Fatalf("valid zero or unreachable sample rejected: %#v, %v", data, err)
 	}
 }
 

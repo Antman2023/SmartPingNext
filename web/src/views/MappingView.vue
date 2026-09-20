@@ -150,6 +150,7 @@ import { useSidebarStore } from '@/stores/sidebar'
 import { useThemeStore } from '@/stores/theme'
 import { displayName, formatTime } from '@/utils/format'
 import { formatMappingTooltip } from '@/utils/chartTooltip'
+import { preserveLegendSelection } from '@/utils/chartInteraction'
 import type { ChinaMapData, Config } from '@/types'
 
 const { t, locale } = useI18n()
@@ -307,7 +308,8 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
   })
   agent.loading = true
   currentAgent.value = agent.addr
-  currentBaseUrl.value = `http://${agent.addr}:${config.value?.Port}`
+  currentBaseUrl.value = agent.addr === config.value?.Addr
+    ? '' : `http://${agent.addr}:${config.value?.Port}`
   await loadMappingData()
 }
 
@@ -367,6 +369,7 @@ const updateChart = (data: ChinaMapData) => {
     },
     series: [
       {
+        id: 'ctcc',
         name: t('mapping.telecom'),
         type: 'map',
         map: 'china',
@@ -378,12 +381,14 @@ const updateChart = (data: ChinaMapData) => {
         }
       },
       {
+        id: 'cucc',
         name: t('mapping.unicom'),
         type: 'map',
         map: 'china',
         data: data.avgdelay.cucc
       },
       {
+        id: 'cmcc',
         name: t('mapping.mobile'),
         type: 'map',
         map: 'china',
@@ -392,6 +397,7 @@ const updateChart = (data: ChinaMapData) => {
     ]
   }
 
+  preserveLegendSelection(option, chart.getOption())
   chart.setOption(option)
 }
 
@@ -482,7 +488,7 @@ const saveMapImage = () => {
   const url = chart.getDataURL({
     type: 'png',
     pixelRatio: 2,
-    backgroundColor: '#fff'
+    backgroundColor: themeStore.theme === 'dark' ? '#1a1a1a' : '#fff'
   })
   const link = document.createElement('a')
   link.download = `smartping-map-${Date.now()}.png`

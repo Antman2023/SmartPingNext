@@ -2,6 +2,7 @@
   <Transition name="sidebar-backdrop">
     <button
       v-if="isCompact && sidebarStore.isMobileOpen"
+      ref="backdropRef"
       type="button"
       class="app-sidebar__backdrop"
       :aria-label="$t('nav.closeNavigation')"
@@ -12,6 +13,7 @@
     <aside
       v-if="!isCompact || sidebarStore.isMobileOpen"
       id="app-sidebar"
+      ref="sidebarRef"
       class="app-sidebar"
       :class="{ 'is-collapsed': isDesktopCollapsed, 'is-mobile': isCompact }"
       :aria-label="$t('nav.primaryNavigation')"
@@ -44,7 +46,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   DataLine,
@@ -65,6 +67,8 @@ const currentRoute = computed(() => route.path)
 const sidebarStore = useSidebarStore()
 const configStore = useConfigStore()
 const { isCompact } = useViewportCompact()
+const sidebarRef = ref<HTMLElement>()
+const backdropRef = ref<HTMLButtonElement>()
 
 const menuItems = [
   { index: '/', label: 'nav.dashboard', icon: DataLine },
@@ -110,6 +114,19 @@ watch(
     document.documentElement.classList.toggle('sidebar-open', compact && open)
     if (!compact && open) {
       sidebarStore.closeMobile()
+    }
+    if (compact && open) {
+      nextTick(() => {
+        if (isCompact.value && sidebarStore.isMobileOpen) {
+          const selected = sidebarRef.value?.querySelector<HTMLAnchorElement>('a[aria-current="page"]')
+          const first = sidebarRef.value?.querySelector<HTMLAnchorElement>('a')
+          const target = selected ?? first
+          target?.focus()
+        }
+      })
+    } else if (compact && (sidebarRef.value?.contains(document.activeElement) ||
+      backdropRef.value === document.activeElement)) {
+      document.querySelector<HTMLButtonElement>('[aria-controls="app-sidebar"]')?.focus()
     }
   },
   { immediate: true }

@@ -220,6 +220,7 @@ import '@/plugins/elementPlusAlertsStyles'
 import RefreshStatus from '@/components/common/RefreshStatus.vue'
 import { isRequestCanceled } from '@/api'
 import { fetchConfig } from '@/api/config'
+import { isAlertData } from '@/utils/alertData'
 import { getAlerts } from '@/api/alert'
 import { mapWithConcurrency } from '@/utils/concurrency'
 import { displayName, formatTime } from '@/utils/format'
@@ -305,6 +306,7 @@ const loadConfig = async () => {
   }
 }
 
+
 const loadAlerts = async (date?: string) => {
   if (!config.value) {
     return
@@ -315,6 +317,7 @@ const loadAlerts = async (date?: string) => {
   alertsAbortController = controller
   const requestId = ++alertsRequestId
   const port = config.value.Port
+  const localAddr = config.value.Addr
   const requestNodes = nodes.value
   const queryDate = date || ''
   if (alertsQueryDate !== queryDate) {
@@ -334,7 +337,11 @@ const loadAlerts = async (date?: string) => {
       ALERT_CONCURRENCY,
       async (node) => {
         try {
-          const data = await getAlerts(`http://${node.addr}:${port}`, date, controller.signal)
+          const baseUrl = node.addr === localAddr ? '' : `http://${node.addr}:${port}`
+          const data = await getAlerts(baseUrl, date, controller.signal)
+          if (!isAlertData(data)) {
+            throw new Error('Invalid alert response')
+          }
           return { node, data, error: false }
         } catch (error) {
           if (isRequestCanceled(error)) {
@@ -401,7 +408,7 @@ const retryAlerts = () => {
 }
 
 const isFiniteNumber = (value: unknown): value is number =>
-  typeof value === 'number' && Number.isFinite(value)
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
 
 const isMtrResult = (value: unknown): value is MtrResult => {
   if (typeof value !== 'object' || value === null) {
@@ -411,7 +418,9 @@ const isMtrResult = (value: unknown): value is MtrResult => {
   return (
     typeof item.Host === 'string' &&
     isFiniteNumber(item.Send) &&
+    Number.isSafeInteger(item.Send) &&
     isFiniteNumber(item.Loss) &&
+    Number.isSafeInteger(item.Loss) && item.Loss <= item.Send &&
     isFiniteNumber(item.Last) &&
     isFiniteNumber(item.Avg) &&
     isFiniteNumber(item.Best) &&

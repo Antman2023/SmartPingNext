@@ -1,7 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
-import { cwd } from 'process'
 import { fileURLToPath } from 'url'
 import { dirname } from 'path'
 
@@ -24,10 +23,11 @@ const elementPlusCssLayer = () => ({
 })
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, cwd(), '')
+  const env = loadEnv(mode, __dirname, '')
   const proxyTarget = env.VITE_PROXY_TARGET || 'http://localhost:8899'
 
   return {
+    root: __dirname,
     plugins: [elementPlusCssLayer(), vue()],
     resolve: {
       alias: {

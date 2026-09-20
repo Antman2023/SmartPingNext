@@ -11,6 +11,7 @@ import type { PingLogData } from '@/types'
 import { useThemeStore } from '@/stores/theme'
 import { useSidebarStore } from '@/stores/sidebar'
 import { getPingChartOption } from '@/utils/charts'
+import { preserveLegendSelection } from '@/utils/chartInteraction'
 import { debounce } from '@/utils/debounce'
 import { echarts } from '@/utils/echartsLine'
 
@@ -96,13 +97,15 @@ const updateChart = () => {
     initChart()
     return
   }
-  chart.setOption(getChartOption(), true)
+  const option = getChartOption()
+  preserveLegendSelection(option, chart.getOption())
+  chart.setOption(option)
   safeSetTimeout(() => chart?.resize(), 0)
 }
 
 const handleResize = debounce(() => {
   chart?.resize()
-  chart?.setOption(getChartOption(), true)
+  updateChart()
 }, 200)
 
 watch(() => props.data?.lastcheck, async () => {

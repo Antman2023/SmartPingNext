@@ -28,6 +28,8 @@ html/admin/*
 web/node_modules/
 web/dist/
 web/.test-dist/
+web/.env.local
+web/.env.*.local
 web/*.d.ts
 web/vite.config.js
 web/*.tsbuildinfo

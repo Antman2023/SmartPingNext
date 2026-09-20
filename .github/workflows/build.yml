@@ -50,9 +50,9 @@ jobs:
         working-directory: web
         run: npm test
 
-      - name: Build frontend
+      - name: Build and embed frontend
         working-directory: web
-        run: npm run build
+        run: npm run build:embed
 
       - name: Upload frontend bundle
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
@@ -62,12 +62,6 @@ jobs:
           path: web/dist
           if-no-files-found: error
           retention-days: 1
-
-      - name: Copy frontend to embed directory
-        run: |
-          rm -rf src/static/html
-          mkdir -p src/static/html
-          cp -r web/dist/* src/static/html/
 
       - name: Test backend
         run: go test ./src/...
@@ -130,12 +124,16 @@ jobs:
           name: frontend-dist
           path: web/dist
 
-      - name: Copy frontend to embed directory
-        shell: bash
-        run: |
-          rm -rf src/static/html
-          mkdir -p src/static/html
-          cp -r web/dist/* src/static/html/
+      - name: Setup Node.js for resource synchronization
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Test resource synchronization
+        run: node --test web/scripts/sync-embed.test.mjs
+
+      - name: Synchronize frontend to embed directory
+        run: node web/scripts/sync-embed.mjs
 
       - name: Get version
         id: version
@@ -281,16 +279,16 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          # 获取当前 tag 之前的 tag（倒数第二个 tag）
-          PREV_TAG=$(git tag --sort=-version:refname | head -2 | tail -1)
+          # Select a release in this commit's history, excluding tags on HEAD.
+          PREV_TAG=$(git describe --tags --match "v*" --abbrev=0 HEAD^ 2>/dev/null || true)
+          RANGE=HEAD
           if [ -n "$PREV_TAG" ]; then
-            echo "changelog<<EOF" >> $GITHUB_OUTPUT
-            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            echo "changelog=Initial release" >> $GITHUB_OUTPUT
+            RANGE="$PREV_TAG..HEAD"
           fi
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          git log --pretty=format:"- %s (%h)" "$RANGE" >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1

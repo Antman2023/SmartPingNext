@@ -108,7 +108,8 @@ export function getPingChartOption(
       right: compact ? 0 : '3%',
       top: compact ? 48 : 30,
       bottom: showDataZoom ? 50 : 50,
-      containLabel: true
+      outerBoundsMode: 'same',
+      outerBoundsContain: 'axisLabel'
     },
     dataZoom: showDataZoom ? [{
       type: 'slider',
@@ -230,6 +231,7 @@ export function getPingChartOption(
     ],
     series: [
       {
+        id: 'maxdelay',
         name: labels.maxDelay,
         type: 'line',
         data: data?.maxdelay || [],
@@ -239,6 +241,7 @@ export function getPingChartOption(
         areaStyle: { opacity: 0.1 }
       },
       {
+        id: 'avgdelay',
         name: labels.averageDelay,
         type: 'line',
         data: data?.avgdelay || [],
@@ -248,6 +251,7 @@ export function getPingChartOption(
         areaStyle: { opacity: 0.2 }
       },
       {
+        id: 'mindelay',
         name: labels.minDelay,
         type: 'line',
         data: data?.mindelay || [],
@@ -257,6 +261,7 @@ export function getPingChartOption(
         areaStyle: { opacity: 0.1 }
       },
       {
+        id: 'losspk',
         name: labels.lossRate,
         type: 'line',
         yAxisIndex: 1,

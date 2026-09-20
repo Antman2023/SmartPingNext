@@ -42,7 +42,8 @@ export function useCharts() {
         left: '3%',
         right: '4%',
         bottom: '3%',
-        containLabel: true
+        outerBoundsMode: 'same',
+        outerBoundsContain: 'axisLabel'
       },
       tooltip: {
         backgroundColor: isDark ? '#252525' : '#fff',

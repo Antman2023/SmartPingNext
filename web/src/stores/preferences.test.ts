@@ -3,72 +3,85 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
-import * as vue from 'vue'
+import { ref, type Ref } from 'vue'
 
-function loadStore<T>(name: string, storage: Pick<Storage, 'getItem' | 'setItem'>, language = 'en-US'): T {
-  const source = readFileSync(new URL(`../../src/stores/${name}.ts`, import.meta.url), 'utf8')
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
-  }).outputText
-  const exports: Record<string, () => T> = {}
-  runInNewContext(compiled, {
+interface PreferenceStores {
+  useLocaleStore: () => { locale: Ref<string>; setLocale: (locale: string) => void }
+  useSidebarStore: () => { isCollapsed: Ref<boolean>; toggleCollapse: () => void }
+}
+
+function loadStores(storage: () => unknown, language = 'zh-CN'): PreferenceStores {
+  const exports = {} as PreferenceStores
+  const sandbox = {
     exports,
-    localStorage: storage,
     navigator: { languages: [language], language },
-    require: (dependency: string) => {
-      if (dependency === 'vue') return vue
-      assert.equal(dependency, 'pinia')
-      return { defineStore: (_id: string, setup: () => T) => setup }
+    get localStorage() {
+      return storage()
+    },
+    require: (name: string) => {
+      if (name === 'vue') return { ref }
+      if (name === 'pinia') return { defineStore: (_id: string, setup: () => unknown) => setup }
+      throw new Error(`Unexpected dependency: ${name}`)
     }
-  })
-  return Object.values(exports)[0]!()
+  }
+  for (const name of ['locale', 'sidebar']) {
+    const source = readFileSync(new URL(`../../src/stores/${name}.ts`, import.meta.url), 'utf8')
+    const compiled = ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+    }).outputText
+    runInNewContext(`(() => { ${compiled} })()`, sandbox)
+  }
+  return exports
 }
 
-interface LocaleStore {
-  locale: vue.Ref<string>
-  setLocale: (locale: string) => void
-}
-interface SidebarStore {
-  isCollapsed: vue.Ref<boolean>
-  toggleCollapse: () => void
-}
-const unavailableStorage = {
-  getItem: () => { throw new Error('storage denied') },
-  setItem: () => { throw new Error('storage denied') }
-}
-
-test('language initializes from system settings and remains switchable when storage is denied', () => {
-  for (const [language, expected] of [['en-US', 'en-US'], ['zh-TW', 'zh-CN']]) {
-    const store = loadStore<LocaleStore>('locale', unavailableStorage, language)
-    assert.equal(store.locale.value, expected)
-    store.setLocale('en-US')
-    assert.equal(store.locale.value, 'en-US')
-    store.setLocale('zh-CN')
-    assert.equal(store.locale.value, 'zh-CN')
+test('blocked browser storage does not prevent preference initialization or changes', () => {
+  for (const language of ['zh-TW', 'en-US']) {
+    const stores = loadStores(() => {
+      throw new Error('storage blocked')
+    }, language)
+    const locale = stores.useLocaleStore()
+    const sidebar = stores.useSidebarStore()
+    assert.equal(locale.locale.value, language.startsWith('zh') ? 'zh-CN' : 'en-US')
+    assert.equal(sidebar.isCollapsed.value, false)
+    locale.setLocale('en-US')
+    sidebar.toggleCollapse()
+    assert.equal(locale.locale.value, 'en-US')
+    assert.equal(sidebar.isCollapsed.value, true)
   }
 })
 
-test('sidebar initializes and can be toggled repeatedly when storage is denied', () => {
-  const store = loadStore<SidebarStore>('sidebar', unavailableStorage)
-  assert.equal(store.isCollapsed.value, false)
-  store.toggleCollapse()
-  assert.equal(store.isCollapsed.value, true)
-  store.toggleCollapse()
-  assert.equal(store.isCollapsed.value, false)
-})
-
-test('language and sidebar preferences still persist when storage is available', () => {
-  const values = new Map([['locale', 'zh-CN'], ['sidebar-collapsed', 'true']])
-  const storage = {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value) }
-  }
-  const locale = loadStore<LocaleStore>('locale', storage)
-  const sidebar = loadStore<SidebarStore>('sidebar', storage)
-  assert.equal(locale.locale.value, 'zh-CN')
+test('readable but unwritable storage keeps saved preferences and allows session changes', () => {
+  const stores = loadStores(() => ({
+    getItem: (key: string) => (key === 'locale' ? 'en-US' : 'true'),
+    setItem: () => {
+      throw new Error('quota exceeded')
+    }
+  }))
+  const locale = stores.useLocaleStore()
+  const sidebar = stores.useSidebarStore()
+  assert.equal(locale.locale.value, 'en-US')
   assert.equal(sidebar.isCollapsed.value, true)
+  locale.setLocale('zh-CN')
+  sidebar.toggleCollapse()
+  assert.equal(locale.locale.value, 'zh-CN')
+  assert.equal(sidebar.isCollapsed.value, false)
+})
+
+test('invalid stored values fall back and normal changes remain persistent', () => {
+  const values = new Map([
+    ['locale', 'invalid'],
+    ['sidebar-collapsed', 'invalid']
+  ])
+  const stores = loadStores(() => ({
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value)
+  }))
+  const locale = stores.useLocaleStore()
+  const sidebar = stores.useSidebarStore()
+  assert.equal(locale.locale.value, 'zh-CN')
+  assert.equal(sidebar.isCollapsed.value, false)
   locale.setLocale('en-US')
   sidebar.toggleCollapse()
   assert.equal(values.get('locale'), 'en-US')
-  assert.equal(values.get('sidebar-collapsed'), 'false')
+  assert.equal(values.get('sidebar-collapsed'), 'true')
 })
