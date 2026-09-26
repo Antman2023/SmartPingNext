@@ -254,3 +254,21 @@ func TestPingTargetOffsetStaysWithinInterval(t *testing.T) {
 		t.Fatalf("zero interval offset = %v, want 0", got)
 	}
 }
+
+func TestPingProbeStartPreservesSpacingAfterDelayedRound(t *testing.T) {
+	interval := 3 * time.Second
+	now := time.Date(2026, 9, 27, 12, 2, 20, 0, time.UTC)
+	roundTime := now.Add(-2 * time.Minute)
+	start := pingProbeStart(roundTime, 100*time.Millisecond, now)
+	if !start.Equal(now) {
+		t.Fatalf("delayed probe starts at %v, want %v", start, now)
+	}
+	if next := start.Add(interval); !next.After(now) {
+		t.Fatalf("next probe at %v must remain scheduled after current time", next)
+	}
+
+	futureRound := now.Add(2 * time.Second)
+	if start := pingProbeStart(futureRound, 100*time.Millisecond, now); !start.Equal(futureRound.Add(100 * time.Millisecond)) {
+		t.Fatalf("future probe starts at %v, want %v", start, futureRound.Add(100*time.Millisecond))
+	}
+}

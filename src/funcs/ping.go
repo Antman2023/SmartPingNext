@@ -130,6 +130,14 @@ func pingTargetOffset(index int, stagger, interval time.Duration) time.Duration 
 	return (time.Duration(index) * stagger) % interval
 }
 
+func pingProbeStart(roundTime time.Time, targetOffset time.Duration, now time.Time) time.Time {
+	start := roundTime.Add(targetOffset)
+	if start.Before(now) {
+		return now
+	}
+	return start
+}
+
 func Ping() {
 	PingContext(context.Background())
 }
@@ -200,7 +208,9 @@ func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, ping
 	stat := g.PingSt{}
 	stat.MinDelay = -1
 	ipaddr, err := nettools.ResolveIPv4Context(ctx, t.Addr)
-	roundStart := roundTime.Add(targetOffset)
+	// A queued round or slow DNS lookup may start after its scheduled minute.
+	// Keep the probe interval instead of sending overdue probes in a burst.
+	roundStart := pingProbeStart(roundTime, targetOffset, time.Now())
 	if err == nil {
 		for i := 0; i < pingCount; i++ {
 			nextTick := roundStart.Add(time.Duration(i) * pingInterval)
