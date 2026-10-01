@@ -39,6 +39,8 @@ func withGlobalConfigState(t *testing.T, fn func()) {
 	oldUser := cloneBoolMapForConfig(AuthUserIpMap)
 	oldAgent := cloneBoolMapForConfig(AuthAgentIpMap)
 	oldAlert := cloneBoolMapForConfig(AlertStatus)
+	oldEpisodes := alertEpisodes
+	alertEpisodes = nil
 	oldClient := HttpClient
 	oldTZ := LocalTimezone
 
@@ -49,6 +51,7 @@ func withGlobalConfigState(t *testing.T, fn func()) {
 		AuthUserIpMap = oldUser
 		AuthAgentIpMap = oldAgent
 		AlertStatus = oldAlert
+		alertEpisodes = oldEpisodes
 		HttpClient = oldClient
 		LocalTimezone = oldTZ
 	}()

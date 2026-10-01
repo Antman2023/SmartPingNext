@@ -122,3 +122,102 @@ func TestRecordAlertCheckConcurrentConfigChanges(t *testing.T) {
 		}
 	})
 }
+
+func TestRetryAlertEpisodeOnlyResetsItsOwnEpisode(t *testing.T) {
+	changes := map[string]func(Config, map[string]string){
+		"changed rule": func(config Config, rule map[string]string) {
+			rule["Thdloss"] = "10"
+			SetConfig(config)
+		},
+		"removed and readded identical rule": func(config Config, _ map[string]string) {
+			SetConfig(Config{Addr: config.Addr})
+			SetConfig(config)
+		},
+		"recovered and failed again": func(config Config, rule map[string]string) {
+			RecordAlertCheck(config.Addr, rule, true)
+		},
+		"changed local node and back": func(config Config, _ map[string]string) {
+			SetConfig(Config{Addr: "127.0.0.2"})
+			SetConfig(config)
+		},
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			withGlobalConfigState(t, func() {
+				config := alertStateConfig()
+				SetConfig(config)
+				rule := config.Network[config.Addr].Topology[0]
+				oldEpisode := RecordAlertCheckEpisode(config.Addr, rule, false)
+				if oldEpisode == nil {
+					t.Fatal("old episode did not start")
+				}
+				change(config, rule)
+				newEpisode := RecordAlertCheckEpisode(config.Addr, rule, false)
+				if newEpisode == nil || newEpisode == oldEpisode {
+					t.Fatal("replacement episode did not get a new identity")
+				}
+				RetryAlertEpisode(oldEpisode)
+				if AlertStatus[rule["Addr"]] || RecordAlertCheck(config.Addr, rule, false) {
+					t.Fatal("obsolete retry reset the newer alert")
+				}
+				RetryAlertEpisode(newEpisode)
+				if !AlertStatus[rule["Addr"]] {
+					t.Fatal("current episode was not made eligible for retry")
+				}
+				if !RecordAlertCheck(config.Addr, rule, false) {
+					t.Fatal("current episode could not retry")
+				}
+				RetryAlertEpisode(newEpisode)
+				if AlertStatus[rule["Addr"]] {
+					t.Fatal("reusing a retry token reset another episode")
+				}
+			})
+		})
+	}
+}
+
+func TestRetryAlertEpisodeSurvivesUnchangedRuleConfigUpdates(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		config := alertStateConfig()
+		SetConfig(config)
+		rule := config.Network[config.Addr].Topology[0]
+		episode := RecordAlertCheckEpisode(config.Addr, rule, false)
+		config.Name = "renamed local node"
+		rule["Name"] = "renamed target"
+		SetConfig(config)
+		RetryAlertEpisode(episode)
+		if !RecordAlertCheck(config.Addr, rule, false) {
+			t.Fatal("renaming discarded the current episode's retry")
+		}
+		RetryAlertEpisode(nil)
+	})
+}
+
+func TestRetryAlertEpisodeConcurrentConfigChanges(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		config := alertStateConfig()
+		SetConfig(config)
+		rule := config.Network[config.Addr].Topology[0]
+		episode := RecordAlertCheckEpisode(config.Addr, rule, false)
+		var workers sync.WaitGroup
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			for i := 0; i < 1000; i++ {
+				SetConfig(Config{Addr: config.Addr})
+				SetConfig(config)
+				RecordAlertCheckEpisode(config.Addr, rule, false)
+			}
+		}()
+		go func() {
+			defer workers.Done()
+			for i := 0; i < 1000; i++ {
+				RetryAlertEpisode(episode)
+			}
+		}()
+		workers.Wait()
+		if RecordAlertCheck(config.Addr, rule, false) || AlertStatus[rule["Addr"]] {
+			t.Fatal("obsolete retry reset the final config's episode")
+		}
+	})
+}

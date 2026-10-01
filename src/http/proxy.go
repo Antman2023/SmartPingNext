@@ -3,7 +3,6 @@ package http
 import (
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -114,12 +113,13 @@ func validateProxyTarget(rawTarget string) (*url.URL, error) {
 		return nil, errors.New("Proxy Target Not Allowed!")
 	}
 
-	config := g.ConfigSnapshot()
-	if !isConfiguredProxyTargetHost(targetURL.Hostname(), config) {
+	port, _ := strconv.Atoi(targetURL.Port())
+	hostAllowed, portAllowed := g.ConfiguredNodeEndpoint(targetURL.Hostname(), port)
+	if !hostAllowed {
 		return nil, errors.New("Proxy Target Host Not Allowed!")
 	}
 
-	if !isConfiguredProxyTargetPort(targetURL.Port(), config) {
+	if !portAllowed {
 		return nil, errors.New("Proxy Target Port Not Allowed!")
 	}
 
@@ -154,53 +154,4 @@ func (r proxyQueryRule) validate(values url.Values) error {
 	}
 
 	return nil
-}
-
-func isConfiguredProxyTargetHost(host string, config g.Config) bool {
-	normalizedHost := normalizeProxyTargetHost(host)
-	if normalizedHost == "" {
-		return false
-	}
-
-	for key, member := range config.Network {
-		if normalizeProxyTargetHost(key) == normalizedHost {
-			return true
-		}
-		if normalizeProxyTargetHost(member.Addr) == normalizedHost {
-			return true
-		}
-	}
-
-	return false
-}
-
-func normalizeProxyTargetHost(host string) string {
-	host = strings.TrimSpace(strings.Trim(host, "[]"))
-	if host == "" {
-		return ""
-	}
-
-	parsedIP := net.ParseIP(host)
-	if parsedIP == nil {
-		return strings.ToLower(host)
-	}
-
-	if ipv4 := parsedIP.To4(); ipv4 != nil {
-		return ipv4.String()
-	}
-
-	return parsedIP.String()
-}
-
-func isConfiguredProxyTargetPort(port string, config g.Config) bool {
-	if port == "" {
-		return false
-	}
-
-	targetPort, err := strconv.Atoi(port)
-	if err != nil || targetPort <= 0 {
-		return false
-	}
-
-	return targetPort == config.Port
 }
