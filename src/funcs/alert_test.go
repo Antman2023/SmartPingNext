@@ -564,23 +564,14 @@ func TestAlertStorageContextReturnsDatabaseError(t *testing.T) {
 }
 
 func TestTraceAndStoreAlertRestoresRetryStateWhenCanceled(t *testing.T) {
-	const target = "192.0.2.1"
-	g.AlertStatusLock.Lock()
-	oldStatus := g.AlertStatus
-	g.AlertStatus = map[string]bool{target: false}
-	g.AlertStatusLock.Unlock()
-	t.Cleanup(func() {
-		g.AlertStatusLock.Lock()
-		g.AlertStatus = oldStatus
-		g.AlertStatusLock.Unlock()
-	})
+	_, _, job := configuredAlertJob(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	traceAndStoreAlertContext(ctx, g.AlertLog{Targetip: target})
+	traceAndStoreAlertContext(ctx, job)
 
 	g.AlertStatusLock.RLock()
-	status, exists := g.AlertStatus[target]
+	status, exists := g.AlertStatus[job.alert.Targetip]
 	g.AlertStatusLock.RUnlock()
 	if !exists || !status {
 		t.Fatalf("canceled alert state = (%v, %v), want existing healthy retry state", status, exists)
@@ -588,23 +579,55 @@ func TestTraceAndStoreAlertRestoresRetryStateWhenCanceled(t *testing.T) {
 }
 
 func TestRestoreAlertStatusDoesNotRecreateRemovedTarget(t *testing.T) {
-	const target = "192.0.2.1"
-	g.AlertStatusLock.Lock()
-	oldStatus := g.AlertStatus
-	g.AlertStatus = map[string]bool{}
-	g.AlertStatusLock.Unlock()
-	t.Cleanup(func() {
-		g.AlertStatusLock.Lock()
-		g.AlertStatus = oldStatus
-		g.AlertStatusLock.Unlock()
-	})
+	config, _, job := configuredAlertJob(t)
+	g.SetConfig(g.Config{Addr: config.Addr})
 
-	restoreAlertStatusForRetry(target)
+	g.RetryAlertEpisode(job.episode)
 
 	g.AlertStatusLock.RLock()
-	_, exists := g.AlertStatus[target]
+	_, exists := g.AlertStatus[job.alert.Targetip]
 	g.AlertStatusLock.RUnlock()
 	if exists {
 		t.Fatal("retry restoration recreated a target removed by configuration reconciliation")
 	}
+}
+
+func TestObsoleteTraceCancellationDoesNotResetChangedRule(t *testing.T) {
+	config, rule, job := configuredAlertJob(t)
+	rule["Thdloss"] = "10"
+	g.SetConfig(config)
+	if !g.RecordAlertCheck(config.Addr, rule, false) {
+		t.Fatal("changed rule did not start its own alert")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	traceAndStoreAlertContext(ctx, job)
+	if g.RecordAlertCheck(config.Addr, rule, false) {
+		t.Fatal("canceled obsolete trace reset the newer alert and caused a duplicate")
+	}
+}
+
+func configuredAlertJob(t *testing.T) (g.Config, map[string]string, alertTraceJob) {
+	t.Helper()
+	oldConfig := g.ConfigSnapshot()
+	g.AlertStatusLock.RLock()
+	oldStatus := g.AlertStatus
+	g.AlertStatusLock.RUnlock()
+	t.Cleanup(func() {
+		g.SetConfig(oldConfig)
+		g.AlertStatusLock.Lock()
+		g.AlertStatus = oldStatus
+		g.AlertStatusLock.Unlock()
+	})
+	const local, target = "127.0.0.1", "192.0.2.1"
+	rule := map[string]string{"Addr": target, "Thdchecksec": "60", "Thdoccnum": "1", "Thdloss": "30", "Thdavgdelay": "200"}
+	config := g.Config{Addr: local, Network: map[string]g.NetworkMember{
+		local: {Addr: local, Topology: []map[string]string{rule}},
+	}}
+	g.SetConfig(config)
+	episode := g.RecordAlertCheckEpisode(local, rule, false)
+	if episode == nil {
+		t.Fatal("old rule did not start an alert")
+	}
+	return config, rule, alertTraceJob{alert: g.AlertLog{Fromip: local, Targetip: target}, episode: episode}
 }

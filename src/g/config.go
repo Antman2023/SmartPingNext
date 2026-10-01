@@ -45,6 +45,7 @@ var (
 	configSaveLock  sync.Mutex
 	AlertStatus     map[string]bool
 	AlertStatusLock sync.RWMutex
+	alertEpisodes   map[string]*AlertEpisode
 	AuthUserIpMap   map[string]bool
 	AuthAgentIpMap  map[string]bool
 	AuthIpLock      sync.RWMutex
@@ -343,6 +344,11 @@ func SetConfig(config Config) {
 	AuthIpLock.Lock()
 	AlertStatusLock.Lock()
 	nextAlertStatus := reconcileAlertStatuses(Cfg, config, AlertStatus)
+	for target := range alertEpisodes {
+		if healthy, exists := nextAlertStatus[target]; !exists || healthy {
+			delete(alertEpisodes, target)
+		}
+	}
 	Cfg = config
 	SelfCfg = cloneNetworkMember(config.Network[config.Addr])
 	AuthUserIpMap = userIPs
@@ -363,11 +369,22 @@ type alertRuleIdentity struct {
 // RecordAlertCheck returns whether this result starts a new alert episode.
 // Results from removed or changed rules cannot update the current state.
 func RecordAlertCheck(localAddr string, rule map[string]string, healthy bool) bool {
+	return RecordAlertCheckEpisode(localAddr, rule, healthy) != nil
+}
+
+// AlertEpisode identifies one transition into an alert. Its fields are private
+// so asynchronous jobs can only retry the episode they were given.
+type AlertEpisode struct {
+	target string
+}
+
+// RecordAlertCheckEpisode returns a token only when a new alert starts.
+func RecordAlertCheckEpisode(localAddr string, rule map[string]string, healthy bool) *AlertEpisode {
 	CfgLock.RLock()
 	defer CfgLock.RUnlock()
 	target := rule["Addr"]
 	if localAddr != Cfg.Addr || target == "" || target == localAddr {
-		return false
+		return nil
 	}
 	matched := false
 	for _, current := range Cfg.Network[localAddr].Topology {
@@ -377,7 +394,7 @@ func RecordAlertCheck(localAddr string, rule map[string]string, healthy bool) bo
 		}
 	}
 	if !matched {
-		return false
+		return nil
 	}
 	// Keep the same lock order as SetConfig, holding the config read lock
 	// until the state transition is published.
@@ -388,7 +405,36 @@ func RecordAlertCheck(localAddr string, rule map[string]string, healthy bool) bo
 		AlertStatus = make(map[string]bool)
 	}
 	AlertStatus[target] = healthy
-	return !healthy && (!exists || previous)
+	if healthy {
+		delete(alertEpisodes, target)
+		return nil
+	}
+	if exists && !previous {
+		return nil
+	}
+	episode := &AlertEpisode{target: target}
+	if alertEpisodes == nil {
+		alertEpisodes = make(map[string]*AlertEpisode)
+	}
+	alertEpisodes[target] = episode
+	return episode
+}
+
+// RetryAlertEpisode cannot reset a replacement rule or a later alert episode.
+// SetConfig invalidates tokens under the same state lock when rules change.
+func RetryAlertEpisode(episode *AlertEpisode) {
+	if episode == nil {
+		return
+	}
+	AlertStatusLock.Lock()
+	defer AlertStatusLock.Unlock()
+	if alertEpisodes[episode.target] != episode {
+		return
+	}
+	if healthy, exists := AlertStatus[episode.target]; exists && !healthy {
+		AlertStatus[episode.target] = true
+	}
+	delete(alertEpisodes, episode.target)
 }
 
 func ruleIdentity(rule map[string]string) alertRuleIdentity {
