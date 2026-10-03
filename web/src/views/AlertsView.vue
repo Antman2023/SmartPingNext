@@ -85,6 +85,13 @@
             </div>
           </div>
 
+          <div v-if="hasRetainedAlerts" class="alerts-view__refresh-error" role="status">
+            <span>{{ $t('alerts.showingPreviousRecords') }}</span>
+            <el-button size="small" :disabled="alertsLoading" @click="retryAlerts">
+              {{ $t('common.retry') }}
+            </el-button>
+          </div>
+
           <div class="table-scroll">
             <el-table
               v-loading="configLoading || alertsLoading"
@@ -93,7 +100,14 @@
               style="width: 100%"
             >
               <el-table-column prop="Logtime" :label="$t('alerts.alertDate')" min-width="170" />
-              <el-table-column prop="Fromname" :label="$t('alerts.sourceNode')" min-width="120" />
+              <el-table-column prop="Fromname" :label="$t('alerts.sourceNode')" min-width="120">
+                <template #default="{ row }">
+                  <span>{{ row.Fromname }}</span>
+                  <span v-if="row.refreshFailed" class="alerts-view__stale-label">
+                    {{ $t('common.refreshFailed') }}
+                  </span>
+                </template>
+              </el-table-column>
               <el-table-column prop="Fromip" :label="$t('alerts.sourceIP')" min-width="140" />
               <el-table-column prop="Targetname" :label="$t('alerts.targetNode')" min-width="120" />
               <el-table-column prop="Targetip" :label="$t('alerts.targetIP')" min-width="140" />
@@ -233,12 +247,16 @@ interface AlertNode {
   error: boolean
 }
 
+interface AlertRecord extends AlertLog {
+  refreshFailed: boolean
+}
+
 const router = useRouter()
 const { t } = useI18n()
 const config = ref<Config | null>(null)
 const dates = ref<string[]>([])
 const selectedDate = ref('')
-const alerts = ref<AlertLog[]>([])
+const alerts = ref<AlertRecord[]>([])
 const nodes = ref<AlertNode[]>([])
 const alertsLoading = ref(false)
 const alertsLoadError = ref(false)
@@ -253,9 +271,12 @@ let alertsRequestId = 0
 let configAbortController: AbortController | null = null
 let alertsAbortController: AbortController | null = null
 const archiveDatesByNode = new Map<string, string[]>()
+// Keep one query only; date changes and config reloads invalidate source snapshots.
+const recordsByNode = new Map<string, AlertLog[]>()
 let alertsQueryDate: string | null = null
 const ALERT_CONCURRENCY = 4
 const failedNodes = computed(() => nodes.value.filter((node) => node.error).length)
+const hasRetainedAlerts = computed(() => alerts.value.some((record) => record.refreshFailed))
 const lastUpdatedLabel = computed(() =>
   lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
 )
@@ -278,6 +299,7 @@ const loadConfig = async () => {
     }
     config.value = cfg
     archiveDatesByNode.clear()
+    recordsByNode.clear()
     dates.value = []
     alerts.value = []
     lastUpdatedAt.value = null
@@ -322,6 +344,7 @@ const loadAlerts = async (date?: string) => {
   const queryDate = date || ''
   if (alertsQueryDate !== queryDate) {
     alertsQueryDate = queryDate
+    recordsByNode.clear()
     alerts.value = []
     lastUpdatedAt.value = null
   }
@@ -361,6 +384,7 @@ const loadAlerts = async (date?: string) => {
       result.node.error = result.error
       if (result.data) {
         archiveDatesByNode.set(result.node.addr, result.data.dates)
+        recordsByNode.set(result.node.addr, result.data.logs)
       }
     })
     const successfulData = results
@@ -377,8 +401,11 @@ const loadAlerts = async (date?: string) => {
       lastUpdatedAt.value = new Date()
     }
 
-    alerts.value = successfulData
-      .flatMap((data) => data.logs)
+    alerts.value = requestNodes
+      .flatMap((node) => (recordsByNode.get(node.addr) ?? []).map((log) => ({
+        ...log,
+        refreshFailed: node.error
+      })))
       .sort((a, b) => b.Logtime.localeCompare(a.Logtime))
   } catch (error) {
     if (!isRequestCanceled(error)) throw error
@@ -498,6 +525,22 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.alerts-view__refresh-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
+.alerts-view__stale-label {
+  margin-left: 6px;
+  color: var(--color-danger);
+  font-size: 12px;
 }
 
 .alerts-view__back-link {

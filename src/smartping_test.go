@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"smartping/src/funcs"
 	"smartping/src/g"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -212,5 +214,68 @@ func TestGracefulShutdownPropagatesDeadlineAndKeepsDatabaseOpen(t *testing.T) {
 	defer cleanupCancel()
 	if err := jobs.Wait(cleanupCtx); err != nil {
 		t.Fatalf("cleanup Wait returned error: %v", err)
+	}
+}
+
+type queuedStorageContext struct {
+	context.Context
+	once    sync.Once
+	waiting chan struct{}
+}
+
+func (ctx *queuedStorageContext) Done() <-chan struct{} {
+	ctx.once.Do(func() { close(ctx.waiting) })
+	return ctx.Context.Done()
+}
+
+func TestShutdownServiceCancelsJobsQueuedForDatabaseWriteAccess(t *testing.T) {
+	database, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	oldDatabase := g.Db
+	g.Db = database
+	defer func() { g.Db = oldDatabase }()
+	jobs := newBackgroundJobs(context.Background())
+	g.DLock.Lock()
+	defer func() {
+		jobs.Stop()
+		g.DLock.Unlock()
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := jobs.Wait(cleanupCtx); err != nil {
+			t.Errorf("cleanup queued jobs: %v", err)
+		}
+	}()
+	operations := []func(context.Context){
+		func(ctx context.Context) { funcs.PingStorageContext(ctx, g.PingSt{}, "192.0.2.1", "2026-10-04 12:00") },
+		func(ctx context.Context) { _ = funcs.AlertStorageContext(ctx, g.AlertLog{}) },
+		func(ctx context.Context) { _ = funcs.MapPingStorageContext(ctx) },
+		funcs.ClearArchiveContext,
+	}
+	for _, operation := range operations {
+		waiting := make(chan struct{})
+		if !jobs.Start(func(ctx context.Context) { operation(&queuedStorageContext{Context: ctx, waiting: waiting}) }) {
+			t.Fatal("queued storage job did not start")
+		}
+		select {
+		case <-waiting:
+		case <-time.After(time.Second):
+			t.Fatal("storage job did not queue for database write access")
+		}
+	}
+	scheduler := cron.New()
+	scheduler.Start()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := shutdownService(shutdownCtx, &http.Server{}, scheduler, jobs); err != nil {
+		t.Fatalf("queued storage prevented shutdown while the write lock remained held: %v", err)
+	}
+	if jobs.Start(func(context.Context) {}) {
+		t.Fatal("shutdown accepted new background work")
+	}
+	if err := database.Ping(); err == nil {
+		t.Fatal("database remained open after queued jobs exited")
 	}
 }

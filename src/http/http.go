@@ -307,11 +307,11 @@ func resolvePingTimeRange(values url.Values, now time.Time, location *time.Locat
 		return time.Time{}, time.Time{}, errors.New("Invalid Time Range!")
 	}
 
-	parsedStart, err := time.ParseInLocation("2006-01-02 15:04", startRaw[0], location)
+	parsedStart, err := parseQueryMinuteInLocation(startRaw[0], location)
 	if err != nil {
 		return time.Time{}, time.Time{}, errors.New("Invalid Time Range!")
 	}
-	parsedEnd, err := time.ParseInLocation("2006-01-02 15:04", endRaw[0], location)
+	parsedEnd, err := parseQueryMinuteInLocation(endRaw[0], location)
 	if err != nil {
 		return time.Time{}, time.Time{}, errors.New("Invalid Time Range!")
 	}
@@ -334,11 +334,30 @@ func resolveMappingDataKey(values url.Values, now time.Time, location *time.Loca
 	if len(raw) != 1 || raw[0] == "" {
 		return "", errors.New("Invalid Mapping Time!")
 	}
-	parsed, err := time.ParseInLocation("2006-01-02 15:04", raw[0], location)
+	parsed, err := parseQueryMinuteInLocation(raw[0], location)
 	if err != nil {
 		return "", errors.New("Invalid Mapping Time!")
 	}
 	return parsed.Format("2006-01-02 15:04"), nil
+}
+
+func parseQueryMinuteInLocation(value string, location *time.Location) (time.Time, error) {
+	const layout = "2006-01-02 15:04"
+	// Parse the civil fields independently of timezone transitions. This keeps
+	// accepted spellings (such as a single-digit hour) while checking that the
+	// requested local minute was not silently moved across a clock gap.
+	civil, err := time.Parse(layout, value)
+	if err != nil {
+		return time.Time{}, err
+	}
+	parsed, err := time.ParseInLocation(layout, value, location)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if parsed.Format(layout) != civil.Format(layout) {
+		return time.Time{}, errors.New("Nonexistent Local Query Time!")
+	}
+	return parsed, nil
 }
 
 func completedPingTimelineSize(lastcheck []string, populated []bool, now time.Time, location *time.Location) int {

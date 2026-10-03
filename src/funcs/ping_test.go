@@ -2,10 +2,115 @@ package funcs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"smartping/src/g"
 	"testing"
 	"time"
 )
+
+func TestScheduledPingProbesDoNotCatchUpAfterSlowProbe(t *testing.T) {
+	const interval = 30 * time.Millisecond
+	var starts []time.Time
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := runScheduledPingProbesContext(ctx, 4, interval, time.Now(), func(seq int) {
+		if seq != len(starts) {
+			t.Fatalf("probe sequence = %d, want %d", seq, len(starts))
+		}
+		starts = append(starts, time.Now())
+		if seq == 0 {
+			time.Sleep(4 * interval)
+		}
+	})
+	if err != nil || len(starts) != 4 {
+		t.Fatalf("probes = %d, error = %v, want 4 completed probes", len(starts), err)
+	}
+	for i := 1; i < len(starts); i++ {
+		// The scheduler timestamps just before calling the probe. Allow a small
+		// difference from this callback's timestamp on high-resolution clocks.
+		if spacing := starts[i].Sub(starts[i-1]); spacing < interval-time.Millisecond {
+			t.Errorf("probe %d started %v after the previous probe, want at least %v", i, spacing, interval)
+		}
+	}
+}
+
+func TestScheduledPingProbesHonorFirstStartAndFastProbeInterval(t *testing.T) {
+	const interval = 20 * time.Millisecond
+	firstStart := time.Now().Add(2 * interval)
+	var starts []time.Time
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := runScheduledPingProbesContext(ctx, 3, interval, firstStart, func(int) {
+		starts = append(starts, time.Now())
+	})
+	if err != nil || len(starts) != 3 {
+		t.Fatalf("probes = %d, error = %v, want 3 completed probes", len(starts), err)
+	}
+	if starts[0].Before(firstStart) {
+		t.Fatalf("first probe started at %v before its staggered start %v", starts[0], firstStart)
+	}
+	for i := 1; i < len(starts); i++ {
+		if spacing := starts[i].Sub(starts[i-1]); spacing < interval-time.Millisecond {
+			t.Errorf("probe %d interval = %v, want at least %v", i, spacing, interval)
+		}
+	}
+}
+
+func TestScheduledPingProbesCanceledBeforeFirstStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runScheduledPingProbesContext(ctx, 3, time.Second, time.Now().Add(time.Hour), func(int) {
+		t.Fatal("canceled schedule started a probe")
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context canceled", err)
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err = runScheduledPingProbesContext(ctx, 3, time.Second, time.Now().Add(time.Hour), func(int) {
+		t.Fatal("probe started before the deadline interrupted its stagger wait")
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestScheduledPingProbesCancellationStopsFurtherProbes(t *testing.T) {
+	for _, cancelDuringProbe := range []bool{false, true} {
+		t.Run(fmt.Sprint("during probe=", cancelDuringProbe), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			calls := 0
+			started := make(chan struct{})
+			done := make(chan error, 1)
+			go func() {
+				done <- runScheduledPingProbesContext(ctx, 4, time.Hour, time.Now(), func(int) {
+					calls++
+					if cancelDuringProbe {
+						cancel()
+					}
+					close(started)
+				})
+			}()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				t.Fatal("first probe did not start")
+			}
+			cancel()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.Canceled) || calls != 1 {
+					t.Fatalf("calls = %d, error = %v, want one probe and cancellation", calls, err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("cancellation did not interrupt the probe schedule")
+			}
+		})
+	}
+}
 
 func TestPingContextDoesNotStartCanceledRound(t *testing.T) {
 	oldGate := pingRoundGate

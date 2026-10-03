@@ -16,6 +16,7 @@ interface Target {
   fromName: string
   targetIp: string
   loading: boolean
+  error: boolean
   chartData: PingLogData | null
   fromAddr: string
   fromPort: number
@@ -36,6 +37,7 @@ interface MonitorSetup {
   detailVisible: vue.Ref<boolean>
   detailTitle: vue.ComputedRef<string>
   detailLoading: vue.Ref<boolean>
+  detailError: vue.Ref<boolean>
   detailData: vue.Ref<PingLogData | null>
   currentTargetIp?: vue.Ref<string>
   currentTarget?: vue.Ref<Target | null>
@@ -47,6 +49,8 @@ interface MonitorSetup {
   useCustomTimeRange: () => void
   refreshChartsIfVisible: () => void
   refreshDetailIfVisible: () => Promise<void> | void
+  getStatusText: (target: Target) => string
+  getStatusClass: (target: Target) => string
 }
 const sample: PingLogData = {
   lastcheck: ['2026-09-06 12:00'],
@@ -73,9 +77,11 @@ for (const name of ['DashboardView', 'ReverseView']) {
       constructor(value?: number) { super(value ?? now) }
     }
     const getPing = t.mock.fn(async (): Promise<PingLogData> => sample)
-    const document = { visibilityState: 'visible' }
+    const fetchConfig = t.mock.fn(async () => ({ Addr: '127.0.0.1', Base: { Refresh: 1 }, Network: {} }))
+    const document = { visibilityState: 'visible', addEventListener: t.mock.fn(), removeEventListener: t.mock.fn() }
+    let unmount!: () => void
     const dependencies: Record<string, unknown> = {
-      vue: { ...vue, onMounted: () => {}, onUnmounted: () => {} },
+      vue: { ...vue, onMounted: () => {}, onUnmounted: (callback: () => void) => { unmount = callback } },
       'vue-i18n': { useI18n: () => ({ t: (key: string) => key }) },
       'element-plus': { ElMessage: { error: () => {}, warning: showWarning } },
       '@element-plus/icons-vue': {},
@@ -87,7 +93,7 @@ for (const name of ['DashboardView', 'ReverseView']) {
           error instanceof DOMException && error.name === 'AbortError'
       },
       '@/api/config': {
-        fetchConfig: async () => ({ Addr: '127.0.0.1', Base: { Refresh: 1 }, Network: {} })
+        fetchConfig, fetchProxyConfig: fetchConfig
       },
       '@/api/ping': { getPingData: getPing, getProxyPingData: getPing },
       '@/utils/concurrency': { mapWithConcurrency },
@@ -128,9 +134,10 @@ for (const name of ['DashboardView', 'ReverseView']) {
       fromAddr: `192.0.2.${index + 1}`,
       fromPort: 8899,
       loading: false,
+      error: false,
       chartData: null
     }))
-    return { view, targets, getPing, document, locale, showWarning, warning: showWarning, setInterval, clearInterval,
+    return { view, targets, getPing, fetchConfig, document, locale, showWarning, warning: showWarning, setInterval, clearInterval, unmount,
       advanceTime: (ms: number) => { now += ms } }
   }
 
@@ -332,6 +339,69 @@ for (const name of ['DashboardView', 'ReverseView']) {
     await pending
   })
 
+  test(`${name}: failed refresh retains curves and reports failed targets until recovery`, async (t) => {
+    const { view, targets, getPing } = createView(t)
+    await view.loadAllCharts()
+    const loaded = targets.value.map((target) => target.chartData)
+    const updatedAt = view.lastUpdatedAt.value
+    getPing.mock.mockImplementation(async () => { throw new Error('offline') })
+    await view.loadAllCharts()
+    targets.value.forEach((target, index) => {
+      assert.equal(target.chartData, loaded[index])
+      assert.equal(target.error, true)
+      assert.equal(view.getStatusClass(target), 'status-chip--danger')
+      assert.equal(view.getStatusText(target), 'common.refreshFailed')
+    })
+    assert.equal(view.loadedTargets.value, 0)
+    assert.equal(view.failedTargets.value, 6)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    const recovered = { ...sample, avgdelay: ['20'] }
+    getPing.mock.mockImplementation(async () => recovered)
+    await view.loadAllCharts()
+    assert.equal(view.loadedTargets.value, 6)
+    assert.equal(view.failedTargets.value, 0)
+    assert.ok(targets.value.every((target) => !target.error && target.chartData?.avgdelay[0] === '20'))
+  })
+
+  test(`${name}: failed rolling detail refresh retains the chart and recovers on success`, async (t) => {
+    const { view, targets, getPing, advanceTime } = createView(t)
+    await view.showDetail(targets.value[0]!)
+    const loaded = view.detailData.value
+    const previousEnd = view.endTime.value
+    advanceTime(60_000)
+    getPing.mock.mockImplementation(async () => { throw new Error('offline') })
+    await view.loadDetailData()
+    assert.equal(view.detailData.value, loaded)
+    assert.equal(view.detailError.value, true)
+    assert.equal(view.detailLoading.value, false)
+    assert.notEqual(view.endTime.value, previousEnd)
+    const recovered = { ...sample, avgdelay: ['20'] }
+    getPing.mock.mockImplementation(async () => recovered)
+    await view.loadDetailData()
+    assert.deepEqual(view.detailData.value, recovered)
+    assert.equal(view.detailError.value, false)
+  })
+
+  test(`${name}: fixed detail query retains its own data on failure and clears it for a different range`, async (t) => {
+    const { view, targets, getPing } = createView(t)
+    await view.showDetail(targets.value[0]!)
+    view.useCustomTimeRange()
+    view.startTime.value = '2026-09-06 06:00'
+    view.endTime.value = '2026-09-06 12:00'
+    await view.loadDetailData()
+    const loaded = view.detailData.value
+    getPing.mock.mockImplementation(async () => { throw new Error('offline') })
+    await view.loadDetailData()
+    assert.equal(view.detailData.value, loaded)
+    assert.equal(view.detailError.value, true)
+    view.startTime.value = '2026-09-06 07:00'
+    const pending = view.loadDetailData()
+    assert.equal(view.detailData.value, null, 'old data must be cleared before requesting a different range')
+    await pending
+    assert.equal(view.detailData.value, null)
+    assert.equal(view.detailError.value, true)
+  })
+
   test(`${name}: closing detail cancels its request and ignores its late response`, async (t) => {
     const { view, targets, getPing } = createView(t)
     if (view.currentTargetIp) view.currentTargetIp.value = targets.value[0]!.targetIp
@@ -355,6 +425,108 @@ for (const name of ['DashboardView', 'ReverseView']) {
     assert.equal(view.detailData.value, null)
   })
 
+  test(`${name}: late detail queries after closing do not send requests and reopening still works`, async (t) => {
+    const { view, targets, getPing, setInterval } = createView(t)
+    await view.showDetail(targets.value[0]!)
+    const loaded = view.detailData.value
+    view.detailAutoRefresh.value = true
+    await vue.nextTick()
+    const refresh = setInterval.mock.calls.at(-1)!.arguments[0]
+    view.detailVisible.value = false
+    // A dialog may still emit a query while its closing transition is running.
+    await view.loadDetailData()
+    assert.equal(getPing.mock.callCount(), 1)
+    await vue.nextTick()
+    refresh()
+    view.setTimeRange(3)
+    await view.loadDetailData()
+    assert.equal(getPing.mock.callCount(), 1)
+    assert.equal(view.detailData.value, loaded)
+    assert.equal(view.detailLoading.value, false)
+    await view.showDetail(targets.value[1]!)
+    assert.equal(getPing.mock.callCount(), 2)
+    assert.equal(view.detailVisible.value, true)
+    assert.deepEqual(view.detailData.value, sample)
+  })
+
+  test(`${name}: unmount cancels active requests and prevents late callbacks from starting new work`, async (t) => {
+    const { view, targets, getPing, fetchConfig, setInterval, clearInterval, unmount } = createView(t)
+    await view.showDetail(targets.value[0]!)
+    const loaded = view.detailData.value
+    let finish!: () => void
+    const gate = new Promise<void>((resolve) => { finish = resolve })
+    getPing.mock.mockImplementation(async () => { await gate; return { ...sample, avgdelay: ['99'] } })
+    const listRequest = view.loadAllCharts()
+    const detailRequest = view.loadDetailData()
+    const lateRequests: Promise<void>[] = []
+    t.after(async () => {
+      finish()
+      await Promise.allSettled([listRequest, detailRequest, ...lateRequests])
+    })
+    const calls = getPing.mock.callCount()
+    const signals = getPing.mock.calls.slice(1).map((call) =>
+      (call.arguments as unknown as unknown[]).at(-1) as AbortSignal)
+    view.configLoading.value = false
+    view.autoRefresh.value = true
+    view.detailAutoRefresh.value = true
+    await vue.nextTick()
+    const timers = setInterval.mock.calls.map((call) => call.arguments[0])
+    assert.equal(timers.length, 2)
+    unmount()
+    assert.ok(signals.every((signal) => signal.aborted))
+    assert.equal(clearInterval.mock.callCount(), 2)
+    // Exercise callbacks already dispatched before the timers/listeners were cleared.
+    timers.forEach((refresh) => refresh())
+    view.refreshChartsIfVisible()
+    await view.refreshDetailIfVisible()
+    lateRequests.push(view.loadConfig(), view.loadAllCharts(), view.loadDetailData(), view.showDetail(targets.value[1]!))
+    assert.equal(fetchConfig.mock.callCount(), 0)
+    assert.equal(getPing.mock.callCount(), calls)
+    assert.equal(view.detailData.value, loaded)
+    finish()
+    await Promise.all([listRequest, detailRequest])
+    assert.equal(getPing.mock.callCount(), calls, 'unmount must also stop queued list requests')
+    assert.equal(view.detailData.value, loaded, 'late detail responses must not replace the last chart')
+    assert.ok(targets.value.every((target) => target.chartData === null))
+  })
+
+  test(`${name}: a changed relative range or target cannot retain the previous query's chart`, async (t) => {
+    const { view, targets, getPing } = createView(t)
+    await view.showDetail(targets.value[0]!)
+    getPing.mock.mockImplementation(async () => { throw new Error('offline') })
+    view.setTimeRange(3, false)
+    const pending = view.loadDetailData()
+    assert.equal(view.detailData.value, null)
+    await pending
+    assert.equal(view.detailError.value, true)
+    getPing.mock.mockImplementation(async () => sample)
+    await view.loadDetailData()
+    assert.deepEqual(view.detailData.value, sample)
+    getPing.mock.mockImplementation(async () => { throw new Error('offline') })
+    await view.showDetail(targets.value[1]!)
+    assert.equal(view.detailData.value, null)
+    assert.equal(view.detailError.value, true)
+  })
+
+  test(`${name}: superseded detail failure cannot mark the newest chart as stale`, async (t) => {
+    const { view, targets, getPing } = createView(t)
+    await view.showDetail(targets.value[0]!)
+    let rejectOld!: (error: Error) => void
+    getPing.mock.mockImplementation(() => new Promise<PingLogData>((_resolve, reject) => { rejectOld = reject }))
+    const pending = view.loadDetailData()
+    const args = getPing.mock.calls.at(-1)!.arguments as unknown as unknown[]
+    const signal = args.at(-1) as AbortSignal
+    const newest = { ...sample, avgdelay: ['25'] }
+    getPing.mock.mockImplementation(async () => newest)
+    await view.loadDetailData()
+    assert.equal(signal.aborted, true)
+    rejectOld(new Error('offline'))
+    await pending
+    assert.deepEqual(view.detailData.value, newest)
+    assert.equal(view.detailError.value, false)
+    assert.equal(view.detailLoading.value, false)
+  })
+
   test(`${name}: empty and failed requests do not claim successful updates`, async (t) => {
     const { view, targets, getPing } = createView(t)
     getPing.mock.mockImplementation(async () => {
@@ -363,6 +535,8 @@ for (const name of ['DashboardView', 'ReverseView']) {
     await view.loadAllCharts()
     assert.equal(view.lastUpdatedAt.value, null)
     assert.equal(view.failedTargets.value, 6)
+    assert.ok(targets.value.every((target) => target.error && !target.chartData))
+    assert.ok(targets.value.every((target) => view.getStatusText(target) === 'common.loadFailed'))
     getPing.mock.mockImplementation(async () => sample)
     await view.loadAllCharts()
     const updatedAt = view.lastUpdatedAt.value

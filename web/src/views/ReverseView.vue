@@ -190,6 +190,10 @@
         </div>
 
         <section v-loading="detailLoading" class="surface-panel reverse-view__detail-panel">
+          <div v-if="detailError && detailData" class="detail-refresh-error" role="status">
+            <el-icon><Warning /></el-icon>
+            <span>{{ $t('common.showingPreviousData') }}</span>
+          </div>
           <PingChart v-if="detailData" ref="pingChartRef" :data="detailData" :height="400" />
           <div v-else-if="detailError" class="empty-state reverse-view__detail-error">
             <el-icon><Warning /></el-icon>
@@ -231,6 +235,7 @@ interface ReverseTarget {
   fromPort: number
   chartData: PingLogData | null
   loading: boolean
+  error: boolean
   targetIp: string
 }
 
@@ -269,6 +274,7 @@ let detailRequestId = 0
 let configAbortController: AbortController | null = null
 let chartAbortController: AbortController | null = null
 let detailAbortController: AbortController | null = null
+let detailQueryKey: string | null = null
 const refreshInterval = computed(() => resolveRefreshInterval(config.value?.Base.Refresh))
 const lastUpdatedLabel = computed(() =>
   lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
@@ -285,13 +291,14 @@ const timeRanges = computed(() => [
 ])
 
 const loadedTargets = computed(
-  () => reverseTargets.value.filter((target) => !target.loading && !!target.chartData).length
+  () => reverseTargets.value.filter((target) => !target.loading && !target.error && !!target.chartData).length
 )
 const failedTargets = computed(
-  () => reverseTargets.value.filter((target) => !target.loading && !target.chartData).length
+  () => reverseTargets.value.filter((target) => !target.loading && (target.error || !target.chartData)).length
 )
 
 const loadConfig = async (proxyUrl?: string) => {
+  if (isUnmounted) return
   configAbortController?.abort()
   chartAbortController?.abort()
   chartAbortController = null
@@ -332,6 +339,7 @@ const loadConfig = async (proxyUrl?: string) => {
           fromPort: cfg.Port,
           chartData: null,
           loading: false,
+          error: false,
           targetIp: cfg.Addr
         })
       }
@@ -358,6 +366,7 @@ const loadConfig = async (proxyUrl?: string) => {
 }
 
 const loadAllCharts = async () => {
+  if (isUnmounted) return
   chartAbortController?.abort()
   const controller = new AbortController()
   chartAbortController = controller
@@ -391,13 +400,14 @@ const loadChartData = async (target: ReverseTarget, requestId: number, signal: A
       return
     }
     target.chartData = data
+    target.error = false
     lastUpdatedAt.value = new Date()
   } catch (error) {
     if (isRequestCanceled(error) || isUnmounted || requestId !== chartRequestId) {
       return
     }
     console.error('加载图表数据失败', error)
-    target.chartData = null
+    target.error = true
   } finally {
     if (!isUnmounted && requestId === chartRequestId) {
       target.loading = false
@@ -416,7 +426,9 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
 const DEFAULT_TIME_RANGE_HOURS = normalizeTimeRangeHours(import.meta.env.VITE_DEFAULT_TIME_RANGE)
 
 const showDetail = async (target: ReverseTarget) => {
+  if (isUnmounted) return
   detailRequestId++
+  detailQueryKey = null
   detailData.value = null
   detailLoading.value = false
   detailError.value = false
@@ -428,7 +440,7 @@ const showDetail = async (target: ReverseTarget) => {
 }
 
 const loadDetailData = async () => {
-  if (!currentTarget.value) {
+  if (isUnmounted || !detailVisible.value || !currentTarget.value) {
     return
   }
 
@@ -446,6 +458,11 @@ const loadDetailData = async () => {
     detailLoading.value = false
     ElMessage.warning(t('common.invalidTimeRange'))
     return
+  }
+  const queryKey = JSON.stringify([baseUrl, target.targetIp, relativeTimeRangeHours.value ?? [start, end]])
+  if (queryKey !== detailQueryKey) {
+    detailQueryKey = queryKey
+    detailData.value = null
   }
   const controller = new AbortController()
   detailAbortController = controller
@@ -467,7 +484,6 @@ const loadDetailData = async () => {
       return
     }
     console.error('加载数据失败', error)
-    detailData.value = null
     detailError.value = true
   } finally {
     if (detailAbortController === controller) {
@@ -503,7 +519,7 @@ const getStatusClass = (target: ReverseTarget) => {
   if (target.loading) {
     return 'status-chip--active'
   }
-  if (!target.chartData) {
+  if (target.error || !target.chartData) {
     return 'status-chip--danger'
   }
   return 'status-chip--success'
@@ -512,6 +528,9 @@ const getStatusClass = (target: ReverseTarget) => {
 const getStatusText = (target: ReverseTarget) => {
   if (target.loading) {
     return t('common.loading')
+  }
+  if (target.error && target.chartData) {
+    return t('common.refreshFailed')
   }
   if (!target.chartData) {
     return t('common.loadFailed')

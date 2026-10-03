@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"smartping/src/internal/contextlock"
 	"sync"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 const (
 	defaultICMPReadBufferBytes = 4 * 1024 * 1024
 	ipv4ProtocolICMP           = 1
+	icmpReadErrorLimit         = 5
+	icmpReadRetryInterval      = 10 * time.Millisecond
 )
 
 // icmpResponse 是 readLoop 分发给等待者的响应
@@ -35,7 +38,8 @@ type icmpWaiter struct {
 
 // icmpPool 全局唯一 ICMP 连接池
 type icmpPool struct {
-	initMu       sync.Mutex
+	// Paths needing both locks acquire sendMu before initMu.
+	initMu       contextlock.Mutex
 	conn         net.PacketConn
 	ipconn       *ipv4.PacketConn
 	listenPacket func(network, address string) (net.PacketConn, error)
@@ -43,7 +47,7 @@ type icmpPool struct {
 	mu      sync.RWMutex
 	waiters map[uint32]icmpWaiter
 
-	sendMu sync.Mutex // 保护 SetTTL + WriteTo 原子操作
+	sendMu contextlock.Mutex // 保护 SetTTL + WriteTo 原子操作
 }
 
 var pool icmpPool
@@ -157,20 +161,37 @@ func (p *icmpPool) dispatch(key uint32, resp icmpResponse) {
 // readLoop 持续读取所有 ICMP 报文并按 (ID, Seq) 分发
 func (p *icmpPool) readLoop(conn net.PacketConn) {
 	buf := make([]byte, 1500)
+	consecutiveErrors := 0
 	for {
 		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				p.retireClosedConnection(conn)
+				p.retireConnection(conn)
 				return
 			}
-			// 瞬态错误（Windows WSAECONNRESET 等），继续读取
+			p.initMu.Lock()
+			current := p.conn == conn
+			p.initMu.Unlock()
+			if !current {
+				return
+			}
+			consecutiveErrors++
+			if consecutiveErrors >= icmpReadErrorLimit {
+				logrus.Warnf("[icmpPool:readLoop] retiring connection after %d consecutive read errors: %v", consecutiveErrors, err)
+				p.retireConnection(conn)
+				return
+			}
+			// Allow short error bursts to recover, but do not spin forever on a
+			// broken socket. The next probe lazily opens a replacement if needed.
 			logrus.Debug("[icmpPool:readLoop] ReadFrom error: ", err)
-			time.Sleep(10 * time.Millisecond)
+			time.Sleep(icmpReadRetryInterval << (consecutiveErrors - 1))
 			continue
 		}
 
 		receivedAt := time.Now()
+		// A successful socket read breaks the error streak, even if the ICMP
+		// payload is malformed or does not match one of our current requests.
+		consecutiveErrors = 0
 		// Go 的 IPConn.ReadFrom 已通过 stripIPv4Header 剥离 IP 头，
 		// 此处 buf[:n] 即为纯 ICMP 载荷。
 		msg, err := icmp.ParseMessage(1, buf[:n])
@@ -217,6 +238,8 @@ func CloseICMPPool() error {
 }
 
 func (p *icmpPool) close() error {
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
 	p.initMu.Lock()
 	defer p.initMu.Unlock()
 	return p.closeLocked()
@@ -224,7 +247,9 @@ func (p *icmpPool) close() error {
 
 // A reader may exit after a replacement socket has already been opened.
 // Only reset the lifecycle that belongs to this reader.
-func (p *icmpPool) retireClosedConnection(conn net.PacketConn) {
+func (p *icmpPool) retireConnection(conn net.PacketConn) {
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
 	p.initMu.Lock()
 	defer p.initMu.Unlock()
 	if p.conn == conn {
@@ -232,10 +257,8 @@ func (p *icmpPool) retireClosedConnection(conn net.PacketConn) {
 	}
 }
 
-// closeLocked requires initMu, preserving the initialization/send lock order.
+// closeLocked requires sendMu followed by initMu, matching the send path.
 func (p *icmpPool) closeLocked() error {
-	p.sendMu.Lock()
-	defer p.sendMu.Unlock()
 	var err error
 	if p.conn != nil {
 		err = p.conn.Close()
@@ -260,10 +283,19 @@ func (p *icmpPool) sendICMPContext(ctx context.Context, id, seq, ttl int, msg []
 	if err := ctx.Err(); err != nil {
 		return ICMP{Error: err}
 	}
+	// Wait for write access before taking the lifecycle lock: a queued sender
+	// must not block response dispatch from the current connection.
+	if err := p.sendMu.LockContext(ctx); err != nil {
+		return ICMP{Error: err}
+	}
+	if err := p.initMu.LockContext(ctx); err != nil {
+		p.sendMu.Unlock()
+		return ICMP{Error: err}
+	}
 	// Keep initialization and registration in the same lifecycle as the send.
-	p.initMu.Lock()
 	if err := p.initLocked(); err != nil {
 		p.initMu.Unlock()
+		p.sendMu.Unlock()
 		return ICMP{Error: err}
 	}
 
@@ -271,12 +303,11 @@ func (p *icmpPool) sendICMPContext(ctx context.Context, id, seq, ttl int, msg []
 	ch, registered := p.register(key, dest)
 	if !registered {
 		p.initMu.Unlock()
+		p.sendMu.Unlock()
 		return ICMP{Error: errors.New("icmp request identifier collision")}
 	}
 	defer p.unregister(key, ch)
 
-	// SetTTL + WriteTo 必须原子执行
-	p.sendMu.Lock()
 	p.initMu.Unlock()
 	if p.conn == nil || p.ipconn == nil {
 		p.sendMu.Unlock()

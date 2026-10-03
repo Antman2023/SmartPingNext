@@ -212,17 +212,9 @@ func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, ping
 	// Keep the probe interval instead of sending overdue probes in a burst.
 	roundStart := pingProbeStart(roundTime, targetOffset, time.Now())
 	if err == nil {
-		for i := 0; i < pingCount; i++ {
-			nextTick := roundStart.Add(time.Duration(i) * pingInterval)
-			sleepFor := time.Until(nextTick)
-			if sleepFor > 0 && sleepContext(ctx, sleepFor) != nil {
-				logrus.Info("Cancel Ping " + t.Addr + "..")
-				return
-			}
-
+		probeErr := runScheduledPingProbesContext(ctx, pingCount, pingInterval, roundStart, func(i int) {
 			delay, pingErr := nettools.RunPingContext(ctx, ipaddr, pingTimeout, 64, i)
 			if ctx.Err() != nil {
-				logrus.Info("Cancel Ping " + t.Addr + "..")
 				return
 			}
 			if pingErr == nil {
@@ -240,6 +232,10 @@ func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, ping
 			}
 			stat.SendPk = stat.SendPk + 1
 			stat.UpdateLoss()
+		})
+		if probeErr != nil {
+			logrus.Info("Cancel Ping " + t.Addr + "..")
+			return
 		}
 		if stat.RevcPk > 0 {
 			stat.AvgDelay = stat.AvgDelay / float64(stat.RevcPk)
@@ -262,6 +258,28 @@ func PingTaskContext(ctx context.Context, t g.NetworkMember, pingCount int, ping
 	}
 	PingStorageContext(ctx, stat, t.Addr, logtime)
 	logrus.Info("Finish Ping " + t.Addr + "..")
+}
+
+func runScheduledPingProbesContext(ctx context.Context, count int, interval time.Duration, start time.Time, probe func(int)) error {
+	nextTick := start
+	for i := 0; i < count; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if sleepFor := time.Until(nextTick); sleepFor > 0 {
+			if err := sleepContext(ctx, sleepFor); err != nil {
+				return err
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		// Rebase on this probe's actual start, so a slow probe or delayed wakeup
+		// cannot make subsequent probes catch up to an obsolete timetable.
+		nextTick = time.Now().Add(interval)
+		probe(i)
+	}
+	return ctx.Err()
 }
 
 func sleepContext(ctx context.Context, duration time.Duration) error {
@@ -290,7 +308,9 @@ func PingStorageContext(ctx context.Context, pingres g.PingSt, Addr string, logt
 	logrus.Info("[func:StartPing] ", "(", logtime, ")Starting PingStorage ", Addr)
 	sql := "INSERT INTO [pinglog] (logtime, target, maxdelay, mindelay, avgdelay, sendpk, revcpk, losspk) values(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(logtime, target) DO UPDATE SET maxdelay=excluded.maxdelay, mindelay=excluded.mindelay, avgdelay=excluded.avgdelay, sendpk=excluded.sendpk, revcpk=excluded.revcpk, losspk=excluded.losspk"
 	logrus.Debug("[func:StartPing] ", sql)
-	g.DLock.Lock()
+	if err := g.DLock.LockContext(ctx); err != nil {
+		return
+	}
 	if ctx.Err() != nil {
 		g.DLock.Unlock()
 		return

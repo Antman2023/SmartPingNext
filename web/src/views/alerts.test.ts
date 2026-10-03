@@ -22,7 +22,8 @@ interface AlertsSetup {
   formatLossRate: (row: MtrResult) => string
   dates: vue.Ref<string[]>
   selectedDate: vue.Ref<string>
-  alerts: vue.Ref<AlertLog[]>
+  alerts: vue.Ref<Array<AlertLog & { refreshFailed: boolean }>>
+  hasRetainedAlerts: vue.ComputedRef<boolean>
   lastUpdatedAt: vue.Ref<Date | null>
   alertsLoadError: vue.Ref<boolean>
   failedNodes: vue.ComputedRef<number>
@@ -31,9 +32,180 @@ interface AlertsSetup {
   loadAlertsByDate: (date: string) => Promise<void>
 }
 
+function alertLog(source: string, time = '2026-09-06 12:00'): AlertLog {
+  return {
+    Logtime: time,
+    Targetip: '192.0.2.3',
+    Targetname: 'target',
+    Fromip: source,
+    Fromname: source,
+    Tracert: '[]'
+  }
+}
+
+test('partial alert refresh retains failed source records and replaces successful source records', async (t) => {
+  const { view, getAlerts } = createView(t)
+  const a = alertLog('192.0.2.1')
+  const b = alertLog('192.0.2.2', '2026-09-06 13:00')
+  getAlerts.mock.mockImplementation(async (url) => ({
+    dates: ['2026-09-06'], logs: [url.includes('192.0.2.1') ? a : b]
+  }))
+  await view.loadConfig()
+  const nextA = { ...a, Logtime: '2026-09-06 14:00' }
+  getAlerts.mock.mockImplementation(async (url) => {
+    if (url.includes('192.0.2.2')) throw new Error('offline')
+    return { dates: ['2026-09-06'], logs: [nextA] }
+  })
+  await view.retryAlerts()
+  assert.deepEqual(Array.from(view.alerts.value, (log) => log.Logtime), [nextA.Logtime, b.Logtime])
+  assert.deepEqual(Array.from(view.alerts.value, (log) => log.refreshFailed), [false, true])
+  assert.equal(view.hasRetainedAlerts.value, true)
+  assert.equal(view.failedNodes.value, 1)
+  assert.equal(view.alertsLoadError.value, false)
+
+  // A valid empty response replaces cached records, including after failure.
+  getAlerts.mock.mockImplementation(async () => ({ dates: [], logs: [] }))
+  await view.retryAlerts()
+  assert.equal(view.alerts.value.length, 0)
+  assert.equal(view.hasRetainedAlerts.value, false)
+  assert.equal(view.failedNodes.value, 0)
+})
+
+test('total alert refresh failure preserves records and timestamp until sources recover', async (t) => {
+  const { view, getAlerts } = createView(t)
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.loadConfig()
+  const updatedAt = view.lastUpdatedAt.value
+  getAlerts.mock.mockImplementation(async () => { throw new Error('offline') })
+  for (let retry = 0; retry < 2; retry++) {
+    await view.retryAlerts()
+    assert.equal(view.alerts.value.length, 2)
+    assert.ok(view.alerts.value.every((log) => log.refreshFailed))
+    assert.equal(view.hasRetainedAlerts.value, true)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    assert.equal(view.alertsLoadError.value, true)
+  }
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.retryAlerts()
+  assert.equal(view.alerts.value.length, 2)
+  assert.ok(view.alerts.value.every((log) => !log.refreshFailed))
+  assert.equal(view.hasRetainedAlerts.value, false)
+  assert.equal(view.alertsLoadError.value, false)
+  assert.notEqual(view.lastUpdatedAt.value, updatedAt)
+})
+
+test('malformed alert refresh preserves only the affected source previous records', async (t) => {
+  const { view, getAlerts } = createView(t)
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.loadConfig()
+  getAlerts.mock.mockImplementation(async (url) => url.includes('192.0.2.2')
+    ? { dates: [], logs: [null] } as unknown as AlertData
+    : { dates: [], logs: [] })
+  await view.retryAlerts()
+  assert.equal(view.alerts.value.length, 1)
+  assert.ok(view.alerts.value[0]!.Fromip.includes('192.0.2.2'))
+  assert.equal(view.alerts.value[0]!.refreshFailed, true)
+  assert.equal(view.hasRetainedAlerts.value, true)
+  assert.equal(view.failedNodes.value, 1)
+})
+
+test('date changes discard cached source records even when returning to a previous date', async (t) => {
+  const { view, getAlerts } = createView(t)
+  await view.loadConfig()
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.loadAlertsByDate('2026-09-06')
+  getAlerts.mock.mockImplementation(async () => { throw new Error('offline') })
+  await view.loadAlertsByDate('2026-09-05')
+  await view.loadAlertsByDate('2026-09-06')
+  assert.equal(view.alerts.value.length, 0)
+  assert.equal(view.hasRetainedAlerts.value, false)
+  assert.equal(view.lastUpdatedAt.value, null)
+})
+
+for (const change of ['port', 'local address', 'removed source']) {
+  test(`config reload discards cached alert records after changing ${change}`, async (t) => {
+    const { view, getAlerts, config } = createView(t)
+    getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+    await view.loadConfig()
+    if (change === 'port') config.Port++
+    else if (change === 'local address') config.Addr = '192.0.2.1'
+    else config.Network = { a: config.Network.a } as typeof config.Network
+    getAlerts.mock.mockImplementation(async () => { throw new Error('offline') })
+    await view.loadConfig()
+    assert.equal(view.alerts.value.length, 0)
+    assert.equal(view.hasRetainedAlerts.value, false)
+    assert.equal(view.lastUpdatedAt.value, null)
+  })
+}
+
+test('alert freshness follows the responding source rather than log payload addresses', async (t) => {
+  const { view, getAlerts } = createView(t)
+  const log = alertLog('192.0.2.9')
+  getAlerts.mock.mockImplementation(async (url) => ({
+    dates: ['2026-09-06'], logs: url.includes('192.0.2.2') ? [log] : []
+  }))
+  await view.loadConfig()
+  getAlerts.mock.mockImplementation(async (url) => {
+    if (url.includes('192.0.2.2')) throw new Error('offline')
+    return { dates: [], logs: [] }
+  })
+  await view.retryAlerts()
+  assert.equal(view.alerts.value.length, 1)
+  assert.equal(view.alerts.value[0]!.Fromip, log.Fromip)
+  assert.equal(view.alerts.value[0]!.refreshFailed, true)
+})
+
+test('superseded refresh responses cannot replace or mark retained alert records', async (t) => {
+  const { view, getAlerts } = createView(t)
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.loadConfig()
+  const pending: Array<{ resolve: (data: AlertData) => void, reject: (error: Error) => void }> = []
+  getAlerts.mock.mockImplementation(() => new Promise((resolve, reject) => pending.push({ resolve, reject })))
+  const previous = view.retryAlerts()
+  getAlerts.mock.mockImplementation(async (url) => {
+    if (url.includes('192.0.2.2')) throw new Error('offline')
+    return { dates: ['2026-09-07'], logs: [alertLog(url, '2026-09-07 12:00')] }
+  })
+  await view.retryAlerts()
+  const logs = view.alerts.value
+  const updatedAt = view.lastUpdatedAt.value
+  pending[0]!.reject(new Error('late failure'))
+  pending[1]!.resolve({ dates: ['outdated'], logs: [alertLog('outdated')] })
+  await previous
+  assert.equal(view.alerts.value, logs)
+  assert.equal(view.hasRetainedAlerts.value, true)
+  assert.equal(view.failedNodes.value, 1)
+  assert.equal(view.lastUpdatedAt.value, updatedAt)
+  assert.deepEqual([...view.dates.value], ['2026-09-07', '2026-09-06'])
+})
+
+test('unmount aborts alert refresh and late responses cannot modify retained records', async (t) => {
+  const { view, getAlerts, unmount } = createView(t)
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.loadConfig()
+  const logs = view.alerts.value
+  const updatedAt = view.lastUpdatedAt.value
+  const pending: Array<(data: AlertData) => void> = []
+  const signals: AbortSignal[] = []
+  getAlerts.mock.mockImplementation((_url, _date, signal) => {
+    signals.push(signal!)
+    return new Promise((resolve) => pending.push(resolve))
+  })
+  const request = view.retryAlerts()
+  unmount()
+  assert.equal(signals.length, 2)
+  assert.ok(signals.every((signal) => signal.aborted))
+  pending.forEach((resolve) => resolve({ dates: ['outdated'], logs: [alertLog('outdated')] }))
+  await request
+  assert.equal(view.alerts.value, logs)
+  assert.equal(view.lastUpdatedAt.value, updatedAt)
+  assert.equal(view.hasRetainedAlerts.value, false)
+  assert.deepEqual([...view.dates.value], ['2026-09-06'])
+})
+
 function createView(t: test.TestContext) {
   const showError = t.mock.fn((_message: string) => {})
-  const getAlerts = t.mock.fn(async (_baseUrl: string, _date?: string): Promise<AlertData> => ({
+  const getAlerts = t.mock.fn(async (_baseUrl: string, _date?: string, _signal?: AbortSignal): Promise<AlertData> => ({
     dates: [],
     logs: []
   }))
@@ -45,8 +217,9 @@ function createView(t: test.TestContext) {
       b: { Addr: '192.0.2.2', Name: 'b', Topology: [{}] }
     }
   }
+  let unmount!: () => void
   const dependencies: Record<string, unknown> = {
-    vue: { ...vue, onMounted: () => {}, onUnmounted: () => {} },
+    vue: { ...vue, onMounted: () => {}, onUnmounted: (callback: () => void) => { unmount = callback } },
     'vue-i18n': { useI18n: () => ({ t: (key: string) => key }) },
     'vue-router': { useRouter: () => ({}) },
     'element-plus': { ElMessage: { error: showError } },
@@ -76,7 +249,7 @@ function createView(t: test.TestContext) {
   const scope = vue.effectScope()
   t.after(() => scope.stop())
   const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
-  return { view, getAlerts, config, showError }
+  return { view, getAlerts, config, showError, unmount }
 }
 
 test('MTR details reject invalid measurements while preserving valid zero and full loss', (t) => {

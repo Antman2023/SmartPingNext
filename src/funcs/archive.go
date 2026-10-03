@@ -72,7 +72,9 @@ func clearArchiveTableBeforeContext(ctx context.Context, table, cutoffDate strin
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		g.DLock.Lock()
+		if err := g.DLock.LockContext(ctx); err != nil {
+			return err
+		}
 		result, err := g.Db.ExecContext(ctx, query, cutoffDate, archiveDeleteBatchSize)
 		g.DLock.Unlock()
 		if err != nil {

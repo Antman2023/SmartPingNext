@@ -88,8 +88,8 @@ func configApiRoutes(mux *http.ServeMux) {
 			return
 		} else {
 			start := time.Now()
-			// Build the lookup only when samples exist; empty histories need no index.
-			var timeIndexMap map[string]int
+			// Initialize only when samples exist; ordered timelines need no map.
+			var timeIndex pingTimelineIndex
 
 			for rows.Next() {
 				l := new(g.PingLog)
@@ -101,13 +101,10 @@ func configApiRoutes(mux *http.ServeMux) {
 					return
 				}
 
-				if timeIndexMap == nil {
-					timeIndexMap = make(map[string]int, len(lastcheck))
-					for i, timestamp := range lastcheck {
-						timeIndexMap[timestamp] = i
-					}
+				if timeIndex.timestamps == nil {
+					timeIndex = newPingTimelineIndex(lastcheck)
 				}
-				if idx, exists := timeIndexMap[l.Logtime]; exists {
+				if idx, exists := timeIndex.lookup(l.Logtime); exists {
 					maxdelay[idx] = l.Maxdelay
 					mindelay[idx] = l.Mindelay
 					avgdelay[idx] = l.Avgdelay
@@ -198,7 +195,9 @@ func configApiRoutes(mux *http.ServeMux) {
 			}
 			dtb = strings.TrimPrefix(dates[0], "alertlog-")
 		}
-		selectedDate, err := time.ParseInLocation("2006-01-02", dtb, g.LocalTimezone)
+		// The database stores calendar labels, not instants. UTC parsing validates
+		// the requested day without normalizing midnight through a timezone gap.
+		selectedDate, err := time.Parse("2006-01-02", dtb)
 		if err != nil {
 			http.Error(w, "Invalid date", http.StatusNotAcceptable)
 			return
@@ -207,7 +206,7 @@ func configApiRoutes(mux *http.ServeMux) {
 		dayEnd := selectedDate.AddDate(0, 0, 1).Format("2006-01-02 15:04")
 		listpreout := []string{}
 		datapreout := []g.AlertLog{}
-		querySql := "select distinct date(logtime) as ldate from alertlog order by date(logtime) desc"
+		querySql := alertDatesQuery
 		rows, err := g.Db.QueryContext(r.Context(), querySql)
 		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {

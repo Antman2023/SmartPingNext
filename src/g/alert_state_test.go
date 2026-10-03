@@ -2,6 +2,7 @@ package g
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -12,6 +13,121 @@ func alertStateConfig() Config {
 			"Thdloss": "30", "Thdavgdelay": "200", "Thdoccnum": "2",
 		}}},
 	}}
+}
+
+func TestAlertEpisodeRetryCannotResetReplacement(t *testing.T) {
+	changes := map[string]func(*Config){
+		"removed and readded rule":        func(c *Config) { SetConfig(Config{Addr: c.Addr}) },
+		"local node changed and restored": func(c *Config) { SetConfig(Config{Addr: "127.0.0.2"}) },
+		"recovered and failed again": func(c *Config) {
+			RecordAlertCheck(c.Addr, c.Network[c.Addr].Topology[0], true)
+		},
+	}
+	for _, key := range []string{"Thdchecksec", "Thdloss", "Thdavgdelay", "Thdoccnum"} {
+		changes[key] = func(c *Config) { c.Network[c.Addr].Topology[0][key] = "1" }
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			withGlobalConfigState(t, func() {
+				config := alertStateConfig()
+				SetConfig(Config{})
+				SetConfig(config)
+				episode := RecordAlertCheckEpisode(config.Addr, config.Network[config.Addr].Topology[0], false)
+				if episode == nil {
+					t.Fatal("initial failure did not create an episode")
+				}
+				change(&config)
+				SetConfig(config)
+				current := RecordAlertCheckEpisode(config.Addr, config.Network[config.Addr].Topology[0], false)
+				if current == nil || current == episode {
+					t.Fatal("replacement failure did not create a distinct episode")
+				}
+				if episode.Retry() || AlertStatus[episode.target] {
+					t.Fatal("old retry reset the replacement episode")
+				}
+				if RecordAlertCheck(config.Addr, config.Network[config.Addr].Topology[0], false) {
+					t.Fatal("old retry caused a duplicate alert")
+				}
+				if !current.Retry() {
+					t.Fatal("current episode lost its own retry handle")
+				}
+			})
+		})
+	}
+}
+
+func TestAlertEpisodeRetrySurvivesUnrelatedChangesAndIsConsumedOnce(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		config := alertStateConfig()
+		SetConfig(Config{})
+		SetConfig(config)
+		rule := config.Network[config.Addr].Topology[0]
+		episode := RecordAlertCheckEpisode(config.Addr, rule, false)
+		if episode == nil {
+			t.Fatal("initial failure did not create an episode")
+		}
+		config.Name = "renamed local node"
+		rule["Name"] = "renamed target"
+		config.Base = map[string]int{"Archive": 7}
+		SetConfig(config)
+		if !episode.Retry() || !AlertStatus[rule["Addr"]] {
+			t.Fatal("unrelated changes prevented retry")
+		}
+		if episode.Retry() || len(alertEpisodes) != 0 {
+			t.Fatal("retry handle was not consumed")
+		}
+		next := RecordAlertCheckEpisode(config.Addr, rule, false)
+		if next == nil || episode.Retry() || AlertStatus[rule["Addr"]] {
+			t.Fatal("repeated retry reset the new episode")
+		}
+		RecordAlertCheck(config.Addr, rule, true)
+		if next.Retry() || len(alertEpisodes) != 0 {
+			t.Fatal("recovery retained an active retry handle")
+		}
+	})
+}
+
+func TestAlertEpisodeConcurrentRetriesAndConfigChanges(t *testing.T) {
+	withGlobalConfigState(t, func() {
+		config := alertStateConfig()
+		SetConfig(Config{})
+		SetConfig(config)
+		rule := config.Network[config.Addr].Topology[0]
+		episode := RecordAlertCheckEpisode(config.Addr, rule, false)
+		var accepted atomic.Int32
+		var workers sync.WaitGroup
+		for range 8 {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				if episode.Retry() {
+					accepted.Add(1)
+				}
+			}()
+		}
+		workers.Wait()
+		if accepted.Load() != 1 {
+			t.Fatalf("accepted retries = %d, want exactly one", accepted.Load())
+		}
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			for range 1000 {
+				SetConfig(config)
+				SetConfig(Config{Addr: config.Addr})
+			}
+		}()
+		go func() {
+			defer workers.Done()
+			for range 1000 {
+				RecordAlertCheckEpisode(config.Addr, rule, false).Retry()
+			}
+		}()
+		workers.Wait()
+		if len(AlertStatus) != 0 || len(alertEpisodes) != 0 {
+			t.Fatal("removed rules retained state or retry handles")
+		}
+	})
 }
 
 func TestRecordAlertCheckRejectsObsoleteConfig(t *testing.T) {

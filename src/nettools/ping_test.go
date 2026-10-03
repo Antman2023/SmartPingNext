@@ -449,7 +449,7 @@ func TestICMPPoolReaderRetiresUnexpectedlyClosedConnection(t *testing.T) {
 	if replacement == old {
 		t.Fatal("initialization reused the closed socket")
 	}
-	localPool.retireClosedConnection(old)
+	localPool.retireConnection(old)
 	localPool.dispatchFrom(replacement, 42, icmpResponse{down: true})
 	select {
 	case response, open := <-currentResponses:

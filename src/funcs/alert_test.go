@@ -117,7 +117,7 @@ func TestRunAlertTraceJobsBoundsConcurrencyAndProcessesEveryAlert(t *testing.T) 
 		jobCount    = 9
 		concurrency = 3
 	)
-	alerts := make([]g.AlertLog, jobCount)
+	alerts := make([]alertTraceJob, jobCount)
 	for i := range alerts {
 		alerts[i].Targetip = fmt.Sprintf("192.0.2.%d", i+1)
 	}
@@ -129,7 +129,7 @@ func TestRunAlertTraceJobsBoundsConcurrencyAndProcessesEveryAlert(t *testing.T) 
 	var peak atomic.Int32
 	var processed atomic.Int32
 	go func() {
-		runAlertTraceJobs(alerts, concurrency, func(_ g.AlertLog) {
+		_ = runAlertTraceJobsContext(context.Background(), alerts, concurrency, func(_ context.Context, _ alertTraceJob) {
 			current := active.Add(1)
 			for {
 				observed := peak.Load()
@@ -172,16 +172,16 @@ func TestRunAlertTraceJobsBoundsConcurrencyAndProcessesEveryAlert(t *testing.T) 
 }
 
 func TestRunAlertTraceJobsReturnsItemsNotStartedAfterCancellation(t *testing.T) {
-	alerts := []g.AlertLog{
-		{Targetip: "192.0.2.1"},
-		{Targetip: "192.0.2.2"},
-		{Targetip: "192.0.2.3"},
+	alerts := []alertTraceJob{
+		{AlertLog: g.AlertLog{Targetip: "192.0.2.1"}},
+		{AlertLog: g.AlertLog{Targetip: "192.0.2.2"}},
+		{AlertLog: g.AlertLog{Targetip: "192.0.2.3"}},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var processed atomic.Int32
 
-	unprocessed := runAlertTraceJobsContext(ctx, alerts, 1, func(context.Context, g.AlertLog) {
+	unprocessed := runAlertTraceJobsContext(ctx, alerts, 1, func(context.Context, alertTraceJob) {
 		processed.Add(1)
 	})
 
@@ -564,70 +564,147 @@ func TestAlertStorageContextReturnsDatabaseError(t *testing.T) {
 }
 
 func TestTraceAndStoreAlertRestoresRetryStateWhenCanceled(t *testing.T) {
-	_, _, job := configuredAlertJob(t)
+	const target = "192.0.2.1"
+	config, job := newAlertTraceTestJob(t, target)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	traceAndStoreAlertContext(ctx, job)
 
 	g.AlertStatusLock.RLock()
-	status, exists := g.AlertStatus[job.alert.Targetip]
+	status, exists := g.AlertStatus[job.AlertLog.Targetip]
 	g.AlertStatusLock.RUnlock()
 	if !exists || !status {
 		t.Fatalf("canceled alert state = (%v, %v), want existing healthy retry state", status, exists)
 	}
+	if !g.RecordAlertCheck(config.Addr, config.Network[config.Addr].Topology[0], false) {
+		t.Fatal("canceled alert must be eligible for retry")
+	}
 }
 
 func TestRestoreAlertStatusDoesNotRecreateRemovedTarget(t *testing.T) {
-	config, _, job := configuredAlertJob(t)
-	g.SetConfig(g.Config{Addr: config.Addr})
-
-	g.RetryAlertEpisode(job.episode)
+	const target = "192.0.2.1"
+	_, job := newAlertTraceTestJob(t, target)
+	g.SetConfig(g.Config{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	traceAndStoreAlertContext(ctx, job)
 
 	g.AlertStatusLock.RLock()
-	_, exists := g.AlertStatus[job.alert.Targetip]
+	_, exists := g.AlertStatus[job.AlertLog.Targetip]
 	g.AlertStatusLock.RUnlock()
 	if exists {
 		t.Fatal("retry restoration recreated a target removed by configuration reconciliation")
 	}
 }
 
-func TestObsoleteTraceCancellationDoesNotResetChangedRule(t *testing.T) {
-	config, rule, job := configuredAlertJob(t)
+func TestRestoreAlertStatusDoesNotResetNewRule(t *testing.T) {
+	const target = "192.0.2.1"
+	config, job := newAlertTraceTestJob(t, target)
+	rule := config.Network[config.Addr].Topology[0]
 	rule["Thdloss"] = "10"
 	g.SetConfig(config)
 	if !g.RecordAlertCheck(config.Addr, rule, false) {
-		t.Fatal("changed rule did not start its own alert")
+		t.Fatal("new rule did not start an alert")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	traceAndStoreAlertContext(ctx, job)
-	if g.RecordAlertCheck(config.Addr, rule, false) {
-		t.Fatal("canceled obsolete trace reset the newer alert and caused a duplicate")
+	g.AlertStatusLock.RLock()
+	status := g.AlertStatus[target]
+	g.AlertStatusLock.RUnlock()
+	if status {
+		t.Fatal("old alert retry reset the new rule's active alert")
 	}
 }
 
-func configuredAlertJob(t *testing.T) (g.Config, map[string]string, alertTraceJob) {
+func newAlertTraceTestJob(t *testing.T, target string) (g.Config, alertTraceJob) {
 	t.Helper()
 	oldConfig := g.ConfigSnapshot()
-	g.AlertStatusLock.RLock()
+	g.AlertStatusLock.Lock()
 	oldStatus := g.AlertStatus
-	g.AlertStatusLock.RUnlock()
+	g.AlertStatusLock.Unlock()
 	t.Cleanup(func() {
 		g.SetConfig(oldConfig)
 		g.AlertStatusLock.Lock()
 		g.AlertStatus = oldStatus
 		g.AlertStatusLock.Unlock()
 	})
-	const local, target = "127.0.0.1", "192.0.2.1"
-	rule := map[string]string{"Addr": target, "Thdchecksec": "60", "Thdoccnum": "1", "Thdloss": "30", "Thdavgdelay": "200"}
-	config := g.Config{Addr: local, Network: map[string]g.NetworkMember{
-		local: {Addr: local, Topology: []map[string]string{rule}},
+	config := g.Config{Addr: "127.0.0.1", Network: map[string]g.NetworkMember{
+		"127.0.0.1": {Addr: "127.0.0.1", Topology: []map[string]string{{
+			"Addr": target, "Thdchecksec": "600", "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30",
+		}}},
 	}}
+	g.SetConfig(g.Config{})
 	g.SetConfig(config)
-	episode := g.RecordAlertCheckEpisode(local, rule, false)
+	rule := config.Network[config.Addr].Topology[0]
+	episode := g.RecordAlertCheckEpisode(config.Addr, rule, false)
 	if episode == nil {
 		t.Fatal("old rule did not start an alert")
 	}
-	return config, rule, alertTraceJob{alert: g.AlertLog{Fromip: local, Targetip: target}, episode: episode}
+	return config, alertTraceJob{AlertLog: g.AlertLog{Targetip: target}, episode: episode}
+}
+
+func TestTraceAndStoreAlertWriteFailureRetriesOnlyItsEpisode(t *testing.T) {
+	for _, replaceRule := range []bool{false, true} {
+		t.Run(fmt.Sprint("replaced rule=", replaceRule), func(t *testing.T) {
+			// An IPv6 literal fails IPv4 resolution immediately, avoiding DNS
+			// and raw sockets while exercising the real trace/store error path.
+			config, job := newAlertTraceTestJob(t, "::1")
+			job.Logtime = "2026-10-04 12:00"
+			if replaceRule {
+				config.Network[config.Addr].Topology[0]["Thdloss"] = "10"
+				g.SetConfig(config)
+				if !g.RecordAlertCheck(config.Addr, config.Network[config.Addr].Topology[0], false) {
+					t.Fatal("replacement rule did not start an alert")
+				}
+			}
+			db := alertTraceTestDB(t)
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			traceAndStoreAlertContext(context.Background(), job)
+			g.AlertStatusLock.RLock()
+			status, exists := g.AlertStatus[job.Targetip]
+			g.AlertStatusLock.RUnlock()
+			if !exists || status == replaceRule {
+				t.Fatalf("retry state = %v/%v, want healthy=%v", status, exists, !replaceRule)
+			}
+		})
+	}
+}
+
+func TestTraceAndStoreAlertKeepsEpisodeAfterSuccessfulWrite(t *testing.T) {
+	config, job := newAlertTraceTestJob(t, "::1")
+	job.Logtime = "2026-10-04 12:00"
+	db := alertTraceTestDB(t)
+	if _, err := db.Exec(`CREATE TABLE alertlog (logtime TEXT, targetip TEXT, targetname TEXT, tracert TEXT, UNIQUE(logtime, targetip))`); err != nil {
+		t.Fatal(err)
+	}
+	traceAndStoreAlertContext(context.Background(), job)
+	var trace string
+	if err := db.QueryRow(`SELECT tracert FROM alertlog WHERE targetip = ?`, job.Targetip).Scan(&trace); err != nil {
+		t.Fatal(err)
+	}
+	if trace != "Unable to resolve destination host" {
+		t.Fatalf("stored trace = %q, want resolution error", trace)
+	}
+	if g.RecordAlertCheck(config.Addr, config.Network[config.Addr].Topology[0], false) {
+		t.Fatal("successful storage caused a duplicate alert")
+	}
+}
+
+func alertTraceTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDB := g.Db
+	g.Db = db
+	t.Cleanup(func() {
+		g.Db = oldDB
+		_ = db.Close()
+	})
+	return db
 }

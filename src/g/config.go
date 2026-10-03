@@ -10,6 +10,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	_ "modernc.org/sqlite"
+	"smartping/src/internal/contextlock"
 	"smartping/src/static"
 
 	"io"
@@ -52,7 +53,7 @@ var (
 	ToolLimit       map[string]int
 	ToolLimitLock   sync.RWMutex
 	Db              *sql.DB
-	DLock           sync.Mutex
+	DLock           contextlock.Mutex
 	LocalTimezone   *time.Location
 	HttpClient      *http.Client
 )
@@ -372,13 +373,13 @@ func RecordAlertCheck(localAddr string, rule map[string]string, healthy bool) bo
 	return RecordAlertCheckEpisode(localAddr, rule, healthy) != nil
 }
 
-// AlertEpisode identifies one transition into an alert. Its fields are private
-// so asynchronous jobs can only retry the episode they were given.
+// AlertEpisode identifies one transition into an unhealthy state. Its identity
+// remains valid across unrelated config changes, but not recovery or replacement.
 type AlertEpisode struct {
 	target string
 }
 
-// RecordAlertCheckEpisode returns a token only when a new alert starts.
+// RecordAlertCheckEpisode returns a retry handle only for a new alert episode.
 func RecordAlertCheckEpisode(localAddr string, rule map[string]string, healthy bool) *AlertEpisode {
 	CfgLock.RLock()
 	defer CfgLock.RUnlock()
@@ -412,29 +413,36 @@ func RecordAlertCheckEpisode(localAddr string, rule map[string]string, healthy b
 	if exists && !previous {
 		return nil
 	}
-	episode := &AlertEpisode{target: target}
 	if alertEpisodes == nil {
 		alertEpisodes = make(map[string]*AlertEpisode)
 	}
+	episode := &AlertEpisode{target: target}
 	alertEpisodes[target] = episode
 	return episode
 }
 
-// RetryAlertEpisode cannot reset a replacement rule or a later alert episode.
-// SetConfig invalidates tokens under the same state lock when rules change.
+// RetryAlertEpisode retries only the given episode, preserving the function API.
 func RetryAlertEpisode(episode *AlertEpisode) {
+	episode.Retry()
+}
+
+// Retry makes this episode eligible for another check after a canceled trace or
+// failed write. A late or repeated retry cannot reset a newer alert episode.
+func (episode *AlertEpisode) Retry() bool {
 	if episode == nil {
-		return
+		return false
 	}
 	AlertStatusLock.Lock()
 	defer AlertStatusLock.Unlock()
 	if alertEpisodes[episode.target] != episode {
-		return
-	}
-	if healthy, exists := AlertStatus[episode.target]; exists && !healthy {
-		AlertStatus[episode.target] = true
+		return false
 	}
 	delete(alertEpisodes, episode.target)
+	if healthy, exists := AlertStatus[episode.target]; !exists || healthy {
+		return false
+	}
+	AlertStatus[episode.target] = true
+	return true
 }
 
 func ruleIdentity(rule map[string]string) alertRuleIdentity {

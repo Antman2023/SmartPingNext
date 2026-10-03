@@ -6,6 +6,7 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"math"
+	"net"
 	"sync"
 	"time"
 )
@@ -54,6 +55,31 @@ func RunMtrContext(ctx context.Context, Addr string, maxrtt time.Duration, maxtt
 		}
 		return result, errors.New("Unable to resolve destination host")
 	}
+	return runMtrProbesContext(ctx, maxttl, maxtimeout, mtrProbeInterval, func(ctx context.Context, ttl int) ICMP {
+		return sendMtrProbeContext(ctx, dest, maxrtt, ttl)
+	})
+}
+
+func sendMtrProbeContext(ctx context.Context, dest net.Addr, maxrtt time.Duration, ttl int) ICMP {
+	id := randomUint16()
+	seq := nextICMPSequence()
+	res := pkg{
+		maxrtt: maxrtt,
+		id:     id,
+		seq:    seq,
+		msg:    icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq}},
+		dest:   dest,
+	}
+	var err error
+	res.netmsg, err = res.msg.Marshal(nil)
+	if err != nil {
+		return ICMP{Error: err}
+	}
+	return res.SendContext(ctx, ttl)
+}
+
+func runMtrProbesContext(ctx context.Context, maxttl, maxtimeout int, interval time.Duration, probe func(context.Context, int) ICMP) ([]Mtr, error) {
+	result := []Mtr{}
 	probeCtx, cancelProbes := context.WithCancel(ctx)
 	defer cancelProbes()
 	probeErrors := make(chan error, 1)
@@ -72,21 +98,8 @@ func RunMtrContext(ctx context.Context, Addr string, maxrtt time.Duration, maxtt
 		if probeCtx.Err() != nil {
 			break
 		}
-		id := randomUint16()
-		seq := nextICMPSequence()
-		res := pkg{
-			maxrtt: maxrtt,
-			id:     id,
-			seq:    seq,
-			msg:    icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq}},
-			dest:   dest,
-		}
-		res.netmsg, err = res.msg.Marshal(nil)
-		if nil != err {
-			reportProbeError(err)
-			break
-		}
-		next := res.SendContext(probeCtx, ttl)
+		discoveryStarted := time.Now()
+		next := probe(probeCtx, ttl)
 		if ctx.Err() != nil {
 			break
 		}
@@ -102,31 +115,19 @@ func RunMtrContext(ctx context.Context, Addr string, maxrtt time.Duration, maxtt
 			break
 		}
 		wg.Add(1)
-		go func(ittl int) {
+		go func(ittl int, nextProbe time.Time) {
 			defer wg.Done()
 			for j := 1; j < mtrProbeCount; j++ {
+				if waitForContext(probeCtx, time.Until(nextProbe)) != nil {
+					return
+				}
 				if probeCtx.Err() != nil {
 					return
 				}
-				id := randomUint16()
-				seq := nextICMPSequence()
-				res := pkg{
-					maxrtt: maxrtt,
-					id:     id,
-					seq:    seq,
-					msg:    icmp.Message{Type: ipv4.ICMPTypeEcho, Code: 0, Body: &icmp.Echo{ID: id, Seq: seq}},
-				}
-				res.dest = dest
-				netmsg, marshalErr := res.msg.Marshal(nil)
-				if marshalErr != nil {
-					if probeCtx.Err() == nil {
-						reportProbeError(marshalErr)
-					}
-					return
-				}
-				res.netmsg = netmsg
-				nowTime := time.Now()
-				next := res.SendContext(probeCtx, ittl)
+				// Include discovery in the cadence, then schedule from each
+				// actual start so slow probes never build up overdue sends.
+				nextProbe = time.Now().Add(interval)
+				next := probe(probeCtx, ittl)
 				if next.Error != nil {
 					if probeCtx.Err() == nil {
 						reportProbeError(next.Error)
@@ -139,14 +140,8 @@ func RunMtrContext(ctx context.Context, Addr string, maxrtt time.Duration, maxtt
 				resultLock.Lock()
 				mtr[ittl] = append(mtr[ittl], next)
 				resultLock.Unlock()
-				if j < mtrProbeCount-1 {
-					sleepFor := mtrProbeInterval - time.Since(nowTime)
-					if sleepFor > 0 && waitForContext(probeCtx, sleepFor) != nil {
-						return
-					}
-				}
 			}
-		}(ttl)
+		}(ttl, discoveryStarted.Add(interval))
 		if isTerminalMtrResponse(next) {
 			break
 		}

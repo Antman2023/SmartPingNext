@@ -70,6 +70,8 @@ export default {
     enabled: 'Enabled',
     paused: 'Paused',
     refreshNow: 'Refresh now',
+    refreshFailed: 'Refresh failed',
+    showingPreviousData: 'Refresh failed. Showing the last successfully loaded data.',
     dataFreshness: 'Data Status',
     lastUpdatedAt: 'Updated at {time}',
     notUpdated: 'Not updated yet',
@@ -208,6 +210,7 @@ export default {
     noRecords: 'No alert records for this selection',
     loadFailed: 'Failed to load alert records',
     sourceLoadFailed: 'Failed to load alerts from this node',
+    showingPreviousRecords: 'Some nodes could not be refreshed. Their last successfully loaded records are retained.',
     mtrUnavailable: 'MTR data is unavailable or corrupted',
     noMtrData: 'No MTR data to display'
   },

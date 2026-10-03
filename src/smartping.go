@@ -153,7 +153,14 @@ func shutdownService(ctx context.Context, server *standardHTTP.Server, scheduler
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		serverErrors <- server.Shutdown(ctx)
+		err := server.Shutdown(ctx)
+		if err != nil {
+			// Shutdown leaves active connections open when the grace period
+			// expires. Close them so request contexts cancel queued queries,
+			// outgoing proxy requests and probes; preserve the shutdown error.
+			err = errors.Join(err, server.Close())
+		}
+		serverErrors <- err
 	}()
 	jobsErr := jobs.Wait(ctx)
 	serverErr := <-serverErrors

@@ -112,7 +112,29 @@ go vet ./src/...
 
 Configuration imports accept files up to 16 MiB. Imported changes must be saved before they apply to the node. Password verification failures or timeouts during import and export preserve current edits.
 
+Forward and reverse monitors retain the last successfully loaded curves for the same query when refresh fails and show the failure status. Detail views clear previous curves when the target, relative time range, or valid custom time range changes, keeping data from different queries separate.
+
+Closed monitoring detail dialogs reject delayed queries. Leaving the page cancels active requests and refresh timers, and prevents late callbacks from reloading configuration, lists, or details. Reopening a dialog allows queries normally.
+
+Historical Ping queries reuse ordered minute timelines to locate samples, reducing index memory for long ranges. Missing samples remain `-`, and measured zero latency and 100% loss retain their values. Non-monotonic timelines, such as those spanning a clock rollback, retain the original map-based lookup behavior.
+
+Alert history retains each responding node's last successful records for the same date query. If a node cannot be refreshed, its records remain visible and are marked "Refresh failed". A successful response replaces those records, including an empty list. Changing the date or reloading node configuration clears previous records. When every node fails to refresh, the last successful update time is preserved.
+
+Alert date lists seek between distinct dates using the existing date index, reducing reads when many records share a date. Dates remain newest first, and malformed timestamps retain their error handling. Sparse records incur some extra query overhead; benchmark results are recorded in the [optimization review](docs/optimization-review.md).
+
 Hostname resolution for online tools, scheduled Ping, mapping probes, and alert MTR waits up to 5 seconds. Caller cancellation or an earlier deadline ends resolution sooner. IPv4 literals skip DNS.
+
+Caller cancellation and deadlines also interrupt requests waiting for ICMP initialization or shared write access. Queued senders do not block other probe responses. A probe's response timeout is still measured from its send time.
+
+ICMP read failures are retried after 10, 20, 40, and 80 milliseconds. The fifth consecutive failure closes the connection and releases requests still waiting for a response; a later probe opens a replacement on demand. Every successful read resets the consecutive error count. An old reader cannot retire a replacement connection.
+
+Ping, alert and mapping storage, as well as archive cleanup, also honor context cancellation and deadlines while waiting for shared database write access. Canceling queued work does not insert or delete records, and subsequent work can still acquire the lock. Queued tasks can exit promptly during service shutdown.
+
+Service shutdown uses a 15-second grace period, stops accepting new connections, and allows existing HTTP requests to finish. Once that period expires, remaining HTTP connections are closed, canceling their requests and queued queries. An incomplete shutdown still returns an error and keeps the database open to avoid closing resources that may remain in use.
+
+Scheduled Ping schedules the next probe at the current probe's actual start plus `PingIntervalMs`. Slow probes or scheduling delays do not cause overdue probes to run in a burst. The configured probe count is preserved, so a round may take longer.
+
+MTR includes the initial discovery probe in each hop's cadence, so the second probe also observes the one-second interval. Subsequent probes are scheduled from each actual start, without catching up in bursts after slow probes. Hops continue sampling concurrently, and interval waits honor cancellation and deadlines. A hop that completes sampling has ten probes; the final hop at the consecutive-timeout limit retains only its discovery timeout.
 
 On Windows, install Go and Zig on PATH, then run `pwsh -File scripts/test-race-windows.ps1` from the project root for Go race detection. The helper uses `zig cc`, adds the Windows synchronization library and a fixed loading mode for race test executables, and restores environment variables on exit. Release builds still do not require CGO. This workflow was verified with Go 1.27.1, Zig 0.16.0, and Windows amd64.
 
@@ -200,6 +222,8 @@ SmartPingNext is designed as a lightweight tool. Even in multi-node mutual-PING 
 | `/api/proxy.json` | GET | Proxy access to remote nodes |
 
 The metric arrays returned by `/api/ping.json` align with the `lastcheck` timeline and contain string values. Minutes without a stored sample use `"-"` and appear as gaps in charts. `"0"` is a recorded zero value, distinct from missing data. API clients should handle `"-"` before converting values to numbers. Query times and the returned timeline use the node's timezone.
+
+Explicit minute parameters for Ping and mapping queries return `406` if that local minute does not exist because of a timezone transition. The server does not silently substitute another time. Previously accepted unpadded hours and extra spaces remain supported. Alert date queries filter stored calendar labels from `00:00` on the requested date to `00:00` on the following date, avoiding shifted bounds during midnight timezone transitions.
 
 `/api/topology.json` returns string states by target IP: `"true"` means the alert threshold has not been reached, `"false"` means it has, and `"unknown"` means no samples exist for that target in the configured check window (including the grace period for rounds finishing across a minute boundary). Unknown states neither trigger alerts nor mark existing alerts as recovered. Clients must handle all three values explicitly instead of treating every non-`"false"` value as healthy.
 

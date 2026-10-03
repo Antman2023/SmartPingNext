@@ -212,7 +212,9 @@ func MapPingStorageContext(ctx context.Context) error {
 		return fmt.Errorf("encode mapping result: %w", err)
 	}
 	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values(?, ?)"
-	g.DLock.Lock()
+	if err := g.DLock.LockContext(ctx); err != nil {
+		return err
+	}
 	defer g.DLock.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err

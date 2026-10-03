@@ -68,6 +68,8 @@ export default {
     enabled: '已启用',
     paused: '已暂停',
     refreshNow: '立即刷新',
+    refreshFailed: '刷新失败',
+    showingPreviousData: '刷新失败，当前显示上次成功加载的数据。',
     dataFreshness: '数据状态',
     lastUpdatedAt: '更新于 {time}',
     notUpdated: '尚未更新',
@@ -206,6 +208,7 @@ export default {
     noRecords: '当前没有报警记录',
     loadFailed: '报警记录加载失败',
     sourceLoadFailed: '该节点的报警记录加载失败',
+    showingPreviousRecords: '部分节点刷新失败，已保留这些节点上次成功加载的记录。',
     mtrUnavailable: 'MTR 数据不可用或已损坏',
     noMtrData: '没有可显示的 MTR 数据'
   },

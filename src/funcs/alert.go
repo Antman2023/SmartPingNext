@@ -23,7 +23,7 @@ var ErrNoAlertSamples = errors.New("no samples in alert window")
 const alertTraceConcurrency = 4
 
 type alertTraceJob struct {
-	alert   g.AlertLog
+	g.AlertLog
 	episode *g.AlertEpisode
 }
 
@@ -65,7 +65,7 @@ func StartAlertContext(ctx context.Context) {
 
 			if episode != nil {
 				logrus.Debug("[func:StartAlert] ", v["Addr"]+" Alert!")
-				pendingAlerts = append(pendingAlerts, alertTraceJob{episode: episode, alert: g.AlertLog{
+				pendingAlerts = append(pendingAlerts, alertTraceJob{episode: episode, AlertLog: g.AlertLog{
 					Fromname:   selfConfig.Name,
 					Fromip:     selfConfig.Addr,
 					Logtime:    time.Now().Format("2006-01-02 15:04"),
@@ -78,7 +78,7 @@ func StartAlertContext(ctx context.Context) {
 	}
 	unprocessed := runAlertTraceJobsContext(ctx, pendingAlerts, alertTraceConcurrency, traceAndStoreAlertContext)
 	for _, alert := range unprocessed {
-		g.RetryAlertEpisode(alert.episode)
+		alert.episode.Retry()
 	}
 	if ctx.Err() != nil {
 		logrus.Info("[func:StartAlert] canceled")
@@ -87,19 +87,13 @@ func StartAlertContext(ctx context.Context) {
 	logrus.Info("[func:StartAlert] ", "AlertCheck finish ")
 }
 
-func runAlertTraceJobs(alerts []g.AlertLog, concurrency int, process func(g.AlertLog)) {
-	_ = runAlertTraceJobsContext(context.Background(), alerts, concurrency, func(_ context.Context, item g.AlertLog) {
-		process(item)
-	})
-}
-
-func runAlertTraceJobsContext[T any](ctx context.Context, alerts []T, concurrency int, process func(context.Context, T)) []T {
+func runAlertTraceJobsContext(ctx context.Context, alerts []alertTraceJob, concurrency int, process func(context.Context, alertTraceJob)) []alertTraceJob {
 	if concurrency < 1 {
 		concurrency = 1
 	}
 	semaphore := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
-	var unprocessed []T
+	var unprocessed []alertTraceJob
 	for index, alert := range alerts {
 		if ctx.Err() != nil {
 			unprocessed = append(unprocessed, alerts[index:]...)
@@ -116,7 +110,7 @@ func runAlertTraceJobsContext[T any](ctx context.Context, alerts []T, concurrenc
 		if len(unprocessed) > 0 {
 			break
 		}
-		go func(item T) {
+		go func(item alertTraceJob) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
 			process(ctx, item)
@@ -127,11 +121,11 @@ func runAlertTraceJobsContext[T any](ctx context.Context, alerts []T, concurrenc
 }
 
 func traceAndStoreAlertContext(ctx context.Context, job alertTraceJob) {
-	alert := job.alert
+	alert := job.AlertLog
 	hops, err := nettools.RunMtrContext(ctx, alert.Targetip, time.Second, 64, 6)
 	if err != nil {
 		if ctx.Err() != nil {
-			g.RetryAlertEpisode(job.episode)
+			job.episode.Retry()
 			return
 		}
 		logrus.Error("[func:StartAlert] Traceroute error ", err)
@@ -142,7 +136,7 @@ func traceAndStoreAlertContext(ctx context.Context, job alertTraceJob) {
 		alert.Tracert = string(encoded)
 	}
 	if err := AlertStorageContext(ctx, alert); err != nil {
-		g.RetryAlertEpisode(job.episode)
+		job.episode.Retry()
 		if ctx.Err() == nil {
 			logrus.Error("[func:StartAlert] Store alert error ", err)
 		}
@@ -226,7 +220,9 @@ func AlertStorageContext(ctx context.Context, t g.AlertLog) error {
 	}
 	logrus.Info("[func:AlertStorage] ", "(", t.Logtime, ")Starting AlertStorage ", t.Targetname)
 	sql := "INSERT INTO [alertlog] (logtime, targetip, targetname, tracert) values(?, ?, ?, ?) ON CONFLICT(logtime, targetip) DO UPDATE SET targetname=excluded.targetname, tracert=excluded.tracert"
-	g.DLock.Lock()
+	if err := g.DLock.LockContext(ctx); err != nil {
+		return err
+	}
 	defer g.DLock.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
