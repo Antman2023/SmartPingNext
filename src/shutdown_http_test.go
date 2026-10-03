@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"smartping/src/g"
@@ -91,6 +92,10 @@ func newShutdownHTTPFixture(t *testing.T) *shutdownHTTPFixture {
 		f.clientErr = err
 		if err == nil {
 			f.status = response.StatusCode
+			// Drain the complete response before closing it. Closing an unread
+			// body can abort the connection while the handler is still returning,
+			// canceling its context independently of service shutdown.
+			_, f.clientErr = io.Copy(io.Discard, response.Body)
 			response.Body.Close()
 		}
 	}()

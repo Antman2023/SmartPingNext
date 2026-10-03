@@ -237,3 +237,9 @@
 
 - 取舍：31 条稀疏记录增加约 90 微秒固定开销和 280 字节分配；15.5 万条密集记录时，日期查询约快 78 倍。不同日期数增加仍会增加查找次数，收益取决于每天重复记录数量。复现命令：`go test ./src/http -run '^$' -bench '^BenchmarkAlertDateQueries$' -benchmem -benchtime=200ms`。
 - 累计源码通过 `go test ./src/...`、`go vet ./src/...`、Windows 全量数据竞争检测和 `git diff --check`。无 CGO 构建通过 Windows amd64、Linux amd64/arm64/armv7、macOS arm64；Windows 构建的 `-v` 命令正常，其他平台仅验证编译。本轮未修改前端代码或实际节点部署。
+
+## 2026-10-04 关闭测试客户端的响应读取竞态
+
+- GitHub Actions 的 master 运行 `37162909436` 与 v1.7.41 运行 `37162968375` 均在 `TestShutdownAllowsHTTPQueriesToFinishWithinGracePeriod` 失败：客户端收到 `200`，处理器收尾时却观察到上下文取消。前端测试、静态检查和嵌入构建已通过，后端失败使后续发布步骤跳过。
+- 测试客户端原先收到响应头后立即关闭尚未读取的响应体，可能中断 TCP 连接，在服务关闭之外取消处理器上下文。改为完整读取响应体、记录读取错误后再关闭，继续检查正常请求的 `200`、上下文状态及数据库关闭，并保留超时关闭的取消断言。本轮只修改测试客户端，不改变服务关闭逻辑。
+- 修复后正常宽限期回归在 Windows 连续运行 1,000 次通过；`go test ./src/...`、`go vet ./src/...`、Windows 全量数据竞争检测和 `git diff --check` 通过。上述结果为本地验证，原 GitHub Actions 运行仍为失败，修复须由后续 CI 运行验证。
