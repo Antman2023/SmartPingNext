@@ -64,6 +64,7 @@ export default {
     invalidConfigResponse: 'The node returned invalid configuration data',
     invalidPingResponse: 'The node returned invalid chart data',
     invalidMappingResponse: 'The node returned invalid latency map data',
+    invalidTopologyResponse: 'The node returned invalid topology data',
     requestFailedWithStatus: 'Request failed ({status})',
     autoRefresh: 'Auto Refresh',
     enabled: 'Enabled',

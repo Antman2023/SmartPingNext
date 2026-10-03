@@ -62,6 +62,7 @@ export default {
     invalidConfigResponse: '节点返回的配置数据格式错误',
     invalidPingResponse: '节点返回的图表数据格式错误',
     invalidMappingResponse: '节点返回的延迟地图数据格式错误',
+    invalidTopologyResponse: '节点返回的拓扑数据格式错误',
     requestFailedWithStatus: '请求失败 ({status})',
     autoRefresh: '自动刷新',
     enabled: '已启用',

@@ -42,8 +42,7 @@ func StartAlertContext(ctx context.Context) {
 	defer atomic.StoreInt32(&alertRunning, 0)
 
 	logrus.Info("[func:StartAlert] ", "starting run AlertCheck ")
-	config := g.ConfigSnapshot()
-	selfConfig := config.Network[config.Addr]
+	localAddr, selfConfig := g.LocalNetworkSnapshot()
 	pendingAlerts := make([]alertTraceJob, 0)
 	for _, v := range selfConfig.Topology {
 		if ctx.Err() != nil {
@@ -62,7 +61,7 @@ func StartAlertContext(ctx context.Context) {
 				logrus.Error("[func:StartAlert] Check status error ", err)
 				continue
 			}
-			episode := g.RecordAlertCheckEpisode(config.Addr, v, sFlag)
+			episode := g.RecordAlertCheckEpisode(localAddr, v, sFlag)
 
 			if episode != nil {
 				logrus.Debug("[func:StartAlert] ", v["Addr"]+" Alert!")

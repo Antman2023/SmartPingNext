@@ -153,8 +153,7 @@ func configApiRoutes(mux *http.ServeMux) {
 			return
 		}
 		preout := make(map[string]string)
-		config := g.ConfigSnapshot()
-		selfConfig := config.Network[config.Addr]
+		_, selfConfig := g.LocalNetworkSnapshot()
 		for _, v := range selfConfig.Topology {
 			healthy, err := funcs.CheckAlertStatusContext(r.Context(), v)
 			if errors.Is(err, funcs.ErrNoAlertSamples) {
@@ -189,7 +188,7 @@ func configApiRoutes(mux *http.ServeMux) {
 		type DateList struct {
 			Ldate string
 		}
-		config := g.ConfigSnapshot()
+		config := g.ConfigMetadataSnapshot()
 		form := r.URL.Query()
 		dtb := time.Now().Format("2006-01-02")
 		if dates, exists := form["date"]; exists {
@@ -287,7 +286,7 @@ func configApiRoutes(mux *http.ServeMux) {
 			Mapjson string
 		}
 		chinaMp := g.ChinaMp{}
-		chinaMp.Text = g.ConfigSnapshot().Name
+		chinaMp.Text = g.ConfigMetadataSnapshot().Name
 		chinaMp.Subtext = dataKey
 		chinaMp.Avgdelay = emptyMappingData()
 		querySql := "select mapjson from mappinglog where logtime = ?"
@@ -346,7 +345,7 @@ func configApiRoutes(mux *http.ServeMux) {
 		}
 		defer releaseToolRequest()
 		nowtime := int(time.Now().Unix())
-		if !allowToolRequest(r.RemoteAddr, nowtime, g.ConfigSnapshot().Toollimit) {
+		if !allowToolRequest(r.RemoteAddr, nowtime, g.ConfigMetadataSnapshot().Toollimit) {
 			preout.Error = "Time Limit Exceeded!"
 			RenderJson(w, preout)
 			return
@@ -448,7 +447,7 @@ func configApiRoutes(mux *http.ServeMux) {
 		if !parseFormLimited(w, r, maxPasswordFormBytes) {
 			return
 		}
-		if !requireConfigPassword(w, r, g.ConfigSnapshot().Password) {
+		if !requireConfigPassword(w, r, g.ConfigMetadataSnapshot().Password) {
 			return
 		}
 		preout["status"] = "true"
@@ -470,7 +469,7 @@ func configApiRoutes(mux *http.ServeMux) {
 			return
 		}
 		preout["status"] = "false"
-		currentConfig := g.ConfigSnapshot()
+		currentConfig := g.ConfigMetadataSnapshot()
 		if !requireConfigPassword(w, r, currentConfig.Password) {
 			return
 		}

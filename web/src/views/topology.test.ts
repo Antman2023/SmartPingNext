@@ -137,6 +137,47 @@ test('failed topology refresh preserves the last successful timestamp', async (t
   assert.equal(status(), 'common.loadFailed')
 })
 
+test('malformed HTTP success responses fail the topology source without advancing its timestamp', async (t) => {
+  const { view, getTopology, status } = createView(t)
+  const apiSource = readFileSync(new URL('../../src/api/topology.ts', import.meta.url), 'utf8')
+  const apiCode = ts.transpileModule(apiSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+  }).outputText
+  const api = {} as { getTopology: (addr: string, port: number, localAddr: string) => Promise<Record<string, string>> }
+  let response: unknown
+  runInNewContext(apiCode, {
+    exports: api,
+    URLSearchParams,
+    require: (name: string) => {
+      if (name === './index') return {
+        default: { get: async () => response }, proxyRequestConfig: () => ({})
+      }
+      if (name === '@/locales') return { default: { global: { t: (key: string) => key } } }
+      throw new Error(`Unexpected dependency: ${name}`)
+    }
+  })
+  for (const localAddr of ['127.0.0.1', '192.0.2.10']) {
+    // Exercise both the direct and proxy API paths through the real response validator.
+    getTopology.mock.mockImplementation(() => api.getTopology('127.0.0.1', 8899, localAddr))
+    for (const malformed of ['<html>Sign in</html>', [], null, { '192.0.2.1': true }]) {
+      response = { '192.0.2.1': 'true', '192.0.2.2': 'true' }
+      await view.loadTopologyStatus()
+      assert.equal(status(), 'common.active')
+      const updated = view.lastUpdatedAt.value
+      response = malformed
+      await view.loadTopologyStatus()
+      assert.equal(status(), 'common.loadFailed')
+      assert.equal(view.loadedNodes.value, 0)
+      assert.equal(view.lastUpdatedAt.value, updated)
+      assert.equal(view.isRefreshing.value, false)
+    }
+    response = { '192.0.2.1': 'unknown', '192.0.2.2': 'true' }
+    await view.loadTopologyStatus()
+    assert.equal(status(), 'common.unknown')
+    assert.equal(view.loadedNodes.value, 1)
+  }
+})
+
 test('topology counts completed responses while reporting pending nodes as loading', async (t) => {
   const { view, getTopology, status } = createView(t)
   let resolve!: (value: Record<string, string>) => void
