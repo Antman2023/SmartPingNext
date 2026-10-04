@@ -62,7 +62,7 @@
             :placeholder="$t('tools.enterTarget')"
             @keyup.enter="runCheck"
           />
-          <el-button type="primary" :loading="checking" @click="runCheck">
+          <el-button type="primary" :loading="checking" :disabled="configLoading" @click="runCheck">
             {{ $t('tools.check') }}
           </el-button>
         </div>
@@ -216,6 +216,9 @@ const errorCount = computed(
 const lastRunLabel = computed(() => (lastRunAt.value ? formatTime(lastRunAt.value) : ''))
 
 const loadConfig = async () => {
+  if (isUnmounted) {
+    return
+  }
   configAbortController?.abort()
   checkAbortController?.abort()
   checkAbortController = null
@@ -287,7 +290,7 @@ const isToolsResult = (value: unknown): value is ToolsResult => {
 }
 
 const runCheck = async () => {
-  if (checking.value) {
+  if (isUnmounted || configLoading.value || checking.value) {
     return
   }
 
@@ -327,6 +330,9 @@ const runCheck = async () => {
           )
           if (isUnmounted || requestId !== checkRequestId) {
             return
+          }
+          if (result?.status === 'false' && typeof result.error === 'string' && result.error.trim()) {
+            throw new Error(result.error)
           }
           if (!isToolsResult(result)) {
             throw new Error(t('tools.invalidResponse'))

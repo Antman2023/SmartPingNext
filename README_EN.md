@@ -124,6 +124,10 @@ Alert date lists seek between distinct dates using the existing date index, redu
 
 Hostname resolution for online tools, scheduled Ping, mapping probes, and alert MTR waits up to 5 seconds. Caller cancellation or an earlier deadline ends resolution sooner. IPv4 literals skip DNS.
 
+Online diagnostics pause new checks while configuration reloads, then use the updated probe addresses and ports. Leaving the page cancels active requests and prevents late callbacks from starting new checks. Explicit node rejection messages, such as rate limits or resolution failures, appear on the corresponding row. Missing rejection messages and malformed success data still report an invalid response.
+
+If a refresh of the same latency map query fails, the previous result and update time remain visible with a persistent warning. A successful refresh clears the warning; switching nodes or times clears the previous query's result. Node selection pauses during configuration reloads, and late callbacks for removed nodes or an unmounted page cannot start new queries.
+
 Caller cancellation and deadlines also interrupt requests waiting for ICMP initialization or shared write access. Queued senders do not block other probe responses. A probe's response timeout is still measured from its send time.
 
 ICMP read failures are retried after 10, 20, 40, and 80 milliseconds. The fifth consecutive failure closes the connection and releases requests still waiting for a response; a later probe opens a replacement on demand. Every successful read resets the consecutive error count. An old reader cannot retire a replacement connection.

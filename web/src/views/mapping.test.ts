@@ -29,7 +29,9 @@ interface MappingSetup {
   lastUpdatedAt: vue.Ref<Date | null>
   mappingError: vue.Ref<boolean>
   mappingLoading: vue.Ref<boolean>
-  chart: { clear: () => void }
+  configLoading: vue.Ref<boolean>
+  hasRetainedMapping: vue.ComputedRef<boolean>
+  chart: { clear: () => void; dispose: () => void }
   isMapReady: vue.Ref<boolean>
   updateChart: (data: ChinaMapData) => void
   loadMappingData: () => Promise<void>
@@ -44,11 +46,14 @@ const sample = (name: string): ChinaMapData => ({
 
 function createView(t: test.TestContext) {
   const locale = vue.ref('zh-CN')
-  const getMapping = t.mock.fn(async (): Promise<ChinaMapData> => sample('local'))
-  const getProxyMapping = t.mock.fn(async (): Promise<ChinaMapData> => sample('remote'))
+  const getMapping = t.mock.fn(async (_date?: string, _signal?: AbortSignal): Promise<ChinaMapData> => sample('local'))
+  const getProxyMapping = t.mock.fn(async (_base: string, _date?: string, _signal?: AbortSignal): Promise<ChinaMapData> => sample('remote'))
+  const fetchConfig = t.mock.fn(async (_signal?: AbortSignal) => ({ Addr: '127.0.0.1', Port: 8899, Network: {} }))
   const clear = t.mock.fn()
+  const dispose = t.mock.fn()
+  let unmount!: () => void
   const dependencies: Record<string, unknown> = {
-    vue: { ...vue, onMounted: () => {}, onUnmounted: () => {} },
+    vue: { ...vue, onMounted: () => {}, onUnmounted: (callback: () => void) => { unmount = callback } },
     'vue-i18n': { useI18n: () => ({ t: (key: string) => `${locale.value}:${key}`, locale }) },
     'element-plus': { ElMessage: { error: () => {} } },
     '@element-plus/icons-vue': {},
@@ -58,7 +63,7 @@ function createView(t: test.TestContext) {
       isRequestCanceled: (error: unknown) =>
         error instanceof DOMException && error.name === 'AbortError'
     },
-    '@/api/config': { fetchConfig: async () => ({ Addr: '127.0.0.1', Port: 8899, Network: {} }) },
+    '@/api/config': { fetchConfig },
     '@/api/mapping': { getMapping, getProxyMapping },
     '@/utils/chartInteraction': { preserveLegendSelection },
     '@/utils/chartTooltip': { formatMappingTooltip },
@@ -71,7 +76,7 @@ function createView(t: test.TestContext) {
     exports,
     AbortController,
     document: { documentElement: {} },
-    window: { getComputedStyle: () => ({ getPropertyValue: () => '' }) },
+    window: { getComputedStyle: () => ({ getPropertyValue: () => '' }), removeEventListener: () => {} },
     console: { error: () => {} },
     require: (name: string) => {
       assert.ok(name in dependencies, `Unexpected dependency: ${name}`)
@@ -79,10 +84,10 @@ function createView(t: test.TestContext) {
     }
   })
   const scope = vue.effectScope()
-  t.after(() => scope.stop())
+  t.after(() => { unmount(); scope.stop() })
   const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
-  view.chart = { clear }
-  return { view, getMapping, getProxyMapping, clear, locale }
+  view.chart = { clear, dispose }
+  return { view, getMapping, getProxyMapping, fetchConfig, clear, dispose, locale, unmount: () => unmount() }
 }
 
 test('map legend selection survives repeated language changes without duplicate series', async (t) => {
@@ -93,7 +98,6 @@ test('map legend selection survives repeated language changes without duplicate 
       geometry: { type: 'Polygon', coordinates: [[[0, 0], [2, 0], [2, 2], [0, 2], [0, 0]]] } }]
   })
   const chart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width: 640, height: 480 })
-  t.after(() => chart.dispose())
   const { view, locale } = createView(t)
   view.chart = chart
   view.isMapReady.value = true
@@ -137,6 +141,7 @@ test('changing map source clears old data even when the new source fails', async
   assert.equal(view.mappingError.value, true)
   assert.equal(view.mappingLoading.value, false)
   assert.equal(view.latestData.value, null)
+  assert.equal(view.hasRetainedMapping.value, false)
 })
 
 test('changing map time prevents a superseded response from restoring old data', async (t) => {
@@ -214,4 +219,131 @@ test('switching back to the local map uses the direct API and releases source lo
   assert.equal(getMapping.mock.callCount(), 2)
   assert.equal(getProxyMapping.mock.callCount(), 1)
   assert.ok(view.agents.value.every((agent) => !agent.loading))
+})
+
+test('map refresh failures keep a persistent stale-data state until recovery or a query change', async (t) => {
+  const { view, getMapping, clear } = createView(t)
+  view.selectedDate.value = '2026-09-06 12:00'
+  await view.loadMappingData()
+  assert.equal(view.hasRetainedMapping.value, false)
+  const previous = view.latestData.value
+  const updatedAt = view.lastUpdatedAt.value
+  getMapping.mock.mockImplementation(async () => { throw new Error('offline') })
+  for (let retry = 0; retry < 2; retry++) {
+    await view.loadMappingData()
+    assert.equal(view.hasRetainedMapping.value, true)
+    assert.equal(view.latestData.value, previous)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+  }
+  assert.equal(clear.mock.callCount(), 1)
+  getMapping.mock.mockImplementation(async () => sample('recovered'))
+  await view.loadMappingData()
+  assert.equal(view.hasRetainedMapping.value, false)
+  assert.equal(view.latestData.value?.text, 'recovered')
+  assert.notEqual(view.lastUpdatedAt.value, updatedAt)
+  view.selectedDate.value = '2026-09-06 13:00'
+  getMapping.mock.mockImplementation(async () => { throw new Error('new query failed') })
+  await view.loadMappingData()
+  assert.equal(view.mappingError.value, true)
+  assert.equal(view.hasRetainedMapping.value, false)
+  assert.equal(view.latestData.value, null)
+})
+
+test('map stale-data state distinguishes initial failures and a retained empty result', async (t) => {
+  const { view, getMapping } = createView(t)
+  getMapping.mock.mockImplementation(async () => { throw new Error('offline') })
+  await view.loadMappingData()
+  assert.equal(view.mappingError.value, true)
+  assert.equal(view.hasRetainedMapping.value, false)
+  getMapping.mock.mockImplementation(async () => ({ ...sample('empty'), avgdelay: { ctcc: [], cucc: [], cmcc: [] } }))
+  await view.loadMappingData()
+  assert.equal(view.hasRetainedMapping.value, false)
+  const previous = view.latestData.value
+  getMapping.mock.mockImplementation(async () => { throw new Error('offline') })
+  await view.loadMappingData()
+  assert.equal(view.latestData.value, previous)
+  assert.equal(view.hasRetainedMapping.value, true)
+})
+
+test('map config reload blocks old source selections and ignores removed source callbacks', async (t) => {
+  const { view, getMapping, getProxyMapping, fetchConfig } = createView(t)
+  await view.loadConfig()
+  const oldSource = { name: 'old', addr: '192.0.2.1', loading: false }
+  view.agents.value = [oldSource]
+  const previous = view.latestData.value
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  t.after(() => release())
+  fetchConfig.mock.mockImplementation(async () => {
+    await gate
+    return { Addr: '127.0.0.2', Port: 9000, Network: {
+      '192.0.2.2': { Name: 'new', Addr: '192.0.2.2', Smartping: true }
+    } }
+  })
+  getMapping.mock.resetCalls()
+  getProxyMapping.mock.resetCalls()
+  const pending = view.loadConfig()
+  await view.switchAgent(oldSource)
+  try {
+    assert.equal(getProxyMapping.mock.callCount(), 0)
+    assert.equal(view.currentAgent.value, '127.0.0.1')
+    assert.equal(view.latestData.value, previous)
+  } finally {
+    release()
+    await pending
+  }
+  await view.switchAgent(oldSource)
+  assert.equal(getProxyMapping.mock.callCount(), 0)
+  assert.equal(view.currentAgent.value, '127.0.0.2')
+  await view.switchAgent(view.agents.value[0]!)
+  assert.equal(getProxyMapping.mock.callCount(), 1)
+  assert.equal(getProxyMapping.mock.calls[0]!.arguments[0], 'http://192.0.2.2:9000')
+  assert.equal(view.latestData.value?.text, 'remote')
+})
+
+test('map unmount prevents late configuration and source callbacks from starting requests', async (t) => {
+  const { view, fetchConfig, getMapping, getProxyMapping, unmount } = createView(t)
+  await view.loadConfig()
+  view.agents.value = [{ name: 'remote', addr: '192.0.2.1', loading: false }]
+  const agent = view.agents.value[0]!
+  const configCalls = fetchConfig.mock.callCount()
+  const mappingCalls = getMapping.mock.callCount()
+  const source = view.currentAgent.value
+  unmount()
+  await view.loadConfig()
+  await view.loadMappingData()
+  await view.switchAgent(agent)
+  assert.equal(fetchConfig.mock.callCount(), configCalls)
+  assert.equal(getMapping.mock.callCount(), mappingCalls)
+  assert.equal(getProxyMapping.mock.callCount(), 0)
+  assert.equal(view.currentAgent.value, source)
+  assert.equal(view.configLoading.value, false)
+  assert.equal(agent.loading, false)
+  assert.equal(view.latestData.value, null)
+})
+
+test('map unmount cancels active data queries and rejects their late success or failure', async (t) => {
+  for (const fail of [false, true]) {
+    const { view, getMapping, unmount } = createView(t)
+    await view.loadConfig()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    t.after(() => release())
+    getMapping.mock.mockImplementation(async () => {
+      await gate
+      if (fail) throw new Error('late failure')
+      return sample('late data')
+    })
+    const updatedAt = view.lastUpdatedAt.value
+    const pending = view.loadMappingData()
+    const signal = getMapping.mock.calls.at(-1)!.arguments[1]!
+    unmount()
+    assert.equal(signal.aborted, true)
+    release()
+    await pending
+    assert.equal(view.latestData.value, null)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    assert.equal(view.mappingError.value, false)
+    assert.equal(view.hasRetainedMapping.value, false)
+  }
 })

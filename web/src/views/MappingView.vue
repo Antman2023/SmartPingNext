@@ -67,6 +67,14 @@
             </div>
           </div>
 
+          <div v-if="hasRetainedMapping" class="mapping-view__refresh-error" role="status">
+            <el-icon><Warning /></el-icon>
+            <span>{{ $t('common.showingPreviousData') }}</span>
+            <el-button size="small" :disabled="configLoading || mappingLoading" @click="loadMappingData">
+              {{ $t('common.retry') }}
+            </el-button>
+          </div>
+
           <div
             v-loading="configLoading || mappingLoading || chartLoading"
             class="mapping-view__map-shell"
@@ -116,6 +124,7 @@
               type="button"
               class="list-row mapping-view__agent"
               :class="{ 'is-active': currentAgent === agent.addr }"
+              :disabled="configLoading"
               @click="switchAgent(agent)"
             >
               <div class="list-row__meta">
@@ -198,8 +207,12 @@ const hasMappingData = computed(() => {
 const lastUpdatedLabel = computed(() =>
   lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
 )
+const hasRetainedMapping = computed(() => mappingError.value && latestData.value !== null)
 
 const loadConfig = async () => {
+  if (isUnmounted) {
+    return
+  }
   configAbortController?.abort()
   mappingAbortController?.abort()
   mappingAbortController = null
@@ -303,6 +316,9 @@ const loadMappingData = async () => {
 const refreshMapping = () => (config.value ? loadMappingData() : loadConfig())
 
 const switchAgent = async (agent: { name: string; addr: string; loading: boolean }) => {
+  if (isUnmounted || configLoading.value || !config.value || !agents.value.includes(agent)) {
+    return
+  }
   agents.value.forEach((item) => {
     item.loading = false
   })
@@ -533,6 +549,16 @@ onUnmounted(() => {
   height: min(72vh, 760px);
 }
 
+.mapping-view__refresh-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--color-danger);
+  font-size: 13px;
+}
+
 .mapping-view__map {
   width: 100%;
   height: 100%;
@@ -555,6 +581,11 @@ onUnmounted(() => {
   border: none;
   cursor: pointer;
   font: inherit;
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
 }
 
 .mapping-view__agent-dot {
