@@ -239,6 +239,12 @@ SmartPingNext is designed as a lightweight tool. Even in multi-node mutual-PING 
 
 The metric arrays returned by `/api/ping.json` align with the `lastcheck` timeline and contain string values. Minutes without a stored sample use `"-"` and appear as gaps in charts. `"0"` is a recorded zero value, distinct from missing data. API clients should handle `"-"` before converting values to numbers. Query times and the returned timeline use the node's timezone.
 
+Before updating Ping charts, the frontend validates complete minute labels, Gregorian dates, hour/minute ranges and complete decimal metric strings. Invalid responses count as failed refreshes and preserve previous successful curves; when every source fails, the last successful update time is retained. Validation does not use the browser's timezone, reorder labels or remove duplicates caused by clock rollbacks. Valid empty responses still clear old curves.
+
+Detailed and mini Ping charts also display the month, day, hour and minute correctly for labels with negative years. Original timelines, measurements and tooltips retain the node output without browser timezone conversion.
+
+Mapping responses also validate `subtext` against the node's complete minute format, Gregorian dates and hour/minute ranges. Invalid responses count as failed refreshes and retain the last map and successful update time for the same query; changing the node or time clears the previous query's results. Valid empty maps clear old data, and labels are preserved without browser timezone conversion.
+
 Explicit minute parameters for Ping and mapping queries return `406` if that local minute does not exist because of a timezone transition. The server does not silently substitute another time. Previously accepted unpadded hours and extra spaces remain supported. Alert date queries filter stored calendar labels from `00:00` on the requested date to `00:00` on the following date, avoiding shifted bounds during midnight timezone transitions.
 
 Ping history queries use the range of all minute labels in the elapsed-time timeline, keeping samples whose labels fall outside the endpoint labels during a clock rollback. The database still stores local minute labels: repeated labels map to their last position in the timeline and cannot distinguish separate records for the two occurrences of the same local minute.
@@ -252,6 +258,10 @@ Archive cleanup subtracts `Base.Archive` calendar days from the node's current l
 Alert history dates and selected-day records come from the same database snapshot, avoiding a response that mixes data from before and after concurrent sampling writes or archive deletion. The snapshot ends before JSON encoding and transmission; later requests read the latest committed records.
 
 Read-only configuration, Ping, topology, alert and mapping JSON APIs check request cancellation and deadlines before encoding and before submitting the response. Already canceled requests skip encoding; cancellation during encoding discards the result. The standard JSON encoder itself cannot be interrupted. The proxy also checks cancellation after reading the remote response, preventing the completed payload from being forwarded while releasing the body and concurrency slot.
+
+Mapping history also checks cancellation and deadlines before decoding stored JSON, avoiding decoding and copying data for requests that have already ended. Cancellation during decoding is handled after decoding finishes, and cancellation while copying discards partial results. The standard JSON decoder itself cannot be interrupted.
+
+Map output arrays are allocated once per populated carrier using the decoded sample count, reducing repeated growth for large results. Empty carriers still return empty arrays. Allocation starts after the first sample passes cancellation and data validation checks.
 
 `/api/topology.json` returns string states by target IP: `"true"` means the alert threshold has not been reached, `"false"` means it has, and `"unknown"` means no samples exist for that target in the configured check window (including the grace period for rounds finishing across a minute boundary). Unknown states neither trigger alerts nor mark existing alerts as recovered. Clients must handle all three values explicitly instead of treating every non-`"false"` value as healthy.
 

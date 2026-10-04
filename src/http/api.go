@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -302,8 +303,12 @@ func configApiRoutes(mux *http.ServeMux) {
 				return
 			}
 		} else {
-			chinaMp.Avgdelay, err = decodeMappingData(mapRow.Mapjson)
+			chinaMp.Avgdelay, err = decodeMappingDataContext(r.Context(), mapRow.Mapjson)
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 				logrus.Error("[/api/mapping.json] Json", err)
 				http.Error(w, "Invalid mapping data", http.StatusInternalServerError)
 				return
@@ -537,31 +542,6 @@ func emptyMappingData() map[string][]g.MapVal {
 		"cucc": {},
 		"cmcc": {},
 	}
-}
-
-func decodeMappingData(raw string) (map[string][]g.MapVal, error) {
-	// Pointers distinguish an actual zero measurement from missing or null fields.
-	type storedSample struct {
-		Name  *string  `json:"name"`
-		Value *float64 `json:"value"`
-	}
-	stored := make(map[string][]storedSample)
-	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
-		return nil, err
-	}
-	normalized := emptyMappingData()
-	for carrier := range normalized {
-		for _, sample := range stored[carrier] {
-			if sample.Name == nil || sample.Value == nil {
-				return nil, errors.New("mapping sample is missing a name or value")
-			}
-			if *sample.Value < 0 {
-				return nil, errors.New("mapping sample has a negative delay")
-			}
-			normalized[carrier] = append(normalized[carrier], g.MapVal{Name: *sample.Name, Value: *sample.Value})
-		}
-	}
-	return normalized, nil
 }
 
 func handleProxy(w http.ResponseWriter, r *http.Request) {

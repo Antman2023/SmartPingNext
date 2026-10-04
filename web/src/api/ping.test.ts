@@ -4,6 +4,7 @@ import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import type { PingLogData } from '../types/index.js'
+import { isPingLogData } from '../utils/pingData.js'
 
 const source = readFileSync(new URL('../../src/api/ping.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, {
@@ -23,6 +24,7 @@ function createApi(response: unknown) {
     require: (name: string) => {
       if (name === './index') return { default: { get }, proxyRequestConfig: () => ({}) }
       if (name === '@/locales') return { default: { global: { t: (key: string) => key } } }
+      if (name === '@/utils/pingData') return { isPingLogData }
       throw new Error(`Unexpected dependency: ${name}`)
     }
   })
@@ -70,7 +72,8 @@ test('ping APIs reject malformed data before it reaches any chart', async () => 
         ['0x10', '-'],
         ['-1', '-'],
         ['-0.5', '-'],
-        ['-1e2', '-']
+        ['-1e2', '-'],
+        ...['\n', '\r', '\r\n', '\u2028', '\u2029'].map((ending) => ['1' + ending, '-'])
       ].map((values) => ({ ...sample, [key]: values }))
     ),
     { ...sample, losspk: ['101', '-'] },
@@ -80,5 +83,29 @@ test('ping APIs reject malformed data before it reaches any chart', async () => 
   for (const data of invalid) {
     for (const request of createApi(data))
       await assert.rejects(request, /common.invalidPingResponse/)
+  }
+})
+
+test('local and proxy ping APIs reject invalid minute labels', async () => {
+  for (const time of ['', 'tomorrow', '2026-02-30 12:00', '2025-02-29 00:00',
+    '1900-02-29 00:00', '2026-13-01 12:00', '2026-09-20 24:00', '2026-09-20 12:60',
+    '2026-09-20 12:00\n', '2026-09-20 12:00 garbage']) {
+    for (const request of createApi({ ...sample, lastcheck: [sample.lastcheck[0], time] })) {
+      await assert.rejects(request, /common.invalidPingResponse/, time)
+    }
+  }
+})
+
+test('local and proxy ping APIs preserve node civil labels including clock rollbacks', async () => {
+  for (const lastcheck of [
+    ['2024-02-29 00:00', '2024-02-29 23:59'],
+    ['0000-02-29 00:00', '0099-12-31 23:59'],
+    ['-0001-12-31 23:59', '0000-01-01 00:00'],
+    ['2011-11-06 01:59', '2011-11-06 01:00'],
+    ['2011-11-06 01:30', '2011-11-06 01:30'],
+    ['2011-03-13 02:30', '2011-12-30 12:00']
+  ]) {
+    const data = { ...sample, lastcheck }
+    for (const request of createApi(data)) assert.equal(await request(), data)
   }
 })

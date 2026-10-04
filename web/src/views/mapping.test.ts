@@ -11,11 +11,15 @@ import * as vue from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import type { ChinaMapData } from '../types/index.js'
 import { formatMappingTooltip } from '../utils/chartTooltip.js'
+import * as calendarDate from '../utils/calendarDate.js'
 
 // Execute the actual view setup with controlled API responses and no browser renderer.
 const source = readFileSync(new URL('../../src/views/MappingView.vue', import.meta.url), 'utf8')
 const { descriptor } = parse(source)
 const compiled = ts.transpileModule(compileScript(descriptor, { id: 'mapping-test' }).content, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+}).outputText
+const compiledMappingApi = ts.transpileModule(readFileSync(new URL('../../src/api/mapping.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText
 
@@ -32,7 +36,7 @@ interface MappingSetup {
   configLoading: vue.Ref<boolean>
   configError: vue.Ref<boolean>
   hasRetainedMapping: vue.ComputedRef<boolean>
-  chart: { clear: () => void; dispose: () => void }
+  chart: { clear: () => void; dispose: () => void; getOption: () => Record<string, unknown>; setOption: (option: unknown) => void }
   isMapReady: vue.Ref<boolean>
   updateChart: (data: ChinaMapData) => void
   loadMappingData: () => Promise<void>
@@ -46,13 +50,28 @@ const sample = (name: string): ChinaMapData => ({
   avgdelay: { ctcc: [{ name: '广东', value: 10 }], cucc: [], cmcc: [] }
 })
 
-function createView(t: test.TestContext) {
+function createView(t: test.TestContext, validateResponses = false) {
   const locale = vue.ref('zh-CN')
   const getMapping = t.mock.fn(async (_date?: string, _signal?: AbortSignal): Promise<ChinaMapData> => sample('local'))
   const getProxyMapping = t.mock.fn(async (_base: string, _date?: string, _signal?: AbortSignal): Promise<ChinaMapData> => sample('remote'))
+  const mappingApi: Record<string, unknown> = validateResponses ? {} : { getMapping, getProxyMapping }
+  if (validateResponses) {
+    runInNewContext(compiledMappingApi, {
+      exports: mappingApi, URL, URLSearchParams,
+      require: (id: string) => {
+        if (id === './index') return { default: { get: (url: string) =>
+          url.startsWith('/proxy.json?') ? getProxyMapping(url) : getMapping(url)
+        }, proxyRequestConfig: () => ({}) }
+        if (id === '@/locales') return { default: { global: { t: (key: string) => key } } }
+        if (id === '@/utils/calendarDate') return calendarDate
+        throw new Error(`Unexpected mapping API dependency: ${id}`)
+      }
+    })
+  }
   const fetchConfig = t.mock.fn(async (_signal?: AbortSignal) => ({ Addr: '127.0.0.1', Port: 8899, Network: {} }))
   const clear = t.mock.fn()
   const dispose = t.mock.fn()
+  const setOption = t.mock.fn((_option: unknown) => {})
   let unmount!: () => void
   const dependencies: Record<string, unknown> = {
     vue: { ...vue, onMounted: () => {}, onUnmounted: (callback: () => void) => { unmount = callback } },
@@ -66,7 +85,7 @@ function createView(t: test.TestContext) {
         error instanceof DOMException && error.name === 'AbortError'
     },
     '@/api/config': { fetchConfig },
-    '@/api/mapping': { getMapping, getProxyMapping },
+    '@/api/mapping': mappingApi,
     '@/utils/chartInteraction': { preserveLegendSelection },
     '@/utils/chartTooltip': { formatMappingTooltip },
     '@/stores/sidebar': { useSidebarStore: () => ({ isCollapsed: false }) },
@@ -88,9 +107,85 @@ function createView(t: test.TestContext) {
   const scope = vue.effectScope()
   t.after(() => { unmount(); scope.stop() })
   const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
-  view.chart = { clear, dispose }
-  return { view, getMapping, getProxyMapping, fetchConfig, clear, dispose, locale, unmount: () => unmount() }
+  view.chart = { clear, dispose, setOption, getOption: () => ({}) }
+  return { view, getMapping, getProxyMapping, fetchConfig, clear, dispose, setOption, locale, unmount: () => unmount() }
 }
+
+test('invalid local map minute labels retain chart output and successful time until recovery', async (t) => {
+  const { view, getMapping, clear, setOption } = createView(t, true)
+  const currentData = () => view.latestData.value
+  view.isMapReady.value = true
+  getMapping.mock.mockImplementation(async () => ({ ...sample('invalid'), subtext: 'tomorrow' }))
+  await view.loadConfig()
+  assert.equal(currentData(), null)
+  assert.equal(view.lastUpdatedAt.value, null)
+  assert.equal(view.mappingError.value, true)
+  assert.equal(view.configError.value, false)
+  assert.equal(setOption.mock.callCount(), 0)
+
+  getMapping.mock.mockImplementation(async () => sample('valid'))
+  await view.refreshMapping()
+  const previous = view.latestData.value
+  const updatedAt = view.lastUpdatedAt.value
+  const chartUpdates = setOption.mock.callCount()
+  const clears = clear.mock.callCount()
+  for (const subtext of ['2026-02-30 12:00', '2026-09-06 24:00', '2026-09-06 12:00 garbage']) {
+    getMapping.mock.mockImplementation(async () => ({ ...sample('invalid'), subtext }))
+    await view.loadMappingData()
+    assert.equal(view.latestData.value, previous)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    assert.equal(view.mappingError.value, true)
+    assert.equal(view.hasRetainedMapping.value, true)
+    assert.equal(view.mappingLoading.value, false)
+    assert.equal(setOption.mock.callCount(), chartUpdates)
+    assert.equal(clear.mock.callCount(), clears)
+  }
+
+  getMapping.mock.mockImplementation(async () => ({ ...sample('empty'), subtext: '0000-02-29 00:00',
+    avgdelay: { ctcc: [], cucc: [], cmcc: [] } }))
+  await view.loadMappingData()
+  assert.equal(view.mappingError.value, false)
+  assert.equal(view.hasRetainedMapping.value, false)
+  assert.equal(view.latestData.value?.subtext, '0000-02-29 00:00')
+  assert.notEqual(view.lastUpdatedAt.value, updatedAt)
+  const option = setOption.mock.calls.at(-1)!.arguments[0] as { title: { subtext: string }; series: Array<{ data: unknown[] }> }
+  assert.equal(option.title.subtext, '0000-02-29 00:00')
+  assert.ok(option.series.every((series) => series.data.length === 0))
+})
+
+test('invalid proxy map minute labels cannot restore another query or replace retained data', async (t) => {
+  const { view, getProxyMapping } = createView(t, true)
+  const currentData = () => view.latestData.value
+  await view.loadConfig()
+  view.agents.value = [
+    { name: 'local', addr: '127.0.0.1', loading: false },
+    { name: 'remote', addr: '192.0.2.1', loading: false }
+  ]
+  getProxyMapping.mock.mockImplementation(async () => ({ ...sample('invalid'), subtext: '2026-02-30 12:00' }))
+  await view.switchAgent(view.agents.value[1]!)
+  assert.equal(currentData(), null)
+  assert.equal(view.lastUpdatedAt.value, null)
+  assert.equal(view.mappingError.value, true)
+  assert.equal(view.hasRetainedMapping.value, false)
+  assert.ok(view.agents.value.every((agent) => !agent.loading))
+
+  getProxyMapping.mock.mockImplementation(async () => ({ ...sample('remote'), subtext: '2011-03-13 02:30' }))
+  await view.refreshMapping()
+  const previous = view.latestData.value
+  const updatedAt = view.lastUpdatedAt.value
+  assert.equal(previous?.subtext, '2011-03-13 02:30')
+  getProxyMapping.mock.mockImplementation(async () => ({ ...sample('invalid'), subtext: '' }))
+  await view.loadMappingData()
+  assert.equal(view.latestData.value, previous)
+  assert.equal(view.lastUpdatedAt.value, updatedAt)
+  assert.equal(view.hasRetainedMapping.value, true)
+  view.selectedDate.value = '2026-09-06 13:00'
+  await view.loadMappingData()
+  assert.equal(view.latestData.value, null)
+  assert.equal(view.lastUpdatedAt.value, null)
+  assert.equal(view.hasRetainedMapping.value, false)
+  assert.equal(view.mappingError.value, true)
+})
 
 test('map legend selection survives repeated language changes without duplicate series', async (t) => {
   echarts.use(SVGRenderer)

@@ -9,9 +9,34 @@ import * as vue from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import { SVGRenderer } from 'echarts/renderers'
 import { echarts } from '../../utils/echartsLine.js'
-import { getPingChartOption } from '../../utils/charts.js'
+import { getPingChartOption, getPingMiniChartOption } from '../../utils/charts.js'
 
 echarts.use(SVGRenderer)
+
+test('detail and mini charts render signed-year minute labels in the actual SVG axis', () => {
+  const labels = { maxDelay: 'Max', averageDelay: 'Average', minDelay: 'Min',
+    lossRate: 'Loss rate', latency: 'Latency', loss: 'Loss' }
+  const history = { lastcheck: ['-0001-12-31 23:59', '0000-01-01 00:00'],
+    maxdelay: ['0', '1'], mindelay: ['0', '1'], avgdelay: ['0', '1'], losspk: ['0', '100'] }
+  for (const build of [getPingChartOption, getPingMiniChartOption]) {
+    const chart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width: 640, height: 400 })
+    try {
+      chart.setOption(build(history, false, labels))
+      chart.renderToSVGString()
+      const texts = chart.getZr().storage.getDisplayList()
+        .filter((element) => element.type === 'tspan')
+        .map((element) => (element.style as { text?: string }).text)
+      assert.ok(texts.includes('23:59'), `missing 23:59 in rendered labels: ${JSON.stringify(texts)}`)
+      assert.ok(texts.includes('00:00'), `missing 00:00 in rendered labels: ${JSON.stringify(texts)}`)
+      if (build === getPingChartOption) {
+        assert.ok(texts.includes('12-31'))
+        assert.ok(texts.includes('01-01'))
+      }
+    } finally {
+      chart.dispose()
+    }
+  }
+})
 
 test('detail chart keeps numeric axis labels inside narrow and wide canvases', () => {
   const labels = {

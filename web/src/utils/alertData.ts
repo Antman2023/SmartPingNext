@@ -1,23 +1,17 @@
 import type { AlertData, AlertLog } from '../types/index.js'
+import { isCalendarDate } from './calendarDate.js'
 
 const alertLogFields = ['Logtime', 'Targetip', 'Targetname', 'Tracert', 'Fromip', 'Fromname']
 const calendarDatePattern = /^(-?\d{4})-(\d{2})-(\d{2})$/
 // Keep stored civil labels, seconds/fractions, SQLite's 24-hour forms and
 // timezone suffixes. Do not parse in the browser's timezone or rewrite labels.
 const alertTimestampPattern = /^(-?\d{4})-(\d{2})-(\d{2})(?:[T \t\r\n\f\v]*(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(?:[ \t\r\n\f\v]*(?:[Zz]|[+-](\d{2}):(\d{2})))?)?[ \t\r\n\f\v]*$/
-const monthLengths = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-
-const isCalendarDate = (year: number, month: number, day: number): boolean => {
-  const days = month === 2 && year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
-    ? 29 : (monthLengths[month - 1] ?? 0)
-  return day >= 1 && day <= days
-}
 
 const isAlertDate = (value: unknown): value is string => {
   if (typeof value !== 'string') return false
   const parts = calendarDatePattern.exec(value)
-  // JavaScript's $ also matches before a final newline; archive labels must
-  // match the entire string so they can be used unchanged as query dates.
+  // Archive labels must match the entire string so they can be used unchanged
+  // as query dates.
   return parts !== null && parts[0] === value && isCalendarDate(+parts[1]!, +parts[2]!, +parts[3]!)
 }
 

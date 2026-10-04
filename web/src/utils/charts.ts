@@ -164,8 +164,10 @@ export function getPingChartOption(
         interval: 'auto',
         formatter: (value: string, index: number) => {
           if (!value) return ''
-          const time = value.length >= 16 ? value.substring(11, 16) : value
-          const date = value.length >= 10 ? value.substring(5, 10) : ''
+          // Minute labels end in MM-DD HH:mm even when the year has a sign.
+          const time = value.length >= 16 ? value.slice(-5) : value
+          const date = value.length >= 16
+            ? value.slice(-11, -6) : (value.length >= 10 ? value.substring(5, 10) : '')
 
           if (!date) return `{time|${time}}`
           // 只在“已显示标签”的日期发生变化时显示日期，不新增额外刻度
@@ -303,7 +305,7 @@ export function getPingMiniChartOption(
         interval: 'auto',
         formatter: (value: string) => {
           if (!value || value.length < 16) return value || ''
-          return value.substring(11, 16)
+          return value.slice(-5)
         }
       }
     },

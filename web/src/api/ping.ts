@@ -1,29 +1,7 @@
 import request, { proxyRequestConfig } from './index'
 import type { PingLogData } from '@/types'
 import i18n from '@/locales'
-
-const isPingLogData = (value: unknown): value is PingLogData => {
-  if (typeof value !== 'object' || value === null) return false
-  const data = value as Record<string, unknown>
-  if (!Array.isArray(data.lastcheck) || !data.lastcheck.every((time) => typeof time === 'string')) {
-    return false
-  }
-  const size = data.lastcheck.length
-  return ['maxdelay', 'mindelay', 'avgdelay', 'losspk'].every((key) => {
-    const values = data[key]
-    return (
-      Array.isArray(values) &&
-      values.length === size &&
-      values.every((sample) => {
-        if (typeof sample !== 'string') return false
-        if (sample === '-') return true
-        if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(sample)) return false
-        const value = Number(sample)
-        return Number.isFinite(value) && value >= 0 && (key !== 'losspk' || value <= 100)
-      })
-    )
-  })
-}
+import { isPingLogData } from '@/utils/pingData'
 
 const validatePingData = (value: unknown): PingLogData => {
   if (!isPingLogData(value)) throw new Error(i18n.global.t('common.invalidPingResponse'))

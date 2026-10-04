@@ -1,13 +1,14 @@
 import request, { proxyRequestConfig } from './index'
 import type { ChinaMapData } from '@/types'
 import i18n from '@/locales'
+import { isMinuteLabel } from '@/utils/calendarDate'
 
 const isMappingData = (value: unknown): value is ChinaMapData => {
   if (typeof value !== 'object' || value === null) return false
   const data = value as Record<string, unknown>
   if (
     typeof data.text !== 'string' ||
-    typeof data.subtext !== 'string' ||
+    !isMinuteLabel(data.subtext) ||
     typeof data.avgdelay !== 'object' ||
     data.avgdelay === null
   )

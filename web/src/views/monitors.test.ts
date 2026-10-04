@@ -10,6 +10,7 @@ import { mapWithConcurrency } from '../utils/concurrency.js'
 import { isValidTimeRange, normalizeTimeRangeHours } from '../utils/timeRange.js'
 import { resolveRefreshInterval } from '../utils/refreshInterval.js'
 import type { PingLogData } from '../types/index.js'
+import { isPingLogData } from '../utils/pingData.js'
 
 interface Target {
   name: string
@@ -60,6 +61,10 @@ const sample: PingLogData = {
   losspk: ['0']
 }
 
+const compiledPingApi = ts.transpileModule(readFileSync(new URL('../../src/api/ping.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+}).outputText
+
 for (const name of ['DashboardView', 'ReverseView']) {
   const source = readFileSync(new URL(`../../src/views/${name}.vue`, import.meta.url), 'utf8')
   const { descriptor } = parse(source)
@@ -67,7 +72,7 @@ for (const name of ['DashboardView', 'ReverseView']) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
   }).outputText.replace(/import\.meta\.env/g, 'testEnv')
 
-  function createView(t: test.TestContext, testEnv: Record<string, string> = {}) {
+  function createView(t: test.TestContext, testEnv: Record<string, string> = {}, validateResponses = false) {
     const setInterval = t.mock.fn((_callback: () => void, _interval: number) => 1)
     const clearInterval = t.mock.fn((_id: number) => {})
     const showWarning = t.mock.fn((_message: string) => {})
@@ -77,6 +82,18 @@ for (const name of ['DashboardView', 'ReverseView']) {
       constructor(value?: number) { super(value ?? now) }
     }
     const getPing = t.mock.fn(async (): Promise<PingLogData> => sample)
+    const pingApi: Record<string, unknown> = validateResponses ? {} : { getPingData: getPing, getProxyPingData: getPing }
+    if (validateResponses) {
+      runInNewContext(compiledPingApi, {
+        exports: pingApi, URL, URLSearchParams,
+        require: (id: string) => {
+          if (id === './index') return { default: { get: getPing }, proxyRequestConfig: () => ({}) }
+          if (id === '@/locales') return { default: { global: { t: (key: string) => key } } }
+          if (id === '@/utils/pingData') return { isPingLogData }
+          throw new Error(`Unexpected Ping API dependency: ${id}`)
+        }
+      })
+    }
     const fetchConfig = t.mock.fn(async () => ({ Addr: '127.0.0.1', Base: { Refresh: 1 }, Network: {} }))
     const document = { visibilityState: 'visible', addEventListener: t.mock.fn(), removeEventListener: t.mock.fn() }
     let unmount!: () => void
@@ -95,7 +112,7 @@ for (const name of ['DashboardView', 'ReverseView']) {
       '@/api/config': {
         fetchConfig, fetchProxyConfig: fetchConfig
       },
-      '@/api/ping': { getPingData: getPing, getProxyPingData: getPing },
+      '@/api/ping': pingApi,
       '@/utils/concurrency': { mapWithConcurrency },
       '@/utils/timeRange': { isValidTimeRange, normalizeTimeRangeHours },
       '@/utils/refreshInterval': { resolveRefreshInterval },
@@ -380,6 +397,59 @@ for (const name of ['DashboardView', 'ReverseView']) {
     await view.loadDetailData()
     assert.deepEqual(view.detailData.value, recovered)
     assert.equal(view.detailError.value, false)
+  })
+
+  test(`${name}: invalid wire timeline retains charts and timestamps while valid sources recover`, async (t) => {
+    const { view, targets, getPing, advanceTime } = createView(t, {}, true)
+    const invalid = { ...sample, lastcheck: ['2026-02-30 12:00'] }
+    getPing.mock.mockImplementation(async () => invalid)
+    await view.loadAllCharts()
+    assert.equal(view.loadedTargets.value, 0)
+    assert.equal(view.failedTargets.value, 6)
+    assert.equal(view.lastUpdatedAt.value, null)
+    assert.ok(targets.value.every((target) => target.chartData === null && target.error))
+
+    getPing.mock.mockImplementation(async () => sample)
+    await view.loadAllCharts()
+    const loaded = targets.value.map((target) => target.chartData)
+    const updatedAt = view.lastUpdatedAt.value
+    advanceTime(60_000)
+    getPing.mock.mockImplementation(async () => invalid)
+    await view.loadAllCharts()
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    targets.value.forEach((target, index) => {
+      assert.equal(target.chartData, loaded[index])
+      assert.equal(target.error, true)
+    })
+
+    const recovered = { ...sample, avgdelay: ['20'] }
+    let source = 0
+    getPing.mock.mockImplementation(async () => source++ === 0 ? invalid : recovered)
+    await view.loadAllCharts()
+    assert.equal(view.loadedTargets.value, 5)
+    assert.equal(view.failedTargets.value, 1)
+    assert.equal(targets.value[0]!.chartData, loaded[0])
+    assert.equal(targets.value[0]!.error, true)
+    assert.ok(targets.value.slice(1).every((target) => !target.error && target.chartData?.avgdelay[0] === '20'))
+    assert.notEqual(view.lastUpdatedAt.value, updatedAt)
+
+    getPing.mock.mockImplementation(async () => sample)
+    await view.showDetail(targets.value[0]!)
+    const detail = view.detailData.value
+    getPing.mock.mockImplementation(async () => invalid)
+    await view.loadDetailData()
+    assert.equal(view.detailData.value, detail)
+    assert.equal(view.detailError.value, true)
+    assert.equal(view.detailLoading.value, false)
+
+    const empty: PingLogData = { lastcheck: [], maxdelay: [], mindelay: [], avgdelay: [], losspk: [] }
+    getPing.mock.mockImplementation(async () => empty)
+    await view.loadDetailData()
+    assert.deepEqual(view.detailData.value, empty)
+    assert.equal(view.detailError.value, false)
+    await view.loadAllCharts()
+    assert.equal(view.failedTargets.value, 0)
+    assert.ok(targets.value.every((target) => target.chartData?.lastcheck.length === 0))
   })
 
   test(`${name}: fixed detail query retains its own data on failure and clears it for a different range`, async (t) => {
