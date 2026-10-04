@@ -112,6 +112,14 @@ go vet ./src/...
 
 Configuration imports accept files up to 16 MiB. Imported changes must be saved before they apply to the node. Password verification failures or timeouts during import and export preserve current edits.
 
+Saving, importing and exporting wait for a successful configuration load and pause during reloads. An active save, import or export also prevents configuration reloads from overwriting the current draft. After the page unmounts, late callbacks cannot start configuration requests, password verification or saves. Edits made while a save is pending remain in the draft; success confirms only the submitted snapshot.
+
+Node and province deletion confirmations apply only to their original targets. Reloading, importing or replacing configuration while a confirmation is pending prevents it from deleting a new object. Switching province editors keeps the newer editor open and deletes only the originally selected province. Canceled or repeated confirmations do not report success. Deleting a node removes its incoming Ping targets and topology rules.
+
+Node, Ping, topology and province editors retain their own targets. Closing an editor or replacing its target prevents old save callbacks from changing the draft or reporting success. Successful configuration reloads and imports close old editors; failures preserve their drafts. Ping and topology edits cannot restore removed, moved or replaced targets. Reopening an editor uses the current node list.
+
+New node and province drafts belong to the configuration collection present when their dialogs open. Old confirmations cannot add records after closing, unmounting or configuration replacement. Validation failures retain the inputs and dialog. Adding nodes stops at 1,024; deleting a node allows retrying with the same inputs. New records apply only after saving the complete configuration.
+
 Forward and reverse monitors retain the last successfully loaded curves for the same query when refresh fails and show the failure status. Detail views clear previous curves when the target, relative time range, or valid custom time range changes, keeping data from different queries separate.
 
 Closed monitoring detail dialogs reject delayed queries. Leaving the page cancels active requests and refresh timers, and prevents late callbacks from reloading configuration, lists, or details. Reopening a dialog allows queries normally.
@@ -265,6 +273,8 @@ Alert history dates and selected-day records come from the same database snapsho
 
 Read-only configuration, Ping, topology, alert and mapping JSON APIs check request cancellation and deadlines before encoding and before submitting the response. Already canceled requests skip encoding; cancellation during encoding discards the result. The standard JSON encoder itself cannot be interrupted. The proxy also checks cancellation after reading the remote response, preventing the completed payload from being forwarded while releasing the body and concurrency slot.
 
+The configuration API also checks cancellation before and during snapshot copying. Finished requests skip the full copy; cancellation during copying discards partial results and releases the read lock. Waiting for the existing configuration lock cannot be interrupted, so request status is checked again after acquiring it. Successful responses still hide the password and preserve the full configuration and existing empty collection representations.
+
 Mapping history also checks cancellation and deadlines before decoding stored JSON, avoiding decoding and copying data for requests that have already ended. Cancellation during decoding is handled after decoding finishes, and cancellation while copying discards partial results. The standard JSON decoder itself cannot be interrupted.
 
 Map output arrays are allocated once per populated carrier using the decoded sample count, reducing repeated growth for large results. Empty carriers still return empty arrays. Allocation starts after the first sample passes cancellation and data validation checks.
@@ -274,6 +284,8 @@ Map output arrays are allocated once per populated carrier using the decoded sam
 For alert windows of at least 10 hours, the query can stop once enough bad samples among the latest records meet the occurrence threshold. The configured sample cap, minute-boundary grace and unknown state remain intact. Shorter windows retain the original query to avoid extra fixed overhead. Long windows with few or no samples incur additional overhead; measurements are recorded in the [optimization review](docs/optimization-review.md).
 
 Node proxy responses are limited to 16 MiB, with up to 32 concurrent requests. For declared lengths between 512 bytes and 16 MiB, the proxy preallocates its read buffer to reduce growth for large responses. Actual bytes read are checked independently; truncated and oversized responses are rejected. Client cancellation stops the remote request and releases the proxy concurrency slot.
+
+The proxy checks cancellation before allocating its read buffer. Cancelable requests read in batches of at most 32 KiB with cancellation checks, avoiding further consumption of buffered responses after cancellation. Cancellation checks and the byte limit share one reader to reduce adapter allocations. Cancellation during reading or final validation discards the result and releases the body and concurrency slot. Allocation already performed for a declared length still incurs its cost. The HTTP transport interrupts blocked network reads.
 
 Node JSON APIs and proxy responses declare `Content-Length` using the encoded byte count, allowing large responses to use the preallocated read path. Password and online tool rate-limit responses also declare accurate lengths while preserving status `429`, `Retry-After` and their existing JSON fields.
 

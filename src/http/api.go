@@ -29,7 +29,11 @@ func configApiRoutes(mux *http.ServeMux) {
 			http.Error(w, o, http.StatusUnauthorized)
 			return
 		}
-		nconf := g.ConfigSnapshot()
+		nconf, err := g.ConfigSnapshotContext(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		nconf.Password = ""
 		renderJSONContext(r.Context(), w, nconf)
 	})
@@ -617,10 +621,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, o, resCode)
 		return
 	}
-	body, err := readProxyHTTPResponseBody(resp)
-	if err == nil {
-		err = r.Context().Err()
-	}
+	body, err := readProxyHTTPResponseBodyContext(r.Context(), resp)
 	if err != nil {
 		o := "Read Remote Data Error:" + err.Error()
 		http.Error(w, o, http.StatusServiceUnavailable)

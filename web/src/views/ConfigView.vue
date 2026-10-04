@@ -77,14 +77,14 @@
             <el-input
               v-model="password"
               type="password"
-              :disabled="saving || importExportBusy || !isDirty"
+              :disabled="!configReady || saving || importExportBusy || !isDirty"
               :placeholder="$t('common.password')"
               @keyup.enter="handleSave"
             />
             <el-button
               type="primary"
               :loading="saving"
-              :disabled="importExportBusy || !isDirty"
+              :disabled="!configReady || saving || importExportBusy || !isDirty"
               @click="handleSave"
               >{{ $t('common.save') }}</el-button
             >
@@ -114,24 +114,24 @@
             <el-input
               v-model="importExportPassword"
               type="password"
-              :disabled="importExportBusy || saving"
+              :disabled="!configReady || importExportBusy || saving"
               :placeholder="$t('common.password')"
             />
             <div class="control-row">
               <el-button
                 :loading="exporting"
-                :disabled="importing || saving"
+                :disabled="!configReady || importExportBusy || saving"
                 @click="handleExport"
                 >{{ $t('config.exportConfig') }}</el-button
               >
               <el-upload
                 :auto-upload="false"
                 :show-file-list="false"
-                :disabled="importExportBusy || saving"
+                :disabled="!configReady || importExportBusy || saving"
                 accept=".json"
                 :on-change="handleImportFile"
               >
-                <el-button :loading="importing" :disabled="exporting || saving">{{
+                <el-button :loading="importing" :disabled="!configReady || importExportBusy || saving">{{
                   $t('config.importConfig')
                 }}</el-button>
               </el-upload>
@@ -274,7 +274,7 @@
                 {{ networkList.length }} {{ $t('common.node') }}
               </p>
             </div>
-            <el-button @click="showAddNode">{{ $t('config.addNode') }}</el-button>
+            <el-button :disabled="!configReady" @click="showAddNode">{{ $t('config.addNode') }}</el-button>
           </div>
 
           <div class="table-scroll">
@@ -339,7 +339,7 @@
                 {{ provinceCount }} {{ $t('common.provinces') }}
               </p>
             </div>
-            <el-button @click="showAddChinaMap">{{ $t('config.addProvince') }}</el-button>
+            <el-button :disabled="!configReady" @click="showAddChinaMap">{{ $t('config.addProvince') }}</el-button>
           </div>
 
           <div class="config-view__province-grid">
@@ -371,7 +371,7 @@
       </el-form>
       <template #footer>
         <el-button @click="addNodeVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="addNode">{{ $t('config.tempSave') }}</el-button>
+        <el-button type="primary" :disabled="!configReady" @click="addNode">{{ $t('config.tempSave') }}</el-button>
       </template>
     </el-dialog>
 
@@ -392,7 +392,7 @@
 
     <el-dialog v-model="pingConfigVisible" :title="$t('config.pingConfig')" width="560px">
       <p class="config-view__dialog-tip">
-        {{ $t('config.selectPingTargets', { name: currentEditNode?.Name }) }}
+        {{ $t('config.selectPingTargets', { name: currentPingNode?.node.Name }) }}
       </p>
       <div class="table-scroll">
         <el-table :data="pingTargetList" stripe max-height="420">
@@ -417,7 +417,7 @@
       width="min(960px, 94vw)"
     >
       <p class="config-view__dialog-tip">
-        {{ $t('config.selectTopoTargets', { name: currentEditNode?.Name }) }}
+        {{ $t('config.selectTopoTargets', { name: currentTopoNode?.node.Name }) }}
       </p>
       <div class="table-scroll">
         <el-table :data="topoTargetList" stripe max-height="460">
@@ -557,14 +557,14 @@
       </el-form>
       <template #footer>
         <el-button @click="addProvinceVisible = false">{{ $t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="addProvince">{{ $t('common.confirm') }}</el-button>
+        <el-button type="primary" :disabled="!configReady" @click="addProvince">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, shallowRef } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import '@/plugins/elementPlusConfigStyles'
@@ -607,6 +607,7 @@ const importExportPassword = ref('')
 const loadingConfig = ref(false)
 const configError = ref(false)
 const configLoaded = ref(false)
+const configReady = computed(() => configLoaded.value && !loadingConfig.value)
 const savedSnapshot = ref('')
 const saving = ref(false)
 const exporting = ref(false)
@@ -739,17 +740,33 @@ const focusValidationIssue = async (validationIssue: ConfigValidationIssue) => {
 const addNodeVisible = ref(false)
 const newNodeName = ref('')
 const newNodeAddr = ref('')
+const newNodeNetwork = shallowRef<Config['Network'] | null>(null)
 
 const editNodeVisible = ref(false)
 const editNodeName = ref('')
 const editNodeAddr = ref('')
-const editNodeOriginalAddr = ref('')
+
+interface NodeEditSession {
+  network: Config['Network']
+  node: NetworkMember
+  addr: string
+}
+const currentNodeEdit = shallowRef<NodeEditSession | null>(null)
+const captureNodeEdit = (row: NetworkListItem): NodeEditSession | null => {
+  if (isUnmounted || !configReady.value) return null
+  const node = formConfig.Network[row.Addr]
+  return node && node === row._original ? { network: formConfig.Network, node, addr: row.Addr } : null
+}
+const isCurrentNodeEdit = (session: NodeEditSession | null): session is NodeEditSession =>
+  !isUnmounted && configReady.value && session !== null &&
+  formConfig.Network === session.network && session.network[session.addr] === session.node
 
 const pingConfigVisible = ref(false)
-const currentEditNode = ref<{ Name: string; Addr: string } | null>(null)
-const pingTargetList = ref<Array<{ Name: string; Addr: string; enabled: boolean }>>([])
+const currentPingNode = shallowRef<NodeEditSession | null>(null)
+const pingTargetList = ref<Array<{ Name: string; Addr: string; enabled: boolean; _original: NetworkMember }>>([])
 
 interface TopologyTargetItem {
+  _original: NetworkMember
   Name: string
   Addr: string
   enabled: boolean
@@ -760,6 +777,7 @@ interface TopologyTargetItem {
 }
 
 const topoConfigVisible = ref(false)
+const currentTopoNode = shallowRef<NodeEditSession | null>(null)
 const topoTargetList = ref<TopologyTargetItem[]>([])
 
 const maxOccurrenceCount = (checkSeconds: number) => {
@@ -781,6 +799,17 @@ type ChinaMapProviderKey = 'ctcc' | 'cucc' | 'cmcc'
 
 const chinaMapTab = ref<ChinaMapProviderKey>('ctcc')
 const currentProvince = ref('')
+interface ProvinceEditSession {
+  mapping: Config['Chinamap']
+  province: string
+  providers: Config['Chinamap'][string]
+}
+const currentProvinceEdit = shallowRef<ProvinceEditSession | null>(null)
+const isCurrentProvinceEdit = (session: ProvinceEditSession | null): session is ProvinceEditSession =>
+  !isUnmounted && configReady.value && session !== null &&
+  formConfig.Chinamap === session.mapping && currentProvince.value === session.province &&
+  Object.prototype.hasOwnProperty.call(session.mapping, session.province) &&
+  session.mapping[session.province] === session.providers
 const chinaMapIps = reactive({
   ctcc: '',
   cucc: '',
@@ -803,8 +832,31 @@ const clearChinaMapValidation = (provider: ChinaMapProviderKey) => {
 }
 const addProvinceVisible = ref(false)
 const newProvinceName = ref('')
+const newProvinceMapping = shallowRef<Config['Chinamap'] | null>(null)
+
+const closeEditingDialogs = () => {
+  addNodeVisible.value = false
+  addProvinceVisible.value = false
+  newNodeNetwork.value = null
+  newProvinceMapping.value = null
+  editNodeVisible.value = false
+  pingConfigVisible.value = false
+  topoConfigVisible.value = false
+  chinaMapVisible.value = false
+  currentNodeEdit.value = null
+  currentPingNode.value = null
+  currentTopoNode.value = null
+  currentProvinceEdit.value = null
+  pingTargetList.value = []
+  topoTargetList.value = []
+  currentProvince.value = ''
+  chinaMapValidationIssue.value = null
+}
 
 const loadConfig = async () => {
+  if (isUnmounted || saving.value || importExportBusy.value) {
+    return
+  }
   const requestId = ++configRequestId
   loadingConfig.value = true
   configError.value = false
@@ -819,6 +871,7 @@ const loadConfig = async () => {
       return
     }
 
+    closeEditingDialogs()
     Object.assign(formConfig, JSON.parse(JSON.stringify(cfg)) as Config)
     configLoaded.value = true
     validationAttempted.value = false
@@ -921,7 +974,7 @@ const normalizeImportedConfig = (value: unknown): Record<string, unknown> | null
 }
 
 const handleSave = async () => {
-  if (saving.value || importExportBusy.value) {
+  if (isUnmounted || !configReady.value || saving.value || importExportBusy.value) {
     return
   }
   validationAttempted.value = true
@@ -966,7 +1019,7 @@ const handleSave = async () => {
 }
 
 const handleExport = async () => {
-  if (importExportBusy.value || saving.value) {
+  if (isUnmounted || !configReady.value || importExportBusy.value || saving.value) {
     return
   }
   if (!importExportPassword.value) {
@@ -1028,7 +1081,7 @@ const handleExport = async () => {
 }
 
 const handleImportFile = async (file: UploadFile) => {
-  if (importExportBusy.value || saving.value) {
+  if (isUnmounted || !configReady.value || importExportBusy.value || saving.value) {
     return
   }
   if (!file.raw) {
@@ -1103,6 +1156,7 @@ const handleImportFile = async (file: UploadFile) => {
         return
       }
 
+      closeEditingDialogs()
       Object.assign(formConfig, candidate)
       validationAttempted.value = false
 
@@ -1126,12 +1180,16 @@ const handleImportFile = async (file: UploadFile) => {
 }
 
 const showAddNode = () => {
+  if (isUnmounted || !configReady.value) return
+  newNodeNetwork.value = formConfig.Network
   newNodeName.value = ''
   newNodeAddr.value = ''
   addNodeVisible.value = true
 }
 
 const addNode = () => {
+  if (isUnmounted || !configReady.value || !addNodeVisible.value ||
+    newNodeNetwork.value !== formConfig.Network) return
   if (!newNodeName.value.trim() || !newNodeAddr.value.trim()) {
     ElMessage.warning(t('config.pleaseEnterNodeAndIP'))
     return
@@ -1145,6 +1203,10 @@ const addNode = () => {
   const addr = newNodeAddr.value.trim()
   if (formConfig.Network[addr]) {
     ElMessage.warning(t('config.nodeIPExists'))
+    return
+  }
+  if (Object.keys(formConfig.Network).length >= CONFIG_LIMITS.networkNodes) {
+    showValidationIssue({ key: 'config.validationNetworkLimit', params: { max: CONFIG_LIMITS.networkNodes } })
     return
   }
 
@@ -1161,6 +1223,15 @@ const addNode = () => {
 }
 
 const deleteNode = async (row: NetworkListItem) => {
+  if (isUnmounted || !configReady.value) {
+    return
+  }
+  const addr = row.Addr
+  const network = formConfig.Network
+  const node = network[addr]
+  if (!node || node !== row._original || addr === formConfig.Addr) {
+    return
+  }
   try {
     await ElMessageBox.confirm(
       t('config.deleteNodeConfirm', { name: displayName(row.Name) }),
@@ -1175,27 +1246,33 @@ const deleteNode = async (row: NetworkListItem) => {
     return
   }
 
-  const addr = row.Addr
-  delete formConfig.Network[addr]
+  // A confirmation belongs to this draft and node, even when an address is
+  // reused by a later import, reload or edit while the dialog is pending.
+  if (isUnmounted || !configReady.value || formConfig.Network !== network ||
+    network[addr] !== node || addr === formConfig.Addr) {
+    return
+  }
+  delete network[addr]
 
-  for (const [, member] of Object.entries(formConfig.Network)) {
-    const pingIndex = member.Ping.indexOf(addr)
-    if (pingIndex !== -1) {
-      member.Ping.splice(pingIndex, 1)
-    }
+  for (const member of Object.values(network)) {
+    member.Ping = member.Ping.filter((target) => target !== addr)
     member.Topology = member.Topology.filter((topology) => topology.Addr !== addr)
   }
   ElMessage.success(t('config.nodeDeleted'))
 }
 
 const showEditNode = (row: NetworkListItem) => {
-  editNodeOriginalAddr.value = row.Addr
+  const session = captureNodeEdit(row)
+  if (!session) return
+  currentNodeEdit.value = session
   editNodeName.value = row.Name
   editNodeAddr.value = row.Addr
   editNodeVisible.value = true
 }
 
 const saveEditNode = () => {
+  const session = currentNodeEdit.value
+  if (!editNodeVisible.value || !isCurrentNodeEdit(session)) return
   if (!editNodeName.value.trim() || !editNodeAddr.value.trim()) {
     ElMessage.warning(t('config.pleaseEnterNodeAndIP'))
     return
@@ -1206,7 +1283,7 @@ const saveEditNode = () => {
     return
   }
 
-  const oldAddr = editNodeOriginalAddr.value
+  const oldAddr = session.addr
   const newAddr = editNodeAddr.value.trim()
   const newName = editNodeName.value.trim()
 
@@ -1264,11 +1341,14 @@ const saveEditNode = () => {
 }
 
 const editPingConfig = (row: NetworkListItem) => {
-  currentEditNode.value = { Name: row.Name, Addr: row.Addr }
+  const session = captureNodeEdit(row)
+  if (!session) return
+  currentPingNode.value = session
   const currentPingList = formConfig.Network[row.Addr]?.Ping || []
 
   pingTargetList.value = Object.entries(formConfig.Network)
     .map(([addr, network]) => ({
+      _original: network,
       Name: network.Name,
       Addr: addr,
       enabled: currentPingList.includes(addr)
@@ -1278,22 +1358,26 @@ const editPingConfig = (row: NetworkListItem) => {
 }
 
 const savePingConfig = () => {
-  if (!currentEditNode.value) {
+  const session = currentPingNode.value
+  if (!pingConfigVisible.value || !isCurrentNodeEdit(session)) {
     return
   }
 
-  const selectedAddrs = pingTargetList.value.filter((item) => item.enabled).map((item) => item.Addr)
-
-  if (formConfig.Network[currentEditNode.value.Addr]) {
-    formConfig.Network[currentEditNode.value.Addr].Ping = selectedAddrs
+  const selected = pingTargetList.value.filter((item) => item.enabled)
+  if (selected.some((item) => session.network[item.Addr] !== item._original)) {
+    pingConfigVisible.value = false
+    return
   }
+  session.node.Ping = selected.map((item) => item.Addr)
 
   pingConfigVisible.value = false
   ElMessage.success(t('config.pingConfigUpdated'))
 }
 
 const editTopoConfig = (row: NetworkListItem) => {
-  currentEditNode.value = { Name: row.Name, Addr: row.Addr }
+  const session = captureNodeEdit(row)
+  if (!session) return
+  currentTopoNode.value = session
   const currentTopologies = new Map(
     (formConfig.Network[row.Addr]?.Topology || []).map((topology) => [topology.Addr, topology])
   )
@@ -1309,6 +1393,7 @@ const editTopoConfig = (row: NetworkListItem) => {
       const current = currentTopologies.get(addr)
       const checkSeconds = ruleNumber(current?.Thdchecksec, 900, 60, 86400)
       return {
+        _original: network,
         Name: network.Name,
         Addr: addr,
         enabled: !!current,
@@ -1326,14 +1411,19 @@ const editTopoConfig = (row: NetworkListItem) => {
 }
 
 const saveTopoConfig = () => {
-  if (!currentEditNode.value) {
+  const session = currentTopoNode.value
+  if (!topoConfigVisible.value || !isCurrentNodeEdit(session)) {
     return
   }
 
-  const selectedTopologies = topoTargetList.value
-    .filter((item) => item.enabled)
+  const selected = topoTargetList.value.filter((item) => item.enabled)
+  if (selected.some((item) => session.network[item.Addr] !== item._original)) {
+    topoConfigVisible.value = false
+    return
+  }
+  const selectedTopologies = selected
     .map((item) => ({
-      Name: item.Name,
+      Name: item._original.Name,
       Addr: item.Addr,
       Thdchecksec: String(item.checkSeconds),
       Thdoccnum: String(Math.min(item.occurrenceCount, maxOccurrenceCount(item.checkSeconds))),
@@ -1341,15 +1431,16 @@ const saveTopoConfig = () => {
       Thdloss: String(item.lossPercent)
     }))
 
-  if (formConfig.Network[currentEditNode.value.Addr]) {
-    formConfig.Network[currentEditNode.value.Addr].Topology = selectedTopologies
-  }
+  session.node.Topology = selectedTopologies
 
   topoConfigVisible.value = false
   ElMessage.success(t('config.topoConfigUpdated'))
 }
 
 const editChinaMap = (province: string) => {
+  if (isUnmounted || !configReady.value ||
+    !Object.prototype.hasOwnProperty.call(formConfig.Chinamap, province)) return
+  currentProvinceEdit.value = { mapping: formConfig.Chinamap, province, providers: formConfig.Chinamap[province]! }
   currentProvince.value = province
   chinaMapTab.value = 'ctcc'
   chinaMapValidationIssue.value = null
@@ -1363,7 +1454,8 @@ const editChinaMap = (province: string) => {
 }
 
 const saveChinaMap = () => {
-  if (!currentProvince.value) {
+  const session = currentProvinceEdit.value
+  if (!chinaMapVisible.value || !isCurrentProvinceEdit(session)) {
     return
   }
 
@@ -1407,7 +1499,7 @@ const saveChinaMap = () => {
     return
   }
 
-  formConfig.Chinamap[currentProvince.value] = providers
+  session.mapping[session.province] = providers
   chinaMapValidationIssue.value = null
 
   chinaMapVisible.value = false
@@ -1415,13 +1507,19 @@ const saveChinaMap = () => {
 }
 
 const deleteChinaMap = async () => {
-  if (!currentProvince.value) {
+  if (!chinaMapVisible.value || !isCurrentProvinceEdit(currentProvinceEdit.value)) {
     return
   }
+  const province = currentProvince.value
+  const mapping = formConfig.Chinamap
+  if (!Object.prototype.hasOwnProperty.call(mapping, province)) {
+    return
+  }
+  const providers = mapping[province]
 
   try {
     await ElMessageBox.confirm(
-      t('config.deleteProvinceConfirm', { province: currentProvince.value }),
+      t('config.deleteProvinceConfirm', { province }),
       t('config.deleteProvince'),
       {
         confirmButtonText: t('common.confirm'),
@@ -1433,17 +1531,27 @@ const deleteChinaMap = async () => {
     return
   }
 
-  delete formConfig.Chinamap[currentProvince.value]
-  chinaMapVisible.value = false
+  if (isUnmounted || !configReady.value || formConfig.Chinamap !== mapping ||
+    !Object.prototype.hasOwnProperty.call(mapping, province) || mapping[province] !== providers) {
+    return
+  }
+  delete mapping[province]
+  if (currentProvince.value === province) {
+    chinaMapVisible.value = false
+  }
   ElMessage.success(t('config.provinceDeleted'))
 }
 
 const showAddChinaMap = () => {
+  if (isUnmounted || !configReady.value) return
+  newProvinceMapping.value = formConfig.Chinamap
   newProvinceName.value = ''
   addProvinceVisible.value = true
 }
 
 const addProvince = () => {
+  if (isUnmounted || !configReady.value || !addProvinceVisible.value ||
+    newProvinceMapping.value !== formConfig.Chinamap) return
   if (!newProvinceName.value.trim()) {
     ElMessage.warning(t('config.pleaseEnterProvinceName'))
     return

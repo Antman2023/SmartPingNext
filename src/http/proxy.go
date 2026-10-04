@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -81,7 +82,12 @@ func readProxyResponseBodyWithLength(reader io.Reader, contentLength int64) ([]b
 	if contentLength > maxProxyResponseBytes {
 		return nil, errors.New("Proxy Response Too Large!")
 	}
-	limited := io.LimitReader(reader, maxProxyResponseBytes+1)
+	return readLimitedProxyResponseBody(io.LimitReader(reader, maxProxyResponseBytes+1), contentLength)
+}
+
+// Both callers validate the length hint and supply a reader with the same
+// maximum-byte sentinel. Buffer growth and actual-length checks stay shared.
+func readLimitedProxyResponseBody(limited io.Reader, contentLength int64) ([]byte, error) {
 	var body []byte
 	var err error
 	if contentLength >= bytes.MinRead {
@@ -107,6 +113,58 @@ func readProxyHTTPResponseBody(response *http.Response) ([]byte, error) {
 		return nil, errors.New("Proxy Response Body Missing!")
 	}
 	return readProxyResponseBodyWithLength(response.Body, response.ContentLength)
+}
+
+func readProxyHTTPResponseBodyContext(ctx context.Context, response *http.Response) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if response == nil || response.Body == nil {
+		return nil, errors.New("Proxy Response Body Missing!")
+	}
+	if response.ContentLength > maxProxyResponseBytes {
+		return nil, errors.New("Proxy Response Too Large!")
+	}
+	var limited io.Reader
+	if ctx.Done() != nil {
+		// Keep cancellation and the byte budget in one request-local object.
+		limited = &proxyContextReader{ctx: ctx,
+			limited: io.LimitedReader{R: response.Body, N: maxProxyResponseBytes + 1}}
+	} else {
+		limited = io.LimitReader(response.Body, maxProxyResponseBytes+1)
+	}
+	body, err := readLimitedProxyResponseBody(limited, response.ContentLength)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return body, nil
+}
+
+type proxyContextReader struct {
+	ctx     context.Context
+	limited io.LimitedReader
+}
+
+func (reader *proxyContextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	// Bound reads so even a buffered response checks cancellation between
+	// chunks. The HTTP transport still handles cancellation of a blocked read.
+	const maxReadBytes = 32 << 10
+	if len(buffer) > maxReadBytes {
+		buffer = buffer[:maxReadBytes]
+	}
+	count, err := reader.limited.Read(buffer)
+	if err == nil || err == io.EOF {
+		if canceled := reader.ctx.Err(); canceled != nil {
+			return count, canceled
+		}
+	}
+	return count, err
 }
 
 func validateProxyTarget(rawTarget string) (*url.URL, error) {
