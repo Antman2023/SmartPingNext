@@ -30,7 +30,7 @@ func configApiRoutes(mux *http.ServeMux) {
 		}
 		nconf := g.ConfigSnapshot()
 		nconf.Password = ""
-		RenderJson(w, nconf)
+		renderJSONContext(r.Context(), w, nconf)
 	})
 
 	//Ping数据API
@@ -75,9 +75,12 @@ func configApiRoutes(mux *http.ServeMux) {
 			start := time.Now()
 			// Initialize only when samples exist; ordered timelines need no map.
 			var timeIndex pingTimelineIndex
+			var l *g.PingLog
 
 			for rows.Next() {
-				l := new(g.PingLog)
+				if l == nil {
+					l = new(g.PingLog)
+				}
 				err := rows.Scan(&l.Logtime, &l.Maxdelay, &l.Mindelay, &l.Avgdelay, &l.Losspk)
 				if err != nil {
 					logrus.Error("[/api/ping.json] Rows", err)
@@ -121,7 +124,7 @@ func configApiRoutes(mux *http.ServeMux) {
 			"losspk":    losspk,
 		}
 		w.Header().Set("Content-Type", "application/json")
-		RenderJson(w, preout)
+		renderJSONContext(r.Context(), w, preout)
 	})
 
 	//Ping拓扑API
@@ -154,7 +157,7 @@ func configApiRoutes(mux *http.ServeMux) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		RenderJson(w, preout)
+		renderJSONContext(r.Context(), w, preout)
 	})
 
 	//报警API
@@ -166,9 +169,6 @@ func configApiRoutes(mux *http.ServeMux) {
 			o := "Your ip address (" + r.RemoteAddr + ")  is not allowed to access this site!"
 			http.Error(w, o, http.StatusUnauthorized)
 			return
-		}
-		type DateList struct {
-			Ldate string
 		}
 		config := g.ConfigMetadataSnapshot()
 		form := r.URL.Query()
@@ -208,16 +208,19 @@ func configApiRoutes(mux *http.ServeMux) {
 			http.Error(w, "Query alert dates failed", http.StatusInternalServerError)
 			return
 		} else {
+			var date *string
 			for rows.Next() {
-				l := new(DateList)
-				err := rows.Scan(&l.Ldate)
+				if date == nil {
+					date = new(string)
+				}
+				err := rows.Scan(date)
 				if err != nil {
 					logrus.Error("[/api/alert.json] Rows", err)
 					rows.Close()
 					http.Error(w, "Read alert dates failed", http.StatusInternalServerError)
 					return
 				}
-				listpreout = append(listpreout, l.Ldate)
+				listpreout = append(listpreout, *date)
 			}
 			if err := rows.Err(); err != nil {
 				rows.Close()
@@ -235,11 +238,12 @@ func configApiRoutes(mux *http.ServeMux) {
 			http.Error(w, "Query alert data failed", http.StatusInternalServerError)
 			return
 		} else {
+			var l *g.AlertLog
 			for rows.Next() {
-				l := new(g.AlertLog)
+				if l == nil {
+					l = &g.AlertLog{Fromname: config.Name, Fromip: config.Addr}
+				}
 				err := rows.Scan(&l.Logtime, &l.Targetname, &l.Targetip, &l.Tracert)
-				l.Fromname = config.Name
-				l.Fromip = config.Addr
 				if err != nil {
 					logrus.Error("[/api/alert.json] Rows", err)
 					rows.Close()
@@ -261,7 +265,7 @@ func configApiRoutes(mux *http.ServeMux) {
 			http.Error(w, "Query alert data failed", http.StatusInternalServerError)
 			return
 		}
-		RenderJson(w, []any{listpreout, datapreout})
+		renderJSONContext(r.Context(), w, []any{listpreout, datapreout})
 	})
 
 	//全国延迟API
@@ -306,7 +310,7 @@ func configApiRoutes(mux *http.ServeMux) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		RenderJson(w, chinaMp)
+		renderJSONContext(r.Context(), w, chinaMp)
 	})
 
 	//检测工具API
@@ -628,6 +632,9 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := readProxyHTTPResponseBody(resp)
+	if err == nil {
+		err = r.Context().Err()
+	}
 	if err != nil {
 		o := "Read Remote Data Error:" + err.Error()
 		http.Error(w, o, http.StatusServiceUnavailable)
@@ -635,6 +642,10 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if !json.Valid(body) {
 		http.Error(w, "Invalid Remote JSON Response", http.StatusBadGateway)
+		return
+	}
+	if err := r.Context().Err(); err != nil {
+		http.Error(w, "Read Remote Data Error:"+err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	// Preserve the bounded response: indentation can amplify nested JSON

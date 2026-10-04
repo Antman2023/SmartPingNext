@@ -1,4 +1,4 @@
-import { isAlertData } from '../utils/alertData.js'
+import { isAlertData, sortAlertDates, sortAlertRecords } from '../utils/alertData.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -112,6 +112,95 @@ test('malformed alert refresh preserves only the affected source previous record
   assert.equal(view.alerts.value[0]!.refreshFailed, true)
   assert.equal(view.hasRetainedAlerts.value, true)
   assert.equal(view.failedNodes.value, 1)
+})
+
+test('invalid alert dates and times retain source snapshots and successful update time', async (t) => {
+  const { view, getAlerts } = createView(t)
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.loadConfig()
+  const updatedAt = view.lastUpdatedAt.value
+  const originalRecords = Array.from(view.alerts.value, (record) => record.Logtime)
+  for (const response of [
+    { dates: ['2026-02-30'], logs: [] },
+    { dates: ['tomorrow'], logs: [] },
+    { dates: ['2026-09-06'], logs: [alertLog('new', '2026-09-06 25:00')] },
+    { dates: ['2026-09-06'], logs: [alertLog('new', '2026-02-30 12:00')] }
+  ]) {
+    getAlerts.mock.mockImplementation(async () => response)
+    await view.retryAlerts()
+    assert.equal(view.failedNodes.value, 2)
+    assert.equal(view.alertsLoadError.value, true)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    assert.deepEqual([...view.dates.value], ['2026-09-06'])
+    assert.deepEqual(Array.from(view.alerts.value, (record) => record.Logtime), originalRecords)
+    assert.ok(view.alerts.value.every((record) => record.refreshFailed))
+  }
+
+  getAlerts.mock.mockImplementation(async (url) => url.includes('192.0.2.2')
+    ? { dates: ['invalid'], logs: [] }
+    : { dates: ['2026-09-07'], logs: [alertLog(url, '2026-09-07 00:00')] })
+  await view.retryAlerts()
+  assert.equal(view.failedNodes.value, 1)
+  assert.equal(view.alertsLoadError.value, false)
+  assert.notEqual(view.lastUpdatedAt.value, updatedAt)
+  assert.deepEqual([...view.dates.value], ['2026-09-07', '2026-09-06'])
+  assert.deepEqual(Array.from(view.alerts.value, (record) => record.refreshFailed), [false, true])
+
+  getAlerts.mock.mockImplementation(async () => ({ dates: [], logs: [] }))
+  await view.retryAlerts()
+  assert.equal(view.failedNodes.value, 0)
+  assert.equal(view.alertsLoadError.value, false)
+  assert.equal(view.hasRetainedAlerts.value, false)
+  assert.equal(view.alerts.value.length, 0)
+  assert.equal(view.dates.value.length, 0)
+})
+
+test('an initially invalid alert timestamp can recover with compatible stored records', async (t) => {
+  const { view, getAlerts } = createView(t)
+  getAlerts.mock.mockImplementation(async (url) => ({
+    dates: ['2026-09-06'], logs: [alertLog(url, 'not-a-timestamp')]
+  }))
+  await view.loadConfig()
+  assert.equal(view.failedNodes.value, 2)
+  assert.equal(view.alertsLoadError.value, true)
+  assert.equal(view.lastUpdatedAt.value, null)
+  assert.equal(view.alerts.value.length, 0)
+  assert.equal(view.dates.value.length, 0)
+
+  // SQLite's date() can report the UTC day while the record keeps its offset.
+  const time = '2026-09-06 23:59:59.123-08:00'
+  getAlerts.mock.mockImplementation(async (url) => ({
+    dates: ['2026-09-07'], logs: [alertLog(url, time)]
+  }))
+  await view.retryAlerts()
+  assert.equal(view.failedNodes.value, 0)
+  assert.equal(view.alertsLoadError.value, false)
+  assert.ok(view.lastUpdatedAt.value)
+  assert.deepEqual([...view.dates.value], ['2026-09-07'])
+  assert.deepEqual(Array.from(view.alerts.value, (record) => record.Logtime), [time, time])
+})
+
+test('alert aggregation orders mixed time formats and retains source failure markers', async (t) => {
+  const { view, getAlerts } = createView(t)
+  const noon = alertLog('a', '2026-09-06T12:00')
+  const afternoon = alertLog('b', '2026-09-06 13:00')
+  const archiveDates = ['-0002-01-01', '-0001-01-01', '2026-09-06']
+  getAlerts.mock.mockImplementation(async (url) => ({
+    dates: archiveDates, logs: [url.includes('192.0.2.1') ? noon : afternoon]
+  }))
+  await view.loadConfig()
+  assert.deepEqual(Array.from(view.alerts.value, (record) => record.Logtime), [afternoon.Logtime, noon.Logtime])
+  assert.deepEqual([...view.dates.value], ['2026-09-06', '-0001-01-01', '-0002-01-01'])
+  getAlerts.mock.mockImplementation(async (url) => {
+    if (url.includes('192.0.2.2')) throw new Error('offline')
+    return { dates: ['2026-09-06'], logs: [alertLog('a', '2026-09-06  14:00')] }
+  })
+  await view.retryAlerts()
+  assert.deepEqual(Array.from(view.alerts.value, (record) => record.Logtime), ['2026-09-06  14:00', afternoon.Logtime])
+  assert.deepEqual(Array.from(view.alerts.value, (record) => record.refreshFailed), [false, true])
+  assert.deepEqual([...view.dates.value], ['2026-09-06', '-0001-01-01', '-0002-01-01'])
+  assert.equal(view.failedNodes.value, 1)
+  assert.equal(view.hasRetainedAlerts.value, true)
 })
 
 test('date changes discard cached source records even when returning to a previous date', async (t) => {
@@ -242,7 +331,7 @@ function createView(t: test.TestContext) {
     },
     '@/api/config': { fetchConfig },
     '@/api/alert': { getAlerts },
-    '@/utils/alertData': { isAlertData },
+    '@/utils/alertData': { isAlertData, sortAlertDates, sortAlertRecords },
     '@/utils/concurrency': { mapWithConcurrency },
     '@/utils/format': { displayName: (name: string) => name, formatTime: () => '12:00' }
   }

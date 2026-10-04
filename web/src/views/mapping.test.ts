@@ -30,12 +30,14 @@ interface MappingSetup {
   mappingError: vue.Ref<boolean>
   mappingLoading: vue.Ref<boolean>
   configLoading: vue.Ref<boolean>
+  configError: vue.Ref<boolean>
   hasRetainedMapping: vue.ComputedRef<boolean>
   chart: { clear: () => void; dispose: () => void }
   isMapReady: vue.Ref<boolean>
   updateChart: (data: ChinaMapData) => void
   loadMappingData: () => Promise<void>
   loadConfig: () => Promise<void>
+  refreshMapping: () => Promise<void> | undefined
 }
 
 const sample = (name: string): ChinaMapData => ({
@@ -125,7 +127,7 @@ test('map legend selection survives repeated language changes without duplicate 
 
 test('changing map source clears old data even when the new source fails', async (t) => {
   const { view, getProxyMapping, clear } = createView(t)
-  await view.loadMappingData()
+  await view.loadConfig()
   assert.equal(view.latestData.value?.text, 'local')
   assert.ok(view.lastUpdatedAt.value)
 
@@ -146,7 +148,7 @@ test('changing map source clears old data even when the new source fails', async
 
 test('changing map time prevents a superseded response from restoring old data', async (t) => {
   const { view, getMapping } = createView(t)
-  await view.loadMappingData()
+  await view.loadConfig()
   let resolveOld!: (value: ChinaMapData) => void
   getMapping.mock.mockImplementationOnce(
     () =>
@@ -169,7 +171,7 @@ test('changing map time prevents a superseded response from restoring old data',
 
 test('refreshing the same map preserves the previous sample and timestamp on failure', async (t) => {
   const { view, getMapping, clear } = createView(t)
-  await view.loadMappingData()
+  await view.loadConfig()
   const data = view.latestData.value
   const updatedAt = view.lastUpdatedAt.value
   getMapping.mock.mockImplementation(async () => {
@@ -184,6 +186,8 @@ test('refreshing the same map preserves the previous sample and timestamp on fai
 
 test('reloading configuration returns map requests to the local node', async (t) => {
   const { view, getMapping, getProxyMapping } = createView(t)
+  await view.loadConfig()
+  getMapping.mock.resetCalls()
   view.currentAgent.value = '192.0.2.1'
   view.currentBaseUrl.value = 'http://192.0.2.1:8899'
   await view.loadMappingData()
@@ -224,7 +228,7 @@ test('switching back to the local map uses the direct API and releases source lo
 test('map refresh failures keep a persistent stale-data state until recovery or a query change', async (t) => {
   const { view, getMapping, clear } = createView(t)
   view.selectedDate.value = '2026-09-06 12:00'
-  await view.loadMappingData()
+  await view.loadConfig()
   assert.equal(view.hasRetainedMapping.value, false)
   const previous = view.latestData.value
   const updatedAt = view.lastUpdatedAt.value
@@ -252,7 +256,7 @@ test('map refresh failures keep a persistent stale-data state until recovery or 
 test('map stale-data state distinguishes initial failures and a retained empty result', async (t) => {
   const { view, getMapping } = createView(t)
   getMapping.mock.mockImplementation(async () => { throw new Error('offline') })
-  await view.loadMappingData()
+  await view.loadConfig()
   assert.equal(view.mappingError.value, true)
   assert.equal(view.hasRetainedMapping.value, false)
   getMapping.mock.mockImplementation(async () => ({ ...sample('empty'), avgdelay: { ctcc: [], cucc: [], cmcc: [] } }))
@@ -345,5 +349,152 @@ test('map unmount cancels active data queries and rejects their late success or 
     assert.equal(view.lastUpdatedAt.value, updatedAt)
     assert.equal(view.mappingError.value, false)
     assert.equal(view.hasRetainedMapping.value, false)
+  }
+})
+
+test('map date and refresh callbacks pause during configuration reload then use the new endpoints', async (t) => {
+  const { view, getMapping, getProxyMapping, fetchConfig, clear } = createView(t)
+  view.selectedDate.value = '2026-09-06 12:00'
+  await view.loadConfig()
+  const previous = view.latestData.value
+  const updatedAt = view.lastUpdatedAt.value
+  const clearCalls = clear.mock.callCount()
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  t.after(() => release())
+  fetchConfig.mock.mockImplementation(async () => {
+    await gate
+    return { Addr: '127.0.0.2', Port: 9000, Network: {
+      remote: { Name: 'new', Addr: '192.0.2.2', Smartping: true }
+    } }
+  })
+  getMapping.mock.resetCalls()
+  getProxyMapping.mock.resetCalls()
+  const pending = view.loadConfig()
+  try {
+    await view.loadMappingData()
+    await view.refreshMapping()
+    await view.loadMappingData()
+    assert.equal(getMapping.mock.callCount(), 0)
+    assert.equal(getProxyMapping.mock.callCount(), 0)
+    assert.equal(view.latestData.value, previous)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    assert.equal(clear.mock.callCount(), clearCalls)
+    assert.equal(view.mappingLoading.value, false)
+  } finally {
+    release()
+    await pending
+  }
+  assert.equal(getMapping.mock.callCount(), 1, 'the completed config load must still query the map')
+  assert.equal(getMapping.mock.calls[0]!.arguments[0], '2026-09-06 12:00')
+  assert.equal(view.currentAgent.value, '127.0.0.2')
+  await view.switchAgent(view.agents.value[0]!)
+  await view.refreshMapping()
+  assert.equal(getProxyMapping.mock.callCount(), 2)
+  assert.ok(getProxyMapping.mock.calls.every((call) => call.arguments[0] === 'http://192.0.2.2:9000'))
+})
+
+test('map callbacks wait for initial configuration and refresh recovers an initial config failure', async (t) => {
+  const { view, getMapping, getProxyMapping, fetchConfig } = createView(t)
+  await view.loadMappingData()
+  await view.refreshMapping()
+  assert.equal(fetchConfig.mock.callCount(), 0)
+  assert.equal(getMapping.mock.callCount(), 0)
+  assert.equal(getProxyMapping.mock.callCount(), 0)
+  assert.equal(view.lastUpdatedAt.value, null)
+  fetchConfig.mock.mockImplementationOnce(async () => { throw new Error('offline') })
+  await view.loadConfig()
+  assert.equal(view.configError.value, true)
+  assert.equal(view.configLoading.value, false)
+  await view.loadMappingData()
+  assert.equal(getMapping.mock.callCount(), 0)
+  await view.refreshMapping()
+  assert.equal(fetchConfig.mock.callCount(), 2)
+  assert.equal(getMapping.mock.callCount(), 1)
+  assert.equal(view.configError.value, false)
+  assert.equal(view.latestData.value?.text, 'local')
+  assert.ok(view.lastUpdatedAt.value)
+})
+
+test('map config reload cancels old requests and rejects late results while callbacks are paused', async (t) => {
+  for (const fail of [false, true]) {
+    const { view, getMapping, fetchConfig } = createView(t)
+    await view.loadConfig()
+    let releaseOld!: () => void
+    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve })
+    t.after(() => releaseOld())
+    getMapping.mock.mockImplementationOnce(async () => {
+      await oldGate
+      if (fail) throw new Error('late failure')
+      return sample('obsolete')
+    })
+    const oldRequest = view.loadMappingData()
+    const oldSignal = getMapping.mock.calls.at(-1)!.arguments[1]!
+    let releaseConfig!: () => void
+    const configGate = new Promise<void>((resolve) => { releaseConfig = resolve })
+    t.after(() => releaseConfig())
+    fetchConfig.mock.mockImplementation(async () => {
+      await configGate
+      return { Addr: '127.0.0.2', Port: 9000, Network: {} }
+    })
+    const pending = view.loadConfig()
+    try {
+      assert.equal(oldSignal.aborted, true)
+      const calls = getMapping.mock.callCount()
+      await view.refreshMapping()
+      await view.loadMappingData()
+      assert.equal(getMapping.mock.callCount(), calls)
+    } finally {
+      releaseConfig()
+      await pending
+      releaseOld()
+      await oldRequest
+    }
+    assert.equal(view.latestData.value?.text, 'local')
+    assert.equal(view.currentAgent.value, '127.0.0.2')
+    assert.equal(view.mappingError.value, false)
+    assert.equal(view.mappingLoading.value, false)
+    assert.equal(view.configLoading.value, false)
+  }
+})
+
+test('map callbacks do not cancel the query started by an unfinished config load', async (t) => {
+  for (const reload of [false, true]) {
+    const { view, getMapping } = createView(t)
+    if (reload) await view.loadConfig()
+    const previous = view.latestData.value
+    const updatedAt = view.lastUpdatedAt.value
+    getMapping.mock.resetCalls()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    t.after(() => release())
+    getMapping.mock.mockImplementationOnce(async () => {
+      await gate
+      return sample('fresh config query')
+    })
+    const pending = view.loadConfig()
+    await setImmediate()
+    try {
+      assert.equal(getMapping.mock.callCount(), 1)
+      const signal = getMapping.mock.calls[0]!.arguments[1]!
+      assert.equal(view.configLoading.value, true)
+      assert.equal(view.mappingLoading.value, true)
+      await view.loadMappingData()
+      await view.refreshMapping()
+      assert.equal(signal.aborted, false)
+      assert.equal(getMapping.mock.callCount(), 1)
+      assert.equal(view.latestData.value, previous)
+      assert.equal(view.lastUpdatedAt.value, updatedAt)
+      assert.equal(view.mappingLoading.value, true)
+    } finally {
+      release()
+      await pending
+    }
+    assert.equal(view.latestData.value?.text, 'fresh config query')
+    assert.equal(view.configLoading.value, false)
+    assert.equal(view.mappingLoading.value, false)
+    assert.notEqual(view.lastUpdatedAt.value, updatedAt)
+    await view.refreshMapping()
+    assert.equal(getMapping.mock.callCount(), 2)
   }
 })

@@ -235,7 +235,7 @@ import '@/plugins/elementPlusAlertsStyles'
 import RefreshStatus from '@/components/common/RefreshStatus.vue'
 import { isRequestCanceled } from '@/api'
 import { fetchConfig } from '@/api/config'
-import { isAlertData } from '@/utils/alertData'
+import { isAlertData, sortAlertDates, sortAlertRecords } from '@/utils/alertData'
 import { getAlerts } from '@/api/alert'
 import { mapWithConcurrency } from '@/utils/concurrency'
 import { displayName, formatTime } from '@/utils/format'
@@ -400,17 +400,17 @@ const loadAlerts = async (date?: string) => {
     requestNodes.forEach((node) => {
       archiveDatesByNode.get(node.addr)?.forEach((date) => allDates.add(date))
     })
-    dates.value = Array.from(allDates).sort().reverse()
+    dates.value = sortAlertDates(Array.from(allDates))
     if (successfulData.length > 0) {
       lastUpdatedAt.value = new Date()
     }
 
-    alerts.value = requestNodes
-      .flatMap((node) => (recordsByNode.get(node.addr) ?? []).map((log) => ({
+    alerts.value = sortAlertRecords(
+      requestNodes.flatMap((node) => (recordsByNode.get(node.addr) ?? []).map((log) => ({
         ...log,
         refreshFailed: node.error
       })))
-      .sort((a, b) => b.Logtime.localeCompare(a.Logtime))
+    )
   } catch (error) {
     if (!isRequestCanceled(error)) throw error
   } finally {

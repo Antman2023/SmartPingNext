@@ -120,7 +120,13 @@ Historical Ping queries reuse ordered minute timelines to locate samples, reduci
 
 Alert history retains each responding node's last successful records for the same date query. If a node cannot be refreshed, its records remain visible and are marked "Refresh failed". A successful response replaces those records, including an empty list. Changing the date or reloading node configuration clears previous records. When every node fails to refresh, the last successful update time is preserved.
 
+Alert history validates archive dates and record timestamps before publishing a response. Impossible calendar dates, out-of-range time fields and invalid suffixes fail that node's refresh while preserving its previous successful data. Validation does not depend on the browser's timezone or rewrite node time labels. Stored seconds, fractional seconds, timezone suffixes and SQLite's 24-hour forms remain supported; MTR error text remains valid record content.
+
+Alert records sort newest first by their stored calendar and time fields, including fractional seconds. Mixing spaces and `T` separators does not change the order; original labels and source failure markers remain intact. Equal times retain their original order, and 24-hour forms compare as the following day's time. Nodes do not provide timezone metadata, so sorting continues to compare their stored local time fields rather than converting records across nodes to a common absolute time.
+
 Alert history pauses date selection and refreshes while configuration reloads, then queries the selected date using the updated node addresses and ports. Leaving the page cancels active requests and stops queued work. Late callbacks cannot start new queries or change the selected date, and an initial configuration failure can still be retried.
+
+Map date-query and refresh callbacks also wait for configuration loading to finish. They cannot send duplicate requests to old endpoints, clear the existing map or cancel the first query started by the configuration load. Reloading preserves the selected time, and subsequent node switches use the new port. Refresh can retry an initial configuration failure.
 
 Alert date lists seek between distinct dates using the existing date index, reducing reads when many records share a date. Dates remain newest first, and malformed timestamps retain their error handling. Sparse records incur some extra query overhead; benchmark results are recorded in the [optimization review](docs/optimization-review.md).
 
@@ -239,9 +245,13 @@ Ping history queries use the range of all minute labels in the elapsed-time time
 
 Ping history preparation honors client cancellation and deadlines. Already canceled requests skip timeline allocation; cancellation during preparation stops construction before database access and does not return partial history arrays. Parameter validation and successful response formats retain their existing rules.
 
+Ping and alert history reuse database row scan destinations within each request, reducing temporary allocations when reading many records. Empty results do not create scan objects. Strings and alert records are still retained by value, preserving measurements, archive dates, source metadata and error handling; allocation benchmarks are recorded in the [optimization review](docs/optimization-review.md).
+
 Archive cleanup subtracts `Base.Archive` calendar days from the node's current local date, then deletes older Ping, alert and mapping records. Records on the cutoff date and newer records are retained. Midnight clock gaps and skipped dates do not normalize the cutoff into a different calendar day.
 
 Alert history dates and selected-day records come from the same database snapshot, avoiding a response that mixes data from before and after concurrent sampling writes or archive deletion. The snapshot ends before JSON encoding and transmission; later requests read the latest committed records.
+
+Read-only configuration, Ping, topology, alert and mapping JSON APIs check request cancellation and deadlines before encoding and before submitting the response. Already canceled requests skip encoding; cancellation during encoding discards the result. The standard JSON encoder itself cannot be interrupted. The proxy also checks cancellation after reading the remote response, preventing the completed payload from being forwarded while releasing the body and concurrency slot.
 
 `/api/topology.json` returns string states by target IP: `"true"` means the alert threshold has not been reached, `"false"` means it has, and `"unknown"` means no samples exist for that target in the configured check window (including the grace period for rounds finishing across a minute boundary). Unknown states neither trigger alerts nor mark existing alerts as recovered. Clients must handle all three values explicitly instead of treating every non-`"false"` value as healthy.
 

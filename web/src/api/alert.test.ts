@@ -42,6 +42,8 @@ test('alert API validates the wire response before returning dates and logs', as
   const log = { Logtime: '2026-09-20 12:00', Targetip: '192.0.2.2', Targetname: 'Remote',
     Tracert: '', Fromip: '192.0.2.1', Fromname: 'Local' }
   for (const response of [null, {}, 'html', [], [[]], [[], [], []], [null, []], [[42], []],
+    [['not-a-date'], []], [['2026-02-30'], []],
+    [[], [{ ...log, Logtime: 'tomorrow' }]], [[], [{ ...log, Logtime: '2026-09-20 12:60' }]],
     [[], [null]], ...Object.keys(log).map((key) => [[], [{ ...log, [key]: 123 }]])]) {
     get.mock.mockImplementation(async () => response)
     await assert.rejects(request, { message: 'common.invalidAlertResponse' })
@@ -49,6 +51,16 @@ test('alert API validates the wire response before returning dates and logs', as
   }
   get.mock.mockImplementation(async () => [['2026-09-20'], [log]])
   assert.equal((await request()).logs[0], log)
+  for (const [date, time] of [
+    ['2026-09-21', '2026-09-20 23:59:59.123-08:00'],
+    ['0000-02-29', '0000-02-29 00:00'],
+    ['-0001-01-01', '-0001-01-01 00:00']
+  ]) {
+    const record = { ...log, Logtime: time, Tracert: 'legacy trace failed' }
+    get.mock.mockImplementation(async () => [[date], [record]])
+    assert.equal((await request()).logs[0], record)
+    assert.equal((await exports.getAlerts('')).logs[0], record)
+  }
   const failure = new Error('offline')
   get.mock.mockImplementation(async () => { throw failure })
   await assert.rejects(request, (error) => error === failure)

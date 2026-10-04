@@ -237,7 +237,7 @@ const loadConfig = async () => {
       .filter((node) => node.Smartping)
       .map((node) => ({ name: node.Name, addr: node.Addr, loading: false }))
 
-    await loadMappingData()
+    await requestMappingData()
   } catch (error) {
     if (isRequestCanceled(error) || isUnmounted || requestId !== configRequestId) {
       return
@@ -257,8 +257,10 @@ const loadConfig = async () => {
   }
 }
 
-const loadMappingData = async () => {
-  if (isUnmounted) {
+// A configuration load queries its accepted snapshot before clearing its
+// loading state. Public callbacks resume once that query finishes.
+const requestMappingData = async () => {
+  if (isUnmounted || !config.value) {
     return
   }
 
@@ -313,7 +315,19 @@ const loadMappingData = async () => {
   }
 }
 
-const refreshMapping = () => (config.value ? loadMappingData() : loadConfig())
+const loadMappingData = async () => {
+  if (isUnmounted || configLoading.value || !config.value) {
+    return
+  }
+  await requestMappingData()
+}
+
+const refreshMapping = () => {
+  if (isUnmounted || configLoading.value) {
+    return
+  }
+  return config.value ? loadMappingData() : loadConfig()
+}
 
 const switchAgent = async (agent: { name: string; addr: string; loading: boolean }) => {
   if (isUnmounted || configLoading.value || !config.value || !agents.value.includes(agent)) {

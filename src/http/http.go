@@ -55,9 +55,27 @@ func RenderJson(w http.ResponseWriter, v any) {
 	renderJSONWithStatus(w, v, http.StatusOK)
 }
 
+func renderJSONContext(ctx context.Context, w http.ResponseWriter, v any) {
+	renderJSONWithStatusContext(ctx, w, v, http.StatusOK)
+}
+
 func renderJSONWithStatus(w http.ResponseWriter, v any, status int) {
+	renderJSONWithStatusContext(context.Background(), w, v, status)
+}
+
+func renderJSONWithStatusContext(ctx context.Context, w http.ResponseWriter, v any, status int) {
+	if err := ctx.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	bs, err := json.Marshal(v)
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// The standard encoder cannot be interrupted. Discard its result if the
+	// request ended during encoding, before committing success headers or bytes.
+	if err := ctx.Err(); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
