@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -25,10 +26,33 @@ type shutdownHTTPFixture struct {
 	clientDone  chan struct{}
 	clientErr   error
 	status      int
+	body        []byte
 	jobs        *backgroundJobs
 }
 
+type shutdownHTTPResponseWriter struct {
+	http.ResponseWriter
+	ctx        context.Context
+	contextErr error
+	wrote      bool
+}
+
+func (w *shutdownHTTPResponseWriter) Write(body []byte) (int, error) {
+	if !w.wrote {
+		// Observe the context before response bytes can reach the client.
+		// The client may close its connection after reading Content-Length
+		// bytes, even while the enclosing handler is still returning.
+		w.contextErr = w.ctx.Err()
+		w.wrote = true
+	}
+	return w.ResponseWriter.Write(body)
+}
+
 func newShutdownHTTPFixture(t *testing.T) *shutdownHTTPFixture {
+	return newShutdownHTTPFixtureWithClientCompletion(t, false)
+}
+
+func newShutdownHTTPFixtureWithClientCompletion(t *testing.T, finishAfterClient bool) *shutdownHTTPFixture {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -70,8 +94,20 @@ func newShutdownHTTPFixture(t *testing.T) *shutdownHTTPFixture {
 	})
 	appHandler := f.server.Handler
 	f.server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		appHandler.ServeHTTP(w, r)
-		f.requestErr = r.Context().Err()
+		responseWriter := &shutdownHTTPResponseWriter{ResponseWriter: w, ctx: r.Context()}
+		appHandler.ServeHTTP(responseWriter, r)
+		if finishAfterClient {
+			// Make the full response available while this handler remains active.
+			// A length-delimited response may be consumed before ServeHTTP returns.
+			w.(http.Flusher).Flush()
+			<-f.clientDone
+			select {
+			case <-r.Context().Done():
+			case <-time.After(time.Second):
+				t.Error("completed client's connection did not cancel the active request")
+			}
+		}
+		f.requestErr = responseWriter.contextErr
 		close(f.requestDone)
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -92,11 +128,11 @@ func newShutdownHTTPFixture(t *testing.T) *shutdownHTTPFixture {
 		f.clientErr = err
 		if err == nil {
 			f.status = response.StatusCode
-			// Drain the complete response before closing it. Closing an unread
-			// body can abort the connection while the handler is still returning,
-			// canceling its context independently of service shutdown.
-			_, f.clientErr = io.Copy(io.Discard, response.Body)
+			f.body, f.clientErr = io.ReadAll(response.Body)
 			response.Body.Close()
+			if finishAfterClient {
+				client.CloseIdleConnections()
+			}
 		}
 	}()
 	limit := time.Now().Add(time.Second)
@@ -148,7 +184,19 @@ func TestShutdownDeadlineCancelsHTTPQueriesWaitingForDatabase(t *testing.T) {
 }
 
 func TestShutdownAllowsHTTPQueriesToFinishWithinGracePeriod(t *testing.T) {
-	f := newShutdownHTTPFixture(t)
+	for _, finishAfterClient := range []bool{false, true} {
+		name := "normal completion"
+		if finishAfterClient {
+			name = "client finishes before handler returns"
+		}
+		t.Run(name, func(t *testing.T) {
+			testShutdownAllowsHTTPQueriesToFinishWithinGracePeriod(t, finishAfterClient)
+		})
+	}
+}
+
+func testShutdownAllowsHTTPQueriesToFinishWithinGracePeriod(t *testing.T, finishAfterClient bool) {
+	f := newShutdownHTTPFixtureWithClientCompletion(t, finishAfterClient)
 	scheduler := cron.New()
 	scheduler.Start()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -170,6 +218,20 @@ func TestShutdownAllowsHTTPQueriesToFinishWithinGracePeriod(t *testing.T) {
 	<-f.clientDone
 	if f.requestErr != nil || f.clientErr != nil || f.status != http.StatusOK {
 		t.Errorf("request result = context %v, client %v, status %d; want normal 200 response", f.requestErr, f.clientErr, f.status)
+	}
+	var body map[string][]string
+	if err := json.Unmarshal(f.body, &body); err != nil || len(body) != 5 || len(body["lastcheck"]) == 0 {
+		t.Fatalf("incomplete Ping response: fields=%d, error=%v", len(body), err)
+	}
+	for _, field := range []string{"maxdelay", "mindelay", "avgdelay", "losspk"} {
+		if len(body[field]) != len(body["lastcheck"]) {
+			t.Fatalf("response field %s has %d samples; want %d", field, len(body[field]), len(body["lastcheck"]))
+		}
+		for _, value := range body[field] {
+			if value != "-" {
+				t.Fatalf("empty database returned %s sample %q; want missing marker", field, value)
+			}
+		}
 	}
 	if err := f.db.Ping(); err == nil {
 		t.Fatal("successful shutdown left the database open")
