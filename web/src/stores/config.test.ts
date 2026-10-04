@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
-import { ref, type Ref } from 'vue'
+import { computed, ref, shallowRef, type Ref } from 'vue'
 import type { Config } from '../types/index.js'
 
 const source = readFileSync(new URL('../../src/stores/config.ts', import.meta.url), 'utf8')
@@ -33,7 +33,7 @@ function createStore(t: test.TestContext) {
   const saveConfig = t.mock.fn(async (_value: Config): Promise<void> => {})
   const dependencies: Record<string, unknown> = {
     pinia: { defineStore: (_name: string, setup: () => ConfigStore) => setup },
-    vue: { ref },
+    vue: { ref, shallowRef },
     '@/api/config': { fetchConfig, saveConfig },
     '@/api': {
       isRequestCanceled: (error: unknown) =>
@@ -186,4 +186,40 @@ test('an obsolete load failure waits for saving and shares the recovery fetch', 
   assert.equal(store.config.value?.Name, 'server')
   assert.equal(store.error.value, null)
   assert.equal(store.loading.value, false)
+})
+
+test('shared configuration snapshots preserve map names that match reactive metadata', async (t) => {
+  const names = ['__v_isReactive', '__v_isReadonly', '__v_isShallow', '__v_raw', '__v_skip', '__proto__', 'hasOwnProperty']
+  // Some metadata names suppress proxying and can hide other collisions.
+  for (const keys of [...names.map((name) => [name]), names]) {
+    const { store, fetchConfig } = createStore(t)
+    const loaded: Config = {
+      Ver: 'test', Port: 8899, Name: 'server', Addr: '127.0.0.1', Mode: {},
+      Base: { Timeout: 3, Refresh: 5, Archive: 30 }, Topology: { Tline: '2', Tsymbolsize: '50', Tsound: '' },
+      Network: { '127.0.0.1': { Name: 'server', Addr: '127.0.0.1', Smartping: true, Ping: [], Topology: [] } },
+      Chinamap: Object.fromEntries(keys.map((name) => [name, { ctcc: ['192.0.2.1'], cucc: [], cmcc: [] }])),
+      Toollimit: 0, Authiplist: ''
+    }
+    const header = computed(() => `${store.config.value?.Name}:${Object.keys(store.config.value?.Network ?? {}).length}`)
+    fetchConfig.mock.mockImplementation(async () => loaded)
+    await store.loadConfig()
+    assert.deepEqual(JSON.parse(JSON.stringify(store.config.value)), loaded)
+    assert.equal(header.value, 'server:1')
+    for (const name of keys) {
+      assert.equal(store.config.value!.Chinamap[name]!.ctcc.join(','), '192.0.2.1', name)
+    }
+    const name = keys[0]!
+    loaded.Chinamap[name]!.ctcc.push('192.0.2.2')
+    loaded.Name = 'saved'
+    loaded.Network['192.0.2.1'] = { Name: 'remote', Addr: '192.0.2.1', Smartping: true, Ping: [], Topology: [] }
+    assert.equal(header.value, 'server:1')
+    assert.equal(store.config.value!.Chinamap[name]!.ctcc.join(','), '192.0.2.1')
+    await store.saveConfig(loaded, 'password')
+    assert.deepEqual(JSON.parse(JSON.stringify(store.config.value)), loaded)
+    assert.equal(header.value, 'saved:2')
+    loaded.Chinamap[name]!.ctcc.push('192.0.2.3')
+    loaded.Name = 'unpublished'
+    assert.equal(header.value, 'saved:2')
+    assert.equal(store.config.value!.Chinamap[name]!.ctcc.join(','), '192.0.2.1,192.0.2.2')
+  }
 })

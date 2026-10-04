@@ -588,6 +588,7 @@ import {
   type UploadFile
 } from 'element-plus'
 import { useConfigStore } from '@/stores/config'
+import { createConfigDraft } from '@/utils/configDraft'
 import { isRequestCanceled } from '@/api'
 import { getConfigUrl, verifyConfigPassword, type PasswordVerificationResult } from '@/api/config'
 import {
@@ -618,7 +619,7 @@ let configRequestId = 0
 let saveAbortController: AbortController | null = null
 let passwordVerificationAbortController: AbortController | null = null
 
-const formConfig = reactive<Config>({
+const formConfig = createConfigDraft({
   Ver: '',
   Port: 8899,
   Name: '',
@@ -666,7 +667,7 @@ const serializeConfig = (value: Config): string =>
     if (typeof item === 'object' && item !== null && !Array.isArray(item)) {
       return Object.fromEntries(
         Object.entries(item as Record<string, unknown>).sort(([left], [right]) =>
-          left.localeCompare(right)
+          left < right ? -1 : left > right ? 1 : 0
         )
       )
     }
@@ -872,7 +873,7 @@ const loadConfig = async () => {
     }
 
     closeEditingDialogs()
-    Object.assign(formConfig, JSON.parse(JSON.stringify(cfg)) as Config)
+    Object.assign(formConfig, createConfigDraft(JSON.parse(JSON.stringify(cfg)) as Config))
     configLoaded.value = true
     validationAttempted.value = false
     savedSnapshot.value = serializeConfig(formConfig)
@@ -1157,7 +1158,7 @@ const handleImportFile = async (file: UploadFile) => {
       }
 
       closeEditingDialogs()
-      Object.assign(formConfig, candidate)
+      Object.assign(formConfig, createConfigDraft(candidate))
       validationAttempted.value = false
 
       ElMessage.success(t('config.configImported'))
@@ -1421,8 +1422,15 @@ const saveTopoConfig = () => {
     topoConfigVisible.value = false
     return
   }
+  const currentRules = new Map(session.node.Topology.map((rule) => [rule.Addr, rule]))
+  const currentOrder = new Map(session.node.Topology.map((rule, index) => [rule.Addr, index]))
   const selectedTopologies = selected
+    .sort((left, right) =>
+      (currentOrder.get(left.Addr) ?? Number.MAX_SAFE_INTEGER) -
+      (currentOrder.get(right.Addr) ?? Number.MAX_SAFE_INTEGER)
+    )
     .map((item) => ({
+      ...currentRules.get(item.Addr),
       Name: item._original.Name,
       Addr: item.Addr,
       Thdchecksec: String(item.checkSeconds),
@@ -1563,10 +1571,7 @@ const addProvince = () => {
     return
   }
 
-  formConfig.Chinamap = {
-    ...formConfig.Chinamap,
-    [provinceName]: { ctcc: [], cucc: [], cmcc: [] }
-  }
+  formConfig.Chinamap[provinceName] = { ctcc: [], cucc: [], cmcc: [] }
 
   addProvinceVisible.value = false
   ElMessage.success(t('config.provinceAdded'))
@@ -1590,7 +1595,7 @@ const confirmDiscardChanges = async (): Promise<boolean> => {
 }
 
 const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-  if (!isDirty.value) {
+  if (isUnmounted || (!isDirty.value && !saving.value && !importExportBusy.value)) {
     return
   }
   event.preventDefault()
@@ -1598,10 +1603,11 @@ const handleBeforeUnload = (event: BeforeUnloadEvent) => {
 }
 
 onBeforeRouteLeave(async () => {
-  if (saving.value || importExportBusy.value) {
+  if (isUnmounted || saving.value || importExportBusy.value) {
     return false
   }
-  return confirmDiscardChanges()
+  const discard = await confirmDiscardChanges()
+  return discard && !isUnmounted && !saving.value && !importExportBusy.value
 })
 
 onMounted(() => {

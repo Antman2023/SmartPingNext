@@ -7,6 +7,7 @@ import * as vue from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import type { Config, NetworkMember } from '../types/index.js'
 import * as validation from '../utils/configValidation.js'
+import { createConfigDraft } from '../utils/configDraft.js'
 import { CanceledError } from 'axios'
 import { isRequestCanceled } from '../utils/requestCancellation.js'
 
@@ -26,7 +27,9 @@ interface ConfigSetup {
   configError: vue.Ref<boolean>
   configReady: vue.ComputedRef<boolean>
   isDirty: vue.ComputedRef<boolean>
+  provinceCount: vue.ComputedRef<number>
   loadConfig: () => Promise<void>
+  handleBeforeUnload: (event: BeforeUnloadEvent) => void
   handleSave: () => Promise<void>
   importExportPassword: vue.Ref<string>
   importing: vue.Ref<boolean>
@@ -82,6 +85,7 @@ function createView(t: test.TestContext) {
     Chinamap: {}, Toollimit: 0, Authiplist: ''
   }))
   const unmountCallbacks: Array<() => void> = []
+  let leaveRoute: () => Promise<boolean> = async () => { throw new Error('Route guard was not registered') }
   const showError = t.mock.fn((_message: string) => {})
   const showSuccess = t.mock.fn((_message: string) => {})
   const showWarning = t.mock.fn((_message: string) => {})
@@ -95,7 +99,7 @@ function createView(t: test.TestContext) {
       onMounted: () => {},
       onUnmounted: (fn: () => void) => unmountCallbacks.push(fn)
     },
-    'vue-router': { onBeforeRouteLeave: () => {} },
+    'vue-router': { onBeforeRouteLeave: (guard: () => Promise<boolean>) => { leaveRoute = guard } },
     'vue-i18n': { useI18n: () => ({ t: (key: string) => key }) },
     'element-plus': {
       ElMessage: { success: showSuccess, error: showError, warning: showWarning },
@@ -106,6 +110,7 @@ function createView(t: test.TestContext) {
     '@/api': { isRequestCanceled },
     '@/api/config': { verifyConfigPassword, getConfigUrl: () => '/api/config.json' },
     '@/utils/configValidation': validation,
+    '@/utils/configDraft': { createConfigDraft },
     '@/utils/format': { displayName: (name: string) => name },
     '@/stores/config': {
       useConfigStore: () => ({
@@ -145,9 +150,136 @@ function createView(t: test.TestContext) {
     revokeObjectURL,
     createElement,
     link,
+    leaveRoute: () => leaveRoute(),
     unmount: () => unmountCallbacks.forEach((fn) => fn())
   }
 }
+
+test('configuration leave confirmations cannot interrupt operations started while confirming', async (t) => {
+  for (const operation of ['save', 'import', 'export']) {
+    const { view, leaveRoute, confirm, saveConfig, verifyConfigPassword } = createView(t)
+    await view.loadConfig()
+    view.formConfig.Base.Refresh = 10
+    let finishConfirmation!: () => void
+    confirm.mock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishConfirmation = resolve }))
+    const leaving = leaveRoute()
+    assert.equal(confirm.mock.callCount(), 1)
+    let finishOperation!: () => void
+    let pending: Promise<void>
+    if (operation === 'save') {
+      view.password.value = 'save-password'
+      saveConfig.mock.mockImplementationOnce(() => new Promise<void>((resolve) => { finishOperation = resolve }))
+      pending = view.handleSave()
+    } else {
+      view.importExportPassword.value = 'file-password'
+      verifyConfigPassword.mock.mockImplementationOnce(() => new Promise<'valid'>((resolve) => { finishOperation = () => resolve('valid') }))
+      pending = operation === 'export' ? view.handleExport() : view.handleImportFile({ raw: { text: async () => JSON.stringify(view.formConfig) } })
+    }
+    const before = JSON.stringify(view.formConfig)
+    finishConfirmation()
+    assert.equal(await leaving, false, operation)
+    assert.equal(await leaveRoute(), false, `busy ${operation}`)
+    assert.equal(confirm.mock.callCount(), 1)
+    assert.equal(JSON.stringify(view.formConfig), before)
+    finishOperation()
+    await pending
+    assert.equal(await leaveRoute(), true, `completed ${operation}`)
+  }
+})
+
+test('configuration leave guards preserve cancellation, normal navigation and unmount safety', async (t) => {
+  const { view, leaveRoute, confirm, unmount } = createView(t)
+  await view.loadConfig()
+  assert.equal(await leaveRoute(), true)
+  assert.equal(confirm.mock.callCount(), 0)
+  view.formConfig.Base.Refresh = 10
+  const before = JSON.stringify(view.formConfig)
+  confirm.mock.mockImplementationOnce(async () => { throw new Error('cancel') })
+  assert.equal(await leaveRoute(), false)
+  assert.equal(JSON.stringify(view.formConfig), before)
+  assert.equal(await leaveRoute(), true)
+  assert.equal(JSON.stringify(view.formConfig), before)
+  let finish!: () => void
+  confirm.mock.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve }))
+  const leaving = leaveRoute()
+  unmount()
+  const calls = confirm.mock.callCount()
+  finish()
+  assert.equal(await leaving, false)
+  assert.equal(await leaveRoute(), false)
+  assert.equal(confirm.mock.callCount(), calls)
+  const preventDefault = t.mock.fn(() => {})
+  const event = { preventDefault, returnValue: 'retained' } as unknown as BeforeUnloadEvent
+  view.handleBeforeUnload(event)
+  assert.equal(preventDefault.mock.callCount(), 0)
+  assert.equal(event.returnValue, 'retained')
+})
+
+test('configuration unload prompts also protect active operations with an unchanged draft', async (t) => {
+  for (const operation of ['save', 'import', 'export']) {
+    const { view, saveConfig, verifyConfigPassword } = createView(t)
+    await view.loadConfig()
+    assert.equal(view.isDirty.value, false)
+    let finish!: () => void
+    let pending: Promise<void>
+    if (operation === 'save') {
+      // The user can restore the loaded value while the submitted edit is pending.
+      view.formConfig.Base.Refresh = 10
+      view.password.value = 'save-password'
+      saveConfig.mock.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve }))
+      pending = view.handleSave()
+      view.formConfig.Base.Refresh = 5
+    } else {
+      view.importExportPassword.value = 'file-password'
+      verifyConfigPassword.mock.mockImplementationOnce(() => new Promise<'valid'>((resolve) => { finish = () => resolve('valid') }))
+      pending = operation === 'export' ? view.handleExport() : view.handleImportFile({ raw: { text: async () => JSON.stringify(view.formConfig) } })
+    }
+    const preventDefault = t.mock.fn(() => {})
+    const event = { preventDefault, returnValue: undefined } as unknown as BeforeUnloadEvent
+    view.handleBeforeUnload(event)
+    assert.equal(preventDefault.mock.callCount(), 1, operation)
+    assert.equal(event.returnValue, '')
+    finish()
+    await pending
+    if (operation === 'save') {
+      assert.equal(view.isDirty.value, true)
+      view.formConfig.Base.Refresh = 10
+    }
+    assert.equal(view.isDirty.value, false)
+    event.returnValue = 'retained'
+    view.handleBeforeUnload(event)
+    assert.equal(preventDefault.mock.callCount(), 1)
+    assert.equal(event.returnValue, 'retained')
+    view.formConfig.Base.Refresh = 20
+    view.handleBeforeUnload(event)
+    assert.equal(preventDefault.mock.callCount(), 2)
+    assert.equal(event.returnValue, '')
+  }
+})
+
+test('configuration leave confirmations allow operations that finish before confirmation', async (t) => {
+  for (const operation of ['save', 'import', 'export']) {
+    const { view, leaveRoute, confirm } = createView(t)
+    await view.loadConfig()
+    view.formConfig.Base.Refresh = 10
+    let finish!: () => void
+    confirm.mock.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve }))
+    const leaving = leaveRoute()
+    if (operation === 'save') {
+      view.password.value = 'save-password'
+      await view.handleSave()
+    } else {
+      view.importExportPassword.value = 'file-password'
+      if (operation === 'export') await view.handleExport()
+      else await view.handleImportFile({ raw: { text: async () => JSON.stringify(view.formConfig) } })
+    }
+    const before = JSON.stringify(view.formConfig)
+    finish()
+    assert.equal(await leaving, true, operation)
+    assert.equal(confirm.mock.callCount(), 1)
+    assert.equal(JSON.stringify(view.formConfig), before)
+  }
+})
 
 test('configuration callbacks cannot start work or change state after unmount', async (t) => {
   for (const operation of ['load', 'save', 'export', 'import']) {
@@ -1217,6 +1349,291 @@ test('config save retains edits made while the submitted snapshot is pending', a
   assert.equal(view.isDirty.value, true)
   assert.equal(view.saving.value, false)
   assert.equal(view.password.value, '')
+})
+
+test('config draft comparison ignores object key order even for distinct Unicode names', async (t) => {
+  const { view, loadConfig, showSuccess, showError, confirm, leaveRoute } = createView(t)
+  const loaded = (await loadConfig())!
+  loaded.Chinamap = {
+    '\u00e9': { ctcc: ['192.0.2.1'], cucc: [], cmcc: [] },
+    'e\u0301': { ctcc: ['192.0.2.2'], cucc: [], cmcc: [] },
+    '\u00c5': { ctcc: [], cucc: ['192.0.2.3'], cmcc: [] },
+    'A\u030a': { ctcc: [], cucc: ['192.0.2.4'], cmcc: [] }
+  }
+  assert.equal('\u00e9'.localeCompare('e\u0301'), 0)
+  loadConfig.mock.mockImplementation(async () => JSON.parse(JSON.stringify(loaded)) as Config)
+  await view.loadConfig()
+  const baseline = view.savedSnapshot.value
+  const reorder = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(reorder)
+    if (typeof value === 'object' && value !== null) {
+      return Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reorder(item)]))
+    }
+    return value
+  }
+  view.importExportPassword.value = 'password'
+  await view.handleImportFile({ raw: { text: async () => JSON.stringify(reorder(loaded)) } })
+  assert.equal(showSuccess.mock.callCount(), 1)
+  assert.equal(showError.mock.callCount(), 0)
+  assert.equal(view.savedSnapshot.value, baseline)
+  assert.equal(view.isDirty.value, false)
+  assert.equal(await leaveRoute(), true)
+  assert.equal(confirm.mock.callCount(), 0)
+  for (const name of ['\u00e9', 'e\u0301', '\u00c5', 'A\u030a']) {
+    assert.deepEqual(JSON.parse(JSON.stringify(view.formConfig.Chinamap[name])), JSON.parse(JSON.stringify(loaded.Chinamap[name])))
+  }
+  view.formConfig.Chinamap['e\u0301']!.ctcc[0] = '192.0.2.10'
+  assert.equal(view.isDirty.value, true)
+  view.formConfig.Chinamap['e\u0301']!.ctcc[0] = '192.0.2.2'
+  assert.equal(view.isDirty.value, false)
+  delete view.formConfig.Chinamap['e\u0301']
+  assert.equal(view.isDirty.value, true)
+})
+
+test('config draft comparison preserves array order and prototype-named properties', async (t) => {
+  const { view, loadConfig, saveConfig } = createView(t)
+  const loaded = (await loadConfig())!
+  loaded.Network['192.0.2.1'] = { Name: 'one', Addr: '192.0.2.1', Smartping: true, Ping: [], Topology: [] }
+  loaded.Network['192.0.2.2'] = { Name: 'two', Addr: '192.0.2.2', Smartping: true, Ping: [], Topology: [] }
+  loaded.Network['127.0.0.1']!.Ping = ['192.0.2.1', '192.0.2.2']
+  loaded.Chinamap = Object.fromEntries(['__proto__', 'constructor', 'toString', '1', '01', '10', '2', '江苏', 'Jiangsu']
+    .map((key) => [key, { ctcc: ['192.0.2.1', '192.0.2.2'], cucc: [], cmcc: [] }]))
+  loadConfig.mock.mockImplementation(async () => JSON.parse(JSON.stringify(loaded)) as Config)
+  await view.loadConfig()
+  view.formConfig.Chinamap = Object.fromEntries(Object.entries(view.formConfig.Chinamap).reverse())
+  view.formConfig.Network = Object.fromEntries(Object.entries(view.formConfig.Network).reverse())
+  assert.equal(view.isDirty.value, false)
+  const saved = JSON.parse(view.savedSnapshot.value) as Config
+  assert.equal(Object.prototype.hasOwnProperty.call(saved.Chinamap, '__proto__'), true)
+  assert.equal(Object.keys(saved.Chinamap).length, Object.keys(loaded.Chinamap).length)
+  view.formConfig.Network['127.0.0.1']!.Ping.reverse()
+  assert.equal(view.isDirty.value, true)
+  view.formConfig.Network['127.0.0.1']!.Ping.reverse()
+  assert.equal(view.isDirty.value, false)
+  view.editChinaMap('__proto__')
+  view.chinaMapIps.ctcc = '192.0.2.2\n192.0.2.1'
+  view.saveChinaMap()
+  assert.equal(view.isDirty.value, true)
+  view.editChinaMap('__proto__')
+  view.chinaMapIps.ctcc = '192.0.2.1\n192.0.2.2'
+  view.saveChinaMap()
+  assert.equal(view.isDirty.value, false)
+  view.formConfig.Chinamap['constructor']!.cmcc.push('192.0.2.3')
+  assert.equal(view.isDirty.value, true)
+  view.editChinaMap('__proto__')
+  view.chinaMapIps.ctcc = '192.0.2.2\n192.0.2.1'
+  view.saveChinaMap()
+  view.password.value = 'password'
+  await view.handleSave()
+  assert.equal(saveConfig.mock.callCount(), 1)
+  const submitted = saveConfig.mock.calls[0]!.arguments[0]
+  assert.equal(Object.prototype.hasOwnProperty.call(submitted.Chinamap, '__proto__'), true)
+  assert.equal(submitted.Chinamap['__proto__']!.ctcc.join(','), '192.0.2.2,192.0.2.1')
+  assert.equal(Object.keys(submitted.Chinamap).length, Object.keys(loaded.Chinamap).length)
+  assert.equal(view.isDirty.value, false)
+})
+
+test('map names matching reactive metadata remain data through load, edit, export and save', async (t) => {
+  const names = ['__v_isReactive', '__v_isReadonly', '__v_isShallow', '__v_raw', '__v_skip', '__v_isRef', '__isVue', '__proto__', 'hasOwnProperty']
+  for (const name of names) {
+    const { view, loadConfig, saveConfig, createObjectURL, showError } = createView(t)
+    const loaded = (await loadConfig())!
+    loaded.Chinamap = { [name]: { ctcc: ['192.0.2.1'], cucc: ['192.0.2.2'], cmcc: [] } }
+    loadConfig.mock.mockImplementation(async () => JSON.parse(JSON.stringify(loaded)) as Config)
+    await view.loadConfig()
+    assert.equal(view.isDirty.value, false, name)
+    view.editChinaMap(name)
+    assert.equal(view.chinaMapIps.ctcc, '192.0.2.1', name)
+    assert.equal(view.chinaMapIps.cucc, '192.0.2.2', name)
+    view.chinaMapIps.ctcc = '192.0.2.3'
+    view.saveChinaMap()
+    assert.equal(view.isDirty.value, true, name)
+    view.importExportPassword.value = 'password'
+    await view.handleExport()
+    const exported = JSON.parse(await createObjectURL.mock.calls[0]!.arguments[0].text()) as Config
+    assert.equal(Object.keys(exported.Chinamap).join(','), name)
+    assert.equal(exported.Chinamap[name]!.ctcc.join(','), '192.0.2.3', name)
+    view.password.value = 'password'
+    await view.handleSave()
+    assert.equal(showError.mock.callCount(), 0, name)
+    assert.equal(saveConfig.mock.callCount(), 1, name)
+    assert.equal(saveConfig.mock.calls[0]!.arguments[0].Chinamap[name]!.ctcc.join(','), '192.0.2.3', name)
+    assert.equal(view.isDirty.value, false, name)
+  }
+})
+
+test('reactive map names can be added, imported and deleted without phantom keys or stale counts', async (t) => {
+  const names = ['__v_isReactive', '__v_isReadonly', '__v_isShallow', '__v_raw', '__v_skip', '__v_isRef', '__isVue', '__proto__', 'hasOwnProperty', 'toJSON']
+  for (const operation of ['add', 'import']) {
+    const { view, showError } = createView(t)
+    await view.loadConfig()
+    const baseline = view.savedSnapshot.value
+    assert.equal(view.provinceCount.value, 0)
+    if (operation === 'add') {
+      for (const name of names) {
+        view.showAddChinaMap()
+        view.newProvinceName.value = name
+        view.addProvince()
+        view.editChinaMap(name)
+        view.chinaMapIps.ctcc = '192.0.2.1'
+        view.saveChinaMap()
+      }
+    } else {
+      const imported = { ...view.formConfig, Chinamap: Object.fromEntries(names.map((name) => [name, { ctcc: ['192.0.2.1'], cucc: [], cmcc: [] }])) }
+      view.importExportPassword.value = 'password'
+      await view.handleImportFile({ raw: { text: async () => JSON.stringify(imported) } })
+    }
+    assert.equal(view.provinceCount.value, names.length, operation)
+    assert.equal(Object.keys(view.formConfig.Chinamap).sort().join(','), [...names].sort().join(','))
+    assert.equal(validation.validateConfigForEdit(view.formConfig), null)
+    for (const [index, name] of names.entries()) {
+      assert.equal(view.formConfig.Chinamap[name]!.ctcc.join(','), '192.0.2.1', name)
+      view.editChinaMap(name)
+      await view.deleteChinaMap()
+      assert.equal(view.provinceCount.value, names.length - index - 1)
+      assert.equal(Object.prototype.hasOwnProperty.call(view.formConfig.Chinamap, name), false)
+    }
+    assert.equal(view.savedSnapshot.value, baseline)
+    assert.equal(view.isDirty.value, false)
+    assert.equal(showError.mock.callCount(), 0)
+  }
+})
+
+test('map changes keep independent province editors and pending deletions valid', async (t) => {
+  const { view, loadConfig, confirm, showError, showSuccess } = createView(t)
+  const loaded = (await loadConfig())!
+  loaded.Chinamap = { Shanghai: { ctcc: ['192.0.2.1'], cucc: [], cmcc: [] }, Beijing: { ctcc: ['192.0.2.2'], cucc: [], cmcc: [] } }
+  loadConfig.mock.mockImplementation(async () => loaded)
+  await view.loadConfig()
+  view.editChinaMap('Shanghai')
+  let approve!: () => void
+  confirm.mock.mockImplementationOnce(() => new Promise<void>((resolve) => { approve = resolve }))
+  const deleting = view.deleteChinaMap()
+  view.editChinaMap('Beijing')
+  view.chinaMapIps.ctcc = '192.0.2.3'
+  view.showAddChinaMap()
+  view.newProvinceName.value = '__v_isReactive'
+  view.addProvince()
+  view.saveChinaMap()
+  assert.equal(view.formConfig.Chinamap.Beijing!.ctcc.join(','), '192.0.2.3')
+  view.editChinaMap('Beijing')
+  view.chinaMapIps.ctcc = '192.0.2.4'
+  approve()
+  await deleting
+  assert.equal(Object.prototype.hasOwnProperty.call(view.formConfig.Chinamap, 'Shanghai'), false)
+  assert.equal(view.chinaMapVisible.value, true)
+  assert.equal(view.chinaMapIps.ctcc, '192.0.2.4')
+  view.saveChinaMap()
+  assert.equal(view.formConfig.Chinamap.Beijing!.ctcc.join(','), '192.0.2.4')
+  assert.equal(view.provinceCount.value, 2)
+  assert.equal(showError.mock.callCount(), 0)
+  assert.equal(showSuccess.mock.callCount(), 4)
+  assert.equal(view.isDirty.value, true)
+})
+
+test('configuration dictionary extensions retain their scalar values and reactive updates', async (t) => {
+  const names = ['__v_isReactive', '__v_isReadonly', '__v_isShallow', '__v_raw', '__v_skip', '__v_isRef', '__isVue', '__proto__', 'hasOwnProperty', 'toJSON']
+  for (const field of ['Mode', 'Base', 'Topology', 'rule']) {
+    for (const name of names) {
+      const { view, loadConfig, saveConfig, createObjectURL, showError } = createView(t)
+      const loaded = (await loadConfig())!
+      loaded.Mode.Type = 'local'
+      loaded.Network['192.0.2.1'] = { Name: 'remote', Addr: '192.0.2.1', Smartping: true, Ping: [], Topology: [] }
+      loaded.Network['127.0.0.1']!.Topology = [{ Name: 'remote', Addr: '192.0.2.1', Thdchecksec: '900', Thdoccnum: '3', Thdavgdelay: '200', Thdloss: '30' }]
+      const dictionary = (config: Config): Record<string, string | number> =>
+        (field === 'rule' ? config.Network['127.0.0.1']!.Topology[0] : field === 'Mode' ? config.Mode : field === 'Base' ? config.Base : config.Topology) as unknown as Record<string, string | number>
+      const expected = field === 'Base' ? 42 : 'extension'
+      Object.defineProperty(dictionary(loaded), name, { value: expected, enumerable: true, writable: true, configurable: true })
+      loadConfig.mock.mockImplementation(async () => JSON.parse(JSON.stringify(loaded)) as Config)
+      await view.loadConfig()
+      assert.equal(dictionary(view.formConfig)[name], expected, `${field}/${name}`)
+      assert.equal(view.isDirty.value, false)
+      dictionary(view.formConfig)[name] = field === 'Base' ? 84 : 'changed'
+      assert.equal(view.isDirty.value, true, `${field}/${name} mutation`)
+      dictionary(view.formConfig)[name] = expected
+      assert.equal(view.isDirty.value, false)
+      view.formConfig.Base.Refresh = 10
+      view.importExportPassword.value = 'password'
+      await view.handleExport()
+      const exported = JSON.parse(await createObjectURL.mock.calls[0]!.arguments[0].text()) as Config
+      assert.equal(dictionary(exported)[name], expected, `${field}/${name} export`)
+      view.password.value = 'password'
+      await view.handleSave()
+      assert.equal(saveConfig.mock.callCount(), 1)
+      assert.equal(dictionary(saveConfig.mock.calls[0]!.arguments[0])[name], expected, `${field}/${name} save`)
+      assert.equal(showError.mock.callCount(), 0)
+      assert.equal(view.isDirty.value, false)
+    }
+  }
+})
+
+test('imported empty dictionary extensions survive replacement and rule insertion', async (t) => {
+  const { view, loadConfig, saveConfig, showError } = createView(t)
+  await view.loadConfig()
+  const imported = (await loadConfig())!
+  imported.Mode.Type = 'local'
+  imported.Mode.__v_raw = ''
+  ;(imported.Base as unknown as Record<string, number>).__v_isReactive = 0
+  ;(imported.Topology as unknown as Record<string, string>).__v_skip = ''
+  imported.Network['192.0.2.1'] = { Name: 'remote', Addr: '192.0.2.1', Smartping: true, Ping: [], Topology: [] }
+  view.importExportPassword.value = 'password'
+  await view.handleImportFile({ raw: { text: async () => JSON.stringify(imported) } })
+  assert.equal(view.formConfig.Mode.__v_raw, '')
+  assert.equal((view.formConfig.Base as unknown as Record<string, number>).__v_isReactive, 0)
+  assert.equal((view.formConfig.Topology as unknown as Record<string, string>).__v_skip, '')
+  const local = view.formConfig.Network['127.0.0.1']!
+  local.Topology.push({ Name: 'remote', Addr: '192.0.2.1', Thdchecksec: '900', Thdoccnum: '3', Thdavgdelay: '200', Thdloss: '30', ...Object.fromEntries([['__v_isRef', '']]) })
+  view.password.value = 'password'
+  await view.handleSave()
+  assert.equal(showError.mock.callCount(), 0)
+  assert.equal(saveConfig.mock.callCount(), 1)
+  assert.equal(view.isDirty.value, false)
+  const rule = local.Topology[0] as unknown as Record<string, string>
+  rule.__v_isRef = 'changed'
+  assert.equal(view.isDirty.value, true)
+  rule.__v_isRef = ''
+  assert.equal(view.isDirty.value, false)
+  const submitted = saveConfig.mock.calls[0]!.arguments[0]
+  assert.equal(submitted.Mode.__v_raw, '')
+  assert.equal((submitted.Base as unknown as Record<string, number>).__v_isReactive, 0)
+  assert.equal((submitted.Topology as unknown as Record<string, string>).__v_skip, '')
+  assert.equal((submitted.Network['127.0.0.1']!.Topology[0] as unknown as Record<string, string>).__v_isRef, '')
+})
+
+test('topology editing keeps rule extensions and existing order before newly selected targets', async (t) => {
+  const { view, loadConfig, saveConfig } = createView(t)
+  const loaded = (await loadConfig())!
+  for (const [index, name] of ['one', 'two', 'three'].entries()) {
+    const addr = `192.0.2.${index + 1}`
+    loaded.Network[addr] = { Name: name, Addr: addr, Smartping: true, Ping: [], Topology: [] }
+  }
+  const common = { Thdchecksec: '900', Thdoccnum: '3', Thdavgdelay: '200', Thdloss: '30' }
+  const one = { ...common, Name: 'one', Addr: '192.0.2.1', custom: 'keep-one', ...Object.fromEntries([['__proto__', 'own-one']]) }
+  const two = { ...common, Name: 'two', Addr: '192.0.2.2', custom: 'keep-two', __v_isReactive: 'own-two' }
+  loaded.Network['127.0.0.1']!.Topology = [two, one]
+  loadConfig.mock.mockImplementation(async () => loaded)
+  await view.loadConfig()
+  const local = view.networkList.value.find((row) => row.isSelf)!
+  view.editTopoConfig(local)
+  view.saveTopoConfig()
+  assert.equal(view.isDirty.value, false)
+  view.editTopoConfig(local)
+  const first = view.topoTargetList.value.find((row) => row.Addr === '192.0.2.1')!
+  first.avgDelay = 300
+  view.topoTargetList.value.find((row) => row.Addr === '192.0.2.3')!.enabled = true
+  view.saveTopoConfig()
+  assert.equal(view.formConfig.Network['127.0.0.1']!.Topology.map((rule) => rule.Addr).join(','), '192.0.2.2,192.0.2.1,192.0.2.3')
+  view.password.value = 'password'
+  await view.handleSave()
+  const submitted = saveConfig.mock.calls[0]!.arguments[0].Network['127.0.0.1']!.Topology
+  const secondRule = submitted[0] as unknown as Record<string, string>
+  const firstRule = submitted[1] as unknown as Record<string, string>
+  assert.equal(secondRule.custom, 'keep-two')
+  assert.equal(secondRule.__v_isReactive, 'own-two')
+  assert.equal(firstRule.custom, 'keep-one')
+  assert.equal(firstRule['__proto__'], 'own-one')
+  assert.equal(firstRule.Thdavgdelay, '300')
+  assert.equal(view.isDirty.value, false)
 })
 
 test('failed config save preserves the saved baseline and supports retry', async (t) => {

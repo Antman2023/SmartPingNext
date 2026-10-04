@@ -114,6 +114,14 @@ Configuration imports accept files up to 16 MiB. Imported changes must be saved 
 
 Saving, importing and exporting wait for a successful configuration load and pause during reloads. An active save, import or export also prevents configuration reloads from overwriting the current draft. After the page unmounts, late callbacks cannot start configuration requests, password verification or saves. Edits made while a save is pending remain in the draft; success confirms only the submitted snapshot.
 
+After a leave confirmation returns, the configuration page checks save, import and export status again so an earlier dialog cannot interrupt an operation started later. Refreshing or closing the page requests a browser leave prompt for either unsaved changes or an active operation.
+
+Draft comparison sorts exact property names without language collation. Reordering object keys in the same configuration does not produce an unsaved warning, while array order remains significant. Editing a map entry named `__proto__` also updates the unsaved state and includes the entry in the submitted configuration.
+
+Map names such as `__v_isReactive` and `__v_raw` remain ordinary data keys. Loading, editing, importing, exporting, saving and deleting preserve their names and carrier addresses. Additions and deletions update counts and unsaved state, while edits to other map entries keep independent pending targets valid.
+
+Extension fields in mode, base parameters, topology settings and topology rules retain their exact keys and scalar types, including empty strings and zero values. Editing topology rules preserves existing extension fields and relative order, appending newly selected targets at the end.
+
 Node and province deletion confirmations apply only to their original targets. Reloading, importing or replacing configuration while a confirmation is pending prevents it from deleting a new object. Switching province editors keeps the newer editor open and deletes only the originally selected province. Canceled or repeated confirmations do not report success. Deleting a node removes its incoming Ping targets and topology rules.
 
 Node, Ping, topology and province editors retain their own targets. Closing an editor or replacing its target prevents old save callbacks from changing the draft or reporting success. Successful configuration reloads and imports close old editors; failures preserve their drafts. Ping and topology edits cannot restore removed, moved or replaced targets. Reopening an editor uses the current node list.

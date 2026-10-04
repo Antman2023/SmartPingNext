@@ -1,12 +1,13 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, shallowRef } from 'vue'
 import type { Config } from '@/types'
 import { fetchConfig, saveConfig as saveConfigApi } from '@/api/config'
 import { isRequestCanceled } from '@/api'
 import i18n from '@/locales'
 
 export const useConfigStore = defineStore('config', () => {
-  const config = ref<Config | null>(null)
+  // Publish owned snapshots without interpreting dictionary keys as Vue flags.
+  const config = shallowRef<Config | null>(null)
   const loading = ref(false)
   const error = ref<string | null>(null)
   let requestId = 0
