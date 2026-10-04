@@ -235,7 +235,17 @@ The metric arrays returned by `/api/ping.json` align with the `lastcheck` timeli
 
 Explicit minute parameters for Ping and mapping queries return `406` if that local minute does not exist because of a timezone transition. The server does not silently substitute another time. Previously accepted unpadded hours and extra spaces remain supported. Alert date queries filter stored calendar labels from `00:00` on the requested date to `00:00` on the following date, avoiding shifted bounds during midnight timezone transitions.
 
+Ping history queries use the range of all minute labels in the elapsed-time timeline, keeping samples whose labels fall outside the endpoint labels during a clock rollback. The database still stores local minute labels: repeated labels map to their last position in the timeline and cannot distinguish separate records for the two occurrences of the same local minute.
+
+Ping history preparation honors client cancellation and deadlines. Already canceled requests skip timeline allocation; cancellation during preparation stops construction before database access and does not return partial history arrays. Parameter validation and successful response formats retain their existing rules.
+
+Archive cleanup subtracts `Base.Archive` calendar days from the node's current local date, then deletes older Ping, alert and mapping records. Records on the cutoff date and newer records are retained. Midnight clock gaps and skipped dates do not normalize the cutoff into a different calendar day.
+
+Alert history dates and selected-day records come from the same database snapshot, avoiding a response that mixes data from before and after concurrent sampling writes or archive deletion. The snapshot ends before JSON encoding and transmission; later requests read the latest committed records.
+
 `/api/topology.json` returns string states by target IP: `"true"` means the alert threshold has not been reached, `"false"` means it has, and `"unknown"` means no samples exist for that target in the configured check window (including the grace period for rounds finishing across a minute boundary). Unknown states neither trigger alerts nor mark existing alerts as recovered. Clients must handle all three values explicitly instead of treating every non-`"false"` value as healthy.
+
+For alert windows of at least 10 hours, the query can stop once enough bad samples among the latest records meet the occurrence threshold. The configured sample cap, minute-boundary grace and unknown state remain intact. Shorter windows retain the original query to avoid extra fixed overhead. Long windows with few or no samples incur additional overhead; measurements are recorded in the [optimization review](docs/optimization-review.md).
 
 Node proxy responses are limited to 16 MiB, with up to 32 concurrent requests. For declared lengths between 512 bytes and 16 MiB, the proxy preallocates its read buffer to reduce growth for large responses. Actual bytes read are checked independently; truncated and oversized responses are rejected. Client cancellation stops the remote request and releases the proxy concurrency slot.
 

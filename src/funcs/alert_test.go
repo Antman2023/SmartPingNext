@@ -401,6 +401,15 @@ func TestCheckAlertStatusIgnoresOutOfWindowAndOtherTargetSamples(t *testing.T) {
 }
 
 func TestStartAlertWithoutSamplesPreservesPreviousState(t *testing.T) {
+	for _, seconds := range []string{"600", "36000"} {
+		t.Run(seconds, func(t *testing.T) {
+			testStartAlertWithoutSamplesPreservesPreviousState(t, seconds)
+		})
+	}
+}
+
+func testStartAlertWithoutSamplesPreservesPreviousState(t *testing.T, seconds string) {
+	t.Helper()
 	for _, previous := range []map[string]bool{{}, {"1.1.1.1": false}, {"1.1.1.1": true}} {
 		withFuncTestDB(t, []string{`CREATE TABLE pinglog (logtime TEXT, target TEXT, avgdelay TEXT, losspk TEXT);`}, func(_ *sql.DB) {
 			g.AlertStatusLock.Lock()
@@ -415,7 +424,7 @@ func TestStartAlertWithoutSamplesPreservesPreviousState(t *testing.T) {
 			}()
 			g.Cfg.Network = map[string]g.NetworkMember{
 				g.Cfg.Addr: {Addr: g.Cfg.Addr, Topology: []map[string]string{{
-					"Addr": "1.1.1.1", "Thdchecksec": "600", "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30",
+					"Addr": "1.1.1.1", "Thdchecksec": seconds, "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30",
 				}}},
 			}
 			StartAlert()

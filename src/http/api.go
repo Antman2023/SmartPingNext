@@ -56,31 +56,16 @@ func configApiRoutes(mux *http.ServeMux) {
 			http.Error(w, err.Error(), http.StatusNotAcceptable)
 			return
 		}
-		timeStart := timeStartValue.Unix()
-		timeEnd := timeEndValue.Unix()
-		timeStartStr := timeStartValue.Format("2006-01-02 15:04")
-		timeEndStr := timeEndValue.Format("2006-01-02 15:04")
-		cnt := int((timeEnd - timeStart) / 60)
-		size := cnt + 1
-		lastcheck := make([]string, size)
-		maxdelay := make([]string, size)
-		mindelay := make([]string, size)
-		avgdelay := make([]string, size)
-		losspk := make([]string, size)
-		populated := make([]bool, size)
-		cursor := timeStart
-		for i := 0; i < size; i++ {
-			ntime := time.Unix(cursor, 0).In(timeStartValue.Location()).Format("2006-01-02 15:04")
-			lastcheck[i] = ntime
-			// Missing samples must remain gaps, not healthy zero-valued measurements.
-			maxdelay[i] = "-"
-			mindelay[i] = "-"
-			avgdelay[i] = "-"
-			losspk[i] = "-"
-			cursor += 60
+		size := int((timeEndValue.Unix()-timeStartValue.Unix())/60) + 1
+		timeline, err := newPingHistoryTimelineContext(r.Context(), timeStartValue, size)
+		if err != nil {
+			http.Error(w, "Query ping data failed", http.StatusInternalServerError)
+			return
 		}
+		lastcheck, maxdelay, mindelay := timeline.lastcheck, timeline.maxdelay, timeline.mindelay
+		avgdelay, losspk, populated := timeline.avgdelay, timeline.losspk, timeline.populated
 		querySql := "SELECT logtime,maxdelay,CASE WHEN cast(mindelay as double) < 0 THEN '0' ELSE mindelay END,avgdelay,losspk FROM `pinglog` where target=? and logtime between ? and ?"
-		rows, err := g.Db.QueryContext(r.Context(), querySql, tableip, timeStartStr, timeEndStr)
+		rows, err := g.Db.QueryContext(r.Context(), querySql, tableip, timeline.queryStartLabel, timeline.queryEndLabel)
 		logrus.Debug("[func:/api/ping.json] Query ", querySql)
 		if err != nil {
 			logrus.Error("[func:/api/ping.json] Query ", err)
@@ -204,10 +189,19 @@ func configApiRoutes(mux *http.ServeMux) {
 		}
 		dayStart := selectedDate.Format("2006-01-02 15:04")
 		dayEnd := selectedDate.AddDate(0, 0, 1).Format("2006-01-02 15:04")
+		// Keep both response sections on one snapshot when sampling or archive
+		// cleanup changes the database between the date and record queries.
+		tx, err := g.Db.BeginTx(r.Context(), &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			logrus.Error("[func:/api/alert.json] Begin read transaction ", err)
+			http.Error(w, "Query alert dates failed", http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
 		listpreout := []string{}
 		datapreout := []g.AlertLog{}
 		querySql := alertDatesQuery
-		rows, err := g.Db.QueryContext(r.Context(), querySql)
+		rows, err := tx.QueryContext(r.Context(), querySql)
 		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
 			logrus.Error("[func:/api/alert.json] Query ", err)
@@ -234,7 +228,7 @@ func configApiRoutes(mux *http.ServeMux) {
 			rows.Close()
 		}
 		querySql = "select logtime,targetname,targetip,tracert from alertlog where logtime >= ? and logtime < ?"
-		rows, err = g.Db.QueryContext(r.Context(), querySql, dayStart, dayEnd)
+		rows, err = tx.QueryContext(r.Context(), querySql, dayStart, dayEnd)
 		logrus.Debug("[func:/api/alert.json] Query ", querySql)
 		if err != nil {
 			logrus.Error("[func:/api/alert.json] Query ", err)
@@ -261,6 +255,11 @@ func configApiRoutes(mux *http.ServeMux) {
 				return
 			}
 			rows.Close()
+		}
+		if err := tx.Commit(); err != nil {
+			logrus.Error("[func:/api/alert.json] Finish read transaction ", err)
+			http.Error(w, "Query alert data failed", http.StatusInternalServerError)
+			return
 		}
 		RenderJson(w, []any{listpreout, datapreout})
 	})

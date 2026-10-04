@@ -22,6 +22,27 @@ var ErrNoAlertSamples = errors.New("no samples in alert window")
 
 const alertTraceConcurrency = 4
 
+// Short windows keep the cheaper aggregate query. For long windows, SQLite
+// can stop as soon as the configured number of bad samples has been found.
+const minEarlyExitAlertSamples = 600
+
+// Apply the bad-sample predicate after taking the latest samples, so neither
+// the grace minute nor older failures can extend the configured sample cap.
+// The first existence check preserves unknown as distinct from healthy.
+const alertStatusEarlyExitQuery = `SELECT CASE
+	WHEN NOT EXISTS (SELECT 1 FROM pinglog WHERE target = ?3 AND logtime >= ?4 AND logtime <= ?5) THEN -1
+	WHEN EXISTS (
+		SELECT 1 FROM (
+			SELECT avgdelay, losspk FROM pinglog
+			WHERE target = ?3 AND logtime >= ?4 AND logtime <= ?5
+			ORDER BY logtime DESC LIMIT ?6
+		)
+		WHERE cast(avgdelay as double) > ?1 OR cast(losspk as double) >= ?2
+		LIMIT 1 OFFSET ?7
+	) THEN 0
+	ELSE 1
+END`
+
 type alertTraceJob struct {
 	g.AlertLog
 	episode *g.AlertEpisode
@@ -174,6 +195,22 @@ func checkAlertStatusAtContext(ctx context.Context, v map[string]string, now tim
 	// minute begins. Include that boundary minute, then cap the query to the
 	// configured number of samples so the grace period cannot count stale data.
 	windowStart := alertWindowStart(now, Thdchecksec).Add(-time.Minute)
+	if sampleCount >= minEarlyExitAlertSamples {
+		var state int
+		err := g.Db.QueryRowContext(ctx, alertStatusEarlyExitQuery,
+			v["Thdavgdelay"], v["Thdloss"], v["Addr"],
+			windowStart.Format("2006-01-02 15:04"), windowEnd.Format("2006-01-02 15:04"),
+			sampleCount, Thdoccnum-1,
+		).Scan(&state)
+		logrus.Debug("[func:StartAlert] ", alertStatusEarlyExitQuery)
+		if err != nil {
+			return false, fmt.Errorf("query alert status for %s: %w", v["Addr"], err)
+		}
+		if state < 0 {
+			return false, fmt.Errorf("target %s: %w", v["Addr"], ErrNoAlertSamples)
+		}
+		return state == 1, nil
+	}
 	querysql := `SELECT count(1), coalesce(sum(CASE WHEN cast(avgdelay as double) > ? OR cast(losspk as double) >= ? THEN 1 ELSE 0 END), 0) FROM (
 		SELECT avgdelay, losspk FROM pinglog
 		WHERE target = ? AND logtime >= ? AND logtime <= ?

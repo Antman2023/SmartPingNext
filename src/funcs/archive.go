@@ -32,7 +32,7 @@ func ClearArchiveContext(ctx context.Context) {
 
 	logrus.Info("[func:ClearArchive] ", "starting run ClearArchive ")
 	archiveDays := g.GetBaseInt("Archive", 30)
-	cutoffDate := time.Now().AddDate(0, 0, -archiveDays).Format("2006-01-02")
+	cutoffDate := archiveCutoffDate(time.Now(), archiveDays)
 	err := clearArchiveBeforeContext(ctx, cutoffDate)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -43,6 +43,14 @@ func ClearArchiveContext(ctx context.Context) {
 		return
 	}
 	logrus.Info("[func:ClearArchive] ", "ClearArchive Finish ")
+}
+
+func archiveCutoffDate(now time.Time, archiveDays int) string {
+	// Stored timestamps are calendar labels. Subtract calendar days without
+	// normalizing a missing local hour or date into a different cutoff day.
+	year, month, day := now.Date()
+	calendarDay := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+	return calendarDay.AddDate(0, 0, -archiveDays).Format("2006-01-02")
 }
 
 func clearArchiveBefore(cutoffDate string) error {

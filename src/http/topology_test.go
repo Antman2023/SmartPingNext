@@ -11,6 +11,15 @@ import (
 )
 
 func TestTopologyAPIDistinguishesUnknownHealthyAndAlert(t *testing.T) {
+	for _, seconds := range []string{"600", "36000", "86400"} {
+		t.Run(seconds, func(t *testing.T) {
+			testTopologyAPIDistinguishesUnknownHealthyAndAlert(t, seconds)
+		})
+	}
+}
+
+func testTopologyAPIDistinguishesUnknownHealthyAndAlert(t *testing.T, seconds string) {
+	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -25,7 +34,7 @@ func TestTopologyAPIDistinguishesUnknownHealthyAndAlert(t *testing.T) {
 	var rules []map[string]string
 	for _, target := range []string{"unknown", "healthy", "alert"} {
 		rules = append(rules, map[string]string{
-			"Addr": target, "Thdchecksec": "600", "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30",
+			"Addr": target, "Thdchecksec": seconds, "Thdoccnum": "1", "Thdavgdelay": "200", "Thdloss": "30",
 		})
 	}
 	for target, delay := range map[string]string{"healthy": "20", "alert": "250"} {
