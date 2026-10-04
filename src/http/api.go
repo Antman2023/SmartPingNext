@@ -337,9 +337,7 @@ func configApiRoutes(mux *http.ServeMux) {
 		if !acquireToolRequest() {
 			preout.Error = "Too Many Tool Requests"
 			w.Header().Set("Retry-After", "1")
-			w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-			w.WriteHeader(http.StatusTooManyRequests)
-			RenderJson(w, preout)
+			renderJSONWithStatus(w, preout, http.StatusTooManyRequests)
 			return
 		}
 		defer releaseToolRequest()
@@ -519,13 +517,11 @@ func requireConfigPassword(w http.ResponseWriter, r *http.Request, expected stri
 	if retryAfter > 0 {
 		retrySeconds := int((retryAfter + time.Second - 1) / time.Second)
 		w.Header().Set("Retry-After", strconv.Itoa(retrySeconds))
-		w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-		w.WriteHeader(http.StatusTooManyRequests)
-		RenderJson(w, map[string]any{
+		renderJSONWithStatus(w, map[string]any{
 			"status":     "false",
 			"error":      "password_rate_limited",
 			"retryAfter": retrySeconds,
-		})
+		}, http.StatusTooManyRequests)
 		return false
 	}
 	RenderJson(w, map[string]string{"status": "false", "info": "密码错误!"})
@@ -644,8 +640,7 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	// Preserve the bounded response: indentation can amplify nested JSON
 	// quadratically and would allocate a second, potentially much larger body.
-	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	if _, err := w.Write(body); err != nil {
+	if err := writeJSONResponse(w, body, http.StatusOK); err != nil {
 		logrus.Debug("[func:/api/proxy.json] Write response: ", err)
 	}
 }

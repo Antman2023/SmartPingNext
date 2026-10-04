@@ -60,6 +60,7 @@
               type="button"
               class="list-row alerts-view__archive-item"
               :class="{ 'is-active': selectedDate === date }"
+              :disabled="configLoading"
               @click="loadAlertsByDate(date)"
             >
               <span class="list-row__title">{{ date }}</span>
@@ -87,7 +88,7 @@
 
           <div v-if="hasRetainedAlerts" class="alerts-view__refresh-error" role="status">
             <span>{{ $t('alerts.showingPreviousRecords') }}</span>
-            <el-button size="small" :disabled="alertsLoading" @click="retryAlerts">
+            <el-button size="small" :disabled="configLoading || alertsLoading" @click="retryAlerts">
               {{ $t('common.retry') }}
             </el-button>
           </div>
@@ -282,6 +283,9 @@ const lastUpdatedLabel = computed(() =>
 )
 
 const loadConfig = async () => {
+  if (isUnmounted) {
+    return
+  }
   configAbortController?.abort()
   alertsAbortController?.abort()
   alertsAbortController = null
@@ -330,7 +334,7 @@ const loadConfig = async () => {
 
 
 const loadAlerts = async (date?: string) => {
-  if (!config.value) {
+  if (isUnmounted || !config.value) {
     return
   }
 
@@ -420,14 +424,25 @@ const loadAlerts = async (date?: string) => {
   }
 }
 
-const loadAllAlerts = () => loadAlerts()
+const loadAllAlerts = () => {
+  if (isUnmounted || configLoading.value) {
+    return
+  }
+  return loadAlerts()
+}
 
 const loadAlertsByDate = (date: string) => {
+  if (isUnmounted || configLoading.value || !config.value) {
+    return
+  }
   selectedDate.value = date
   return loadAlerts(date)
 }
 
 const retryAlerts = () => {
+  if (isUnmounted || configLoading.value) {
+    return
+  }
   if (!config.value) {
     return loadConfig()
   }
@@ -515,6 +530,11 @@ onUnmounted(() => {
   border: none;
   cursor: pointer;
   font: inherit;
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
 }
 
 .alerts-view__archive-empty {

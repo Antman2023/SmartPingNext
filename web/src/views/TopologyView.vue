@@ -256,6 +256,9 @@ const lastUpdatedLabel = computed(() =>
 )
 
 const loadConfig = async () => {
+  if (isUnmounted) {
+    return
+  }
   configAbortController?.abort()
   topologyAbortController?.abort()
   topologyAbortController = null
@@ -296,7 +299,7 @@ const loadConfig = async () => {
 }
 
 const loadTopologyStatus = async () => {
-  if (!config.value) {
+  if (isUnmounted || !config.value) {
     return
   }
 
@@ -308,14 +311,15 @@ const loadTopologyStatus = async () => {
   const networkWithTopology = Object.entries(cfg.Network).filter(
     ([, network]) => network.Topology && network.Topology.length > 0
   )
-  const nextStatus = Object.fromEntries(
-    networkWithTopology.flatMap(([addr]) =>
-      topologyStatus.value[addr] ? [[addr, topologyStatus.value[addr]]] : []
-    )
-  ) as Record<string, Record<string, string>>
+  const sourceAddresses = new Set(networkWithTopology.map(([addr]) => addr))
+  for (const addr of Object.keys(topologyStatus.value)) {
+    if (!sourceAddresses.has(addr)) {
+      delete topologyStatus.value[addr]
+    }
+  }
 
   isRefreshing.value = true
-  loadingNodes.value = new Set(networkWithTopology.map(([addr]) => addr))
+  loadingNodes.value = sourceAddresses
   failedNodes.value = new Set()
 
   try {
@@ -328,22 +332,18 @@ const loadTopologyStatus = async () => {
           if (isUnmounted || requestId !== topologyRequestId) {
             return
           }
-          nextStatus[addr] = status
-          topologyStatus.value = { ...nextStatus }
+          topologyStatus.value[addr] = status
           lastUpdatedAt.value = new Date()
         } catch (error) {
           if (isRequestCanceled(error) || isUnmounted || requestId !== topologyRequestId) {
             return
           }
-          delete nextStatus[addr]
-          topologyStatus.value = { ...nextStatus }
-          failedNodes.value = new Set(failedNodes.value).add(addr)
+          delete topologyStatus.value[addr]
+          failedNodes.value.add(addr)
           console.error(`获取 ${network.Name} 拓扑状态失败`, error)
         } finally {
           if (!isUnmounted && requestId === topologyRequestId) {
-            const nextLoadingNodes = new Set(loadingNodes.value)
-            nextLoadingNodes.delete(addr)
-            loadingNodes.value = nextLoadingNodes
+            loadingNodes.value.delete(addr)
           }
         }
       },
@@ -361,7 +361,12 @@ const loadTopologyStatus = async () => {
   }
 }
 
-const refreshTopology = () => (config.value ? loadTopologyStatus() : loadConfig())
+const refreshTopology = () => {
+  if (isUnmounted || configLoading.value) {
+    return
+  }
+  return config.value ? loadTopologyStatus() : loadConfig()
+}
 
 const handleResize = () => {
   graphHeight.value = Math.max(window.innerHeight - 300, 420)

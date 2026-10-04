@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"smartping/src/g"
 	"smartping/src/nettools"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,13 +52,26 @@ func newPasswordAttemptTracker() *passwordAttemptTracker {
 }
 
 func RenderJson(w http.ResponseWriter, v any) {
+	renderJSONWithStatus(w, v, http.StatusOK)
+}
+
+func renderJSONWithStatus(w http.ResponseWriter, v any, status int) {
 	bs, err := json.Marshal(v)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if err := writeJSONResponse(w, bs, status); err != nil {
+		logrus.Debug("[func:RenderJson] Write response: ", err)
+	}
+}
+
+func writeJSONResponse(w http.ResponseWriter, body []byte, status int) error {
 	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
-	w.Write(bs)
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(status)
+	_, err := w.Write(body)
+	return err
 }
 
 func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {

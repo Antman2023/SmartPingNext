@@ -120,6 +120,8 @@ Historical Ping queries reuse ordered minute timelines to locate samples, reduci
 
 Alert history retains each responding node's last successful records for the same date query. If a node cannot be refreshed, its records remain visible and are marked "Refresh failed". A successful response replaces those records, including an empty list. Changing the date or reloading node configuration clears previous records. When every node fails to refresh, the last successful update time is preserved.
 
+Alert history pauses date selection and refreshes while configuration reloads, then queries the selected date using the updated node addresses and ports. Leaving the page cancels active requests and stops queued work. Late callbacks cannot start new queries or change the selected date, and an initial configuration failure can still be retried.
+
 Alert date lists seek between distinct dates using the existing date index, reducing reads when many records share a date. Dates remain newest first, and malformed timestamps retain their error handling. Sparse records incur some extra query overhead; benchmark results are recorded in the [optimization review](docs/optimization-review.md).
 
 Hostname resolution for online tools, scheduled Ping, mapping probes, and alert MTR waits up to 5 seconds. Caller cancellation or an earlier deadline ends resolution sooner. IPv4 literals skip DNS.
@@ -127,6 +129,10 @@ Hostname resolution for online tools, scheduled Ping, mapping probes, and alert 
 Online diagnostics pause new checks while configuration reloads, then use the updated probe addresses and ports. Leaving the page cancels active requests and prevents late callbacks from starting new checks. Explicit node rejection messages, such as rate limits or resolution failures, appear on the corresponding row. Missing rejection messages and malformed success data still report an invalid response.
 
 If a refresh of the same latency map query fails, the previous result and update time remain visible with a persistent warning. A successful refresh clears the warning; switching nodes or times clears the previous query's result. Node selection pauses during configuration reloads, and late callbacks for removed nodes or an unmounted page cannot start new queries.
+
+The topology page pauses manual refreshes while configuration reloads, then uses the updated node list, addresses and ports. Leaving the page cancels configuration and node requests, stops dispatching queued work and prevents late callbacks from starting new configuration or topology queries.
+
+Topology refreshes update each node's status and loading markers individually, reducing repeated copies of the entire status table for large node lists. Completed nodes still update colors, links and loaded counts immediately. Failed sources show a loading error and can recover on refresh; states for sources no longer monitored are removed.
 
 Caller cancellation and deadlines also interrupt requests waiting for ICMP initialization or shared write access. Queued senders do not block other probe responses. A probe's response timeout is still measured from its send time.
 
@@ -230,6 +236,10 @@ The metric arrays returned by `/api/ping.json` align with the `lastcheck` timeli
 Explicit minute parameters for Ping and mapping queries return `406` if that local minute does not exist because of a timezone transition. The server does not silently substitute another time. Previously accepted unpadded hours and extra spaces remain supported. Alert date queries filter stored calendar labels from `00:00` on the requested date to `00:00` on the following date, avoiding shifted bounds during midnight timezone transitions.
 
 `/api/topology.json` returns string states by target IP: `"true"` means the alert threshold has not been reached, `"false"` means it has, and `"unknown"` means no samples exist for that target in the configured check window (including the grace period for rounds finishing across a minute boundary). Unknown states neither trigger alerts nor mark existing alerts as recovered. Clients must handle all three values explicitly instead of treating every non-`"false"` value as healthy.
+
+Node proxy responses are limited to 16 MiB, with up to 32 concurrent requests. For declared lengths between 512 bytes and 16 MiB, the proxy preallocates its read buffer to reduce growth for large responses. Actual bytes read are checked independently; truncated and oversized responses are rejected. Client cancellation stops the remote request and releases the proxy concurrency slot.
+
+Node JSON APIs and proxy responses declare `Content-Length` using the encoded byte count, allowing large responses to use the preallocated read path. Password and online tool rate-limit responses also declare accurate lengths while preserving status `429`, `Retry-After` and their existing JSON fields.
 
 ## Contributing
 

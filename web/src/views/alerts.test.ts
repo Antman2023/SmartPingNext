@@ -27,9 +27,14 @@ interface AlertsSetup {
   lastUpdatedAt: vue.Ref<Date | null>
   alertsLoadError: vue.Ref<boolean>
   failedNodes: vue.ComputedRef<number>
+  configLoading: vue.Ref<boolean>
+  alertsLoading: vue.Ref<boolean>
+  nodes: vue.Ref<Array<{ name: string; addr: string; loading: boolean; error: boolean }>>
   loadConfig: () => Promise<void>
-  retryAlerts: () => Promise<void>
-  loadAlertsByDate: (date: string) => Promise<void>
+  loadAlerts: (date?: string) => Promise<void>
+  loadAllAlerts: () => Promise<void> | undefined
+  retryAlerts: () => Promise<void> | undefined
+  loadAlertsByDate: (date: string) => Promise<void> | undefined
 }
 
 function alertLog(source: string, time = '2026-09-06 12:00'): AlertLog {
@@ -209,7 +214,11 @@ function createView(t: test.TestContext) {
     dates: [],
     logs: []
   }))
-  const config = {
+  const config: {
+    Addr: string
+    Port: number
+    Network: Record<string, { Addr: string; Name: string; Topology: object[] }>
+  } = {
     Addr: '127.0.0.1',
     Port: 8899,
     Network: {
@@ -217,6 +226,7 @@ function createView(t: test.TestContext) {
       b: { Addr: '192.0.2.2', Name: 'b', Topology: [{}] }
     }
   }
+  const fetchConfig = t.mock.fn(async (_signal?: AbortSignal) => config)
   let unmount!: () => void
   const dependencies: Record<string, unknown> = {
     vue: { ...vue, onMounted: () => {}, onUnmounted: (callback: () => void) => { unmount = callback } },
@@ -230,7 +240,7 @@ function createView(t: test.TestContext) {
       isRequestCanceled: (error: unknown) =>
         error instanceof DOMException && error.name === 'AbortError'
     },
-    '@/api/config': { fetchConfig: async () => config },
+    '@/api/config': { fetchConfig },
     '@/api/alert': { getAlerts },
     '@/utils/alertData': { isAlertData },
     '@/utils/concurrency': { mapWithConcurrency },
@@ -247,9 +257,9 @@ function createView(t: test.TestContext) {
     }
   })
   const scope = vue.effectScope()
-  t.after(() => scope.stop())
+  t.after(() => { unmount(); scope.stop() })
   const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
-  return { view, getAlerts, config, showError, unmount }
+  return { view, getAlerts, config, fetchConfig, showError, unmount }
 }
 
 test('MTR details reject invalid measurements while preserving valid zero and full loss', (t) => {
@@ -429,4 +439,162 @@ test('alert config reload preserves the selected date and removes obsolete archi
   await view.loadConfig()
   assert.equal(view.dates.value.length, 0)
   assert.equal(view.lastUpdatedAt.value, null)
+})
+
+test('alert unmount blocks late config, date, refresh and direct query callbacks', async (t) => {
+  const { view, getAlerts, fetchConfig, unmount } = createView(t)
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.loadConfig()
+  await view.loadAlertsByDate('2026-09-06')
+  const configCalls = fetchConfig.mock.callCount()
+  const alertCalls = getAlerts.mock.callCount()
+  const records = view.alerts.value
+  const dates = view.dates.value
+  const updatedAt = view.lastUpdatedAt.value
+  unmount()
+  await view.loadConfig()
+  await view.loadAlerts('2026-09-05')
+  await view.loadAlertsByDate('2026-09-05')
+  await view.loadAllAlerts()
+  await view.retryAlerts()
+  assert.equal(fetchConfig.mock.callCount(), configCalls)
+  assert.equal(getAlerts.mock.callCount(), alertCalls)
+  assert.equal(view.selectedDate.value, '2026-09-06')
+  assert.equal(view.alerts.value, records)
+  assert.equal(view.dates.value, dates)
+  assert.equal(view.lastUpdatedAt.value, updatedAt)
+  assert.equal(view.configLoading.value, false)
+  assert.equal(view.alertsLoading.value, false)
+  assert.ok(view.nodes.value.every((node) => !node.loading && !node.error))
+})
+
+test('alert config reload pauses date and refresh callbacks then queries the new sources', async (t) => {
+  const { view, getAlerts, fetchConfig } = createView(t)
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.loadConfig()
+  await view.loadAlertsByDate('2026-09-06')
+  const records = view.alerts.value
+  const dates = view.dates.value
+  const updatedAt = view.lastUpdatedAt.value
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  t.after(() => release())
+  fetchConfig.mock.mockImplementation(async () => {
+    await gate
+    return { Addr: '192.0.2.10', Port: 9000, Network: {
+      local: { Addr: '192.0.2.10', Name: 'new local', Topology: [{}] },
+      remote: { Addr: '192.0.2.20', Name: 'new remote', Topology: [{}] }
+    } }
+  })
+  getAlerts.mock.resetCalls()
+  const pending = view.loadConfig()
+  await view.loadAlertsByDate('2026-09-05')
+  await view.retryAlerts()
+  await view.loadAllAlerts()
+  try {
+    assert.equal(getAlerts.mock.callCount(), 0)
+    assert.equal(view.selectedDate.value, '2026-09-06')
+    assert.equal(view.alerts.value, records)
+    assert.equal(view.dates.value, dates)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    assert.equal(view.alertsLoading.value, false)
+  } finally {
+    release()
+    await pending
+  }
+  assert.deepEqual(getAlerts.mock.calls.map((call) => call.arguments[0]), ['', 'http://192.0.2.20:9000'])
+  assert.ok(getAlerts.mock.calls.every((call) => call.arguments[1] === '2026-09-06'))
+  await view.loadAlertsByDate('2026-09-05')
+  assert.equal(view.selectedDate.value, '2026-09-05')
+  assert.ok(getAlerts.mock.calls.slice(-2).every((call) => call.arguments[1] === '2026-09-05'))
+  assert.equal(view.configLoading.value, false)
+  assert.equal(view.alertsLoading.value, false)
+})
+
+test('alert retry recovers from an initial config load failure', async (t) => {
+  const { view, getAlerts, fetchConfig } = createView(t)
+  fetchConfig.mock.mockImplementationOnce(async () => { throw new Error('offline') })
+  await view.loadConfig()
+  assert.equal(view.alertsLoadError.value, true)
+  assert.equal(view.configLoading.value, false)
+  assert.equal(getAlerts.mock.callCount(), 0)
+  getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+  await view.retryAlerts()
+  assert.equal(fetchConfig.mock.callCount(), 2)
+  assert.equal(getAlerts.mock.callCount(), 2)
+  assert.equal(view.alertsLoadError.value, false)
+  assert.equal(view.alerts.value.length, 2)
+  assert.equal(view.configLoading.value, false)
+  assert.equal(view.alertsLoading.value, false)
+})
+
+test('alert unmount cancels active nodes without dispatching queued queries or accepting late results', async (t) => {
+  for (const fail of [false, true]) {
+    const { view, getAlerts, config, unmount } = createView(t)
+    config.Network = Object.fromEntries(Array.from({ length: 6 }, (_, i) => {
+      const addr = `192.0.2.${i + 1}`
+      return [addr, { Addr: addr, Name: addr, Topology: [{}] }]
+    }))
+    getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+    await view.loadConfig()
+    const records = view.alerts.value
+    const dates = view.dates.value
+    const updatedAt = view.lastUpdatedAt.value
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    t.after(() => release())
+    getAlerts.mock.resetCalls()
+    getAlerts.mock.mockImplementation(async () => {
+      await gate
+      if (fail) throw new Error('late failure')
+      return { dates: ['outdated'], logs: [alertLog('outdated')] }
+    })
+    const pending = view.retryAlerts()
+    assert.equal(getAlerts.mock.callCount(), 4)
+    unmount()
+    assert.ok(getAlerts.mock.calls.every((call) => call.arguments[2]!.aborted))
+    release()
+    await pending
+    assert.equal(getAlerts.mock.callCount(), 4)
+    assert.equal(view.alerts.value, records)
+    assert.equal(view.dates.value, dates)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    assert.equal(view.hasRetainedAlerts.value, false)
+    assert.equal(view.failedNodes.value, 0)
+    assert.equal(view.alertsLoadError.value, false)
+  }
+})
+
+test('alert unmount cancels config reload and ignores its late success or failure', async (t) => {
+  for (const fail of [false, true]) {
+    const { view, getAlerts, fetchConfig, config, showError, unmount } = createView(t)
+    getAlerts.mock.mockImplementation(async (url) => ({ dates: ['2026-09-06'], logs: [alertLog(url)] }))
+    await view.loadConfig()
+    await view.loadAlertsByDate('2026-09-06')
+    const records = view.alerts.value
+    const dates = view.dates.value
+    const updatedAt = view.lastUpdatedAt.value
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    t.after(() => release())
+    fetchConfig.mock.mockImplementation(async () => {
+      await gate
+      if (fail) throw new Error('late config failure')
+      return { ...config, Addr: '192.0.2.10', Port: 9000 }
+    })
+    const alertCalls = getAlerts.mock.callCount()
+    const pending = view.loadConfig()
+    const signal = fetchConfig.mock.calls.at(-1)!.arguments[0]!
+    unmount()
+    assert.equal(signal.aborted, true)
+    release()
+    await pending
+    assert.equal(getAlerts.mock.callCount(), alertCalls)
+    assert.equal(view.selectedDate.value, '2026-09-06')
+    assert.equal(view.alerts.value, records)
+    assert.equal(view.dates.value, dates)
+    assert.equal(view.lastUpdatedAt.value, updatedAt)
+    assert.equal(view.alertsLoadError.value, false)
+    assert.equal(showError.mock.callCount(), 0)
+  }
 })

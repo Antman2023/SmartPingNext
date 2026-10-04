@@ -895,6 +895,9 @@ func TestConfigPasswordRateLimitIsSharedAcrossEndpoints(t *testing.T) {
 		if attempt == passwordFailureLimit && recorder.Header().Get("Retry-After") == "" {
 			t.Fatalf("rate-limited response is missing Retry-After")
 		}
+		if got := recorder.Result().Header.Get("Content-Length"); got != fmt.Sprint(recorder.Body.Len()) {
+			t.Fatalf("attempt %d committed Content-Length = %q, want %d", attempt, got, recorder.Body.Len())
+		}
 	}
 
 	form := url.Values{"password": {"correct-password"}}
@@ -1442,6 +1445,9 @@ func TestToolsEndpointReturnsTooManyRequestsWhenConcurrencyIsFull(t *testing.T) 
 	}
 	if response.Status != "false" || response.Error != "Too Many Tool Requests" {
 		t.Fatalf("tools concurrency response = %#v", response)
+	}
+	if got := recorder.Result().Header.Get("Content-Length"); got != fmt.Sprint(recorder.Body.Len()) {
+		t.Fatalf("tools concurrency committed Content-Length = %q, want %d", got, recorder.Body.Len())
 	}
 }
 

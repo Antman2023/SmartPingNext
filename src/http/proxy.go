@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
@@ -73,8 +74,25 @@ func releaseProxyRequest() {
 }
 
 func readProxyResponseBody(reader io.Reader) ([]byte, error) {
+	return readProxyResponseBodyWithLength(reader, -1)
+}
+
+func readProxyResponseBodyWithLength(reader io.Reader, contentLength int64) ([]byte, error) {
+	if contentLength > maxProxyResponseBytes {
+		return nil, errors.New("Proxy Response Too Large!")
+	}
 	limited := io.LimitReader(reader, maxProxyResponseBytes+1)
-	body, err := io.ReadAll(limited)
+	var body []byte
+	var err error
+	if contentLength >= bytes.MinRead {
+		// Reserve EOF-read space plus the size-limit sentinel, so a response
+		// declaring the maximum length needs no second large buffer to check it.
+		buffer := bytes.NewBuffer(make([]byte, 0, int(contentLength)+bytes.MinRead+1))
+		_, err = buffer.ReadFrom(limited)
+		body = buffer.Bytes()
+	} else {
+		body, err = io.ReadAll(limited)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -88,10 +106,7 @@ func readProxyHTTPResponseBody(response *http.Response) ([]byte, error) {
 	if response == nil || response.Body == nil {
 		return nil, errors.New("Proxy Response Body Missing!")
 	}
-	if response.ContentLength > maxProxyResponseBytes {
-		return nil, errors.New("Proxy Response Too Large!")
-	}
-	return readProxyResponseBody(response.Body)
+	return readProxyResponseBodyWithLength(response.Body, response.ContentLength)
 }
 
 func validateProxyTarget(rawTarget string) (*url.URL, error) {

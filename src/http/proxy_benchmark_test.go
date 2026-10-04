@@ -1,10 +1,44 @@
 package http
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"smartping/src/g"
 	"testing"
 )
+
+func BenchmarkProxyResponseBody(b *testing.B) {
+	for _, size := range []int{128, 1 << 10, 64 << 10, 1 << 20, maxProxyResponseBytes} {
+		payload := bytes.Repeat([]byte("x"), size)
+		for _, mode := range []string{"ReadAll", "KnownLength", "UnknownLength"} {
+			b.Run(fmt.Sprintf("%dBytes/%s", size, mode), func(b *testing.B) {
+				b.ReportAllocs()
+				b.SetBytes(int64(size))
+				for i := 0; i < b.N; i++ {
+					reader := bytes.NewReader(payload)
+					var body []byte
+					var err error
+					if mode == "ReadAll" {
+						body, err = io.ReadAll(io.LimitReader(io.NopCloser(reader), maxProxyResponseBytes+1))
+					} else {
+						length := int64(size)
+						if mode == "UnknownLength" {
+							length = -1
+						}
+						body, err = readProxyHTTPResponseBody(&http.Response{
+							ContentLength: length, Body: io.NopCloser(reader),
+						})
+					}
+					if err != nil || len(body) != size {
+						b.Fatalf("body length = %d, error = %v", len(body), err)
+					}
+				}
+			})
+		}
+	}
+}
 
 func BenchmarkValidateProxyTarget(b *testing.B) {
 	for _, count := range []int{1, 100, 1000} {
