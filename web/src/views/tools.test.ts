@@ -7,6 +7,7 @@ import * as vue from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
 import { mapWithConcurrency } from '../utils/concurrency.js'
 import type { ToolsResult } from '../types/index.js'
+import { createRequestClientFixture } from '../api/testFixtures/requestClient.js'
 
 const source = readFileSync(new URL('../../src/views/ToolsView.vue', import.meta.url), 'utf8')
 const { descriptor } = parse(source)
@@ -31,7 +32,7 @@ interface ToolsSetup {
   loadConfig: () => Promise<void>
 }
 
-function createView(t: test.TestContext) {
+function createView(t: test.TestContext, requestTools?: (base: string, target: string, signal?: AbortSignal) => Promise<ToolsResult>) {
   const runTools = t.mock.fn(
     async (_base: string, _target: string, _signal?: AbortSignal): Promise<ToolsResult> => ({
       status: 'true',
@@ -62,13 +63,14 @@ function createView(t: test.TestContext) {
         error instanceof DOMException && error.name === 'AbortError'
     },
     '@/api/config': { fetchConfig },
-    '@/api/tools': { runTools },
+    '@/api/tools': { runTools: requestTools ?? runTools },
     '@/utils/concurrency': { mapWithConcurrency },
     '@/utils/format': { formatTime: () => '12:00' }
   }
   const exports: { default?: { setup: (props: object, context: object) => ToolsSetup } } = {}
   runInNewContext(compiled, {
     exports,
+    Error,
     AbortController,
     console: { error: () => {} },
     require: (name: string) => {
@@ -169,6 +171,117 @@ test('tools isolates malformed success payloads and accepts valid zero measureme
   }))
   await view.runCheck()
   assert.ok(view.results.value.every((row) => !row.error && row.result?.ping.LossPk === 100))
+})
+
+test('tools rejects contradictory counters and measured delay summaries without blocking other nodes', async (t) => {
+  const { view, runTools } = createView(t)
+  await view.loadConfig()
+  const sample = await runTools('node', 'target')
+  const invalidStats = [
+    { SendPk: 0, RevcPk: 0, LossPk: 0, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 },
+    { SendPk: 0, RevcPk: 0, LossPk: 100 },
+    { LossPk: 1 },
+    { SendPk: 5, RevcPk: 5, LossPk: 100 },
+    { SendPk: 5, RevcPk: 4, LossPk: 0 },
+    { SendPk: 5, RevcPk: 0, LossPk: 0 },
+    { SendPk: 100, RevcPk: 71, LossPk: 28 },
+    { SendPk: 7, RevcPk: 5, LossPk: 29 },
+    { SendPk: Number.MAX_SAFE_INTEGER, RevcPk: 8106479329266892, LossPk: 10 },
+    { MinDelay: 2.01, AvgDelay: 2, MaxDelay: 3 },
+    { MinDelay: 1, AvgDelay: 3.01, MaxDelay: 3 },
+    { MinDelay: 4, AvgDelay: 2, MaxDelay: 3 },
+    { SendPk: 5, RevcPk: 1, LossPk: 80, MinDelay: 1, AvgDelay: 2, MaxDelay: 3 }
+  ]
+  for (const stats of invalidStats) {
+    runTools.mock.mockImplementation(async (base) => base.startsWith('192.0.2.1:')
+      ? { ...sample, ping: { ...sample.ping, ...stats } } : sample)
+    await view.runCheck()
+    assert.equal(view.results.value[0]!.result, null, JSON.stringify(stats))
+    assert.equal(view.results.value[0]!.error, 'tools.invalidResponse')
+    assert.equal(view.results.value.filter((row) => row.result?.status === 'true').length, 5)
+    assert.ok(view.results.value.every((row) => !row.loading))
+    assert.equal(view.checking.value, false)
+  }
+  runTools.mock.mockImplementation(async () => sample)
+  await view.runCheck()
+  assert.ok(view.results.value.every((row) => row.result && !row.error))
+})
+
+test('tools preserves consistent integer loss, zero delays and all-loss placeholders', async (t) => {
+  const { view, runTools } = createView(t)
+  await view.loadConfig()
+  const sample = await runTools('node', 'target')
+  const validStats = [
+    { SendPk: 5, RevcPk: 5, LossPk: 0, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 },
+    { SendPk: 5, RevcPk: 4, LossPk: 20, MinDelay: 0, AvgDelay: 0.01, MaxDelay: 0.02 },
+    { SendPk: 3, RevcPk: 2, LossPk: 33, MinDelay: 1, AvgDelay: 2, MaxDelay: 3 },
+    { SendPk: 7, RevcPk: 5, LossPk: 28, MinDelay: 1, AvgDelay: 2, MaxDelay: 3 },
+    { SendPk: 100, RevcPk: 71, LossPk: 29, MinDelay: 1, AvgDelay: 2, MaxDelay: 3 },
+    { SendPk: 1, RevcPk: 1, LossPk: 0, MinDelay: 7.25, AvgDelay: 7.25, MaxDelay: 7.25 },
+    { SendPk: 5, RevcPk: 1, LossPk: 80, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 },
+    { SendPk: 5, RevcPk: 0, LossPk: 100, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 },
+    { SendPk: 5, RevcPk: 0, LossPk: 100, MinDelay: 3000, AvgDelay: 3000, MaxDelay: 3000 },
+    { SendPk: Number.MAX_SAFE_INTEGER, RevcPk: 8106479329266892, LossPk: 9,
+      MinDelay: 1, AvgDelay: 2, MaxDelay: 3 }
+  ]
+  for (const stats of validStats) {
+    const result = { ...sample, ping: stats }
+    runTools.mock.mockImplementation(async () => result)
+    await view.runCheck()
+    assert.ok(view.results.value.every((row) => row.result && !row.error), JSON.stringify(stats))
+    for (const row of view.results.value) {
+      assert.deepEqual(row.result!.ping, stats)
+    }
+  }
+})
+
+test('tools classifies invalid node rejection bodies through the actual HTTP client', async (t) => {
+  let reply: unknown
+  const client = await createRequestClientFixture(t, (_request, response) => {
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify(reply))
+  })
+  const { view } = createView(t, client.runTools)
+  await view.loadConfig()
+  for (const error of [undefined, null, 123, {}, '', '  ']) {
+    reply = { status: 'false', error, ip: '', ping: { SendPk: 0, RevcPk: 0, LossPk: 0, MinDelay: -1, AvgDelay: 0, MaxDelay: 0 } }
+    await view.runCheck()
+    for (const row of view.results.value) {
+      assert.equal(row.result, null)
+      assert.equal(row.error, 'tools.invalidResponse', JSON.stringify(reply))
+    }
+    assert.ok(view.results.value.every((row) => !row.loading))
+  }
+})
+
+test('tools preserves rejection reasons, isolates failures and recovers through the actual HTTP client', async (t) => {
+  const valid: ToolsResult = { status: 'true', error: '', ip: '192.0.2.1',
+    ping: { SendPk: 5, RevcPk: 5, LossPk: 0, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 } }
+  let reason: string | null = 'Time Limit Exceeded!'
+  const client = await createRequestClientFixture(t, (request, response) => {
+    const query = new URL(request.url!, 'http://127.0.0.1').searchParams
+    const remote = new URL(query.get('g')!)
+    assert.equal(remote.pathname, '/api/tools.json')
+    assert.equal(query.get('t'), '10')
+    assert.equal(remote.searchParams.get('t'), 'https://example.test/a?q=a&b=1')
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify(remote.hostname === '192.0.2.1' && reason !== null
+      ? { status: 'false', error: reason, ip: '', ping: { ...valid.ping, MinDelay: -1 } } : valid))
+  })
+  const { view } = createView(t, client.runTools)
+  await view.loadConfig()
+  view.target.value = 'https://example.test/a?q=a&b=1'
+  for (const message of ['Time Limit Exceeded!', 'Unable to resolve destination host', 'target empty!']) {
+    reason = message
+    await view.runCheck()
+    assert.equal(view.results.value[0]!.error, message)
+    assert.equal(view.results.value[0]!.result, null)
+    assert.equal(view.results.value.filter((row) => row.result?.status === 'true').length, 5)
+    assert.ok(view.results.value.every((row) => !row.loading))
+  }
+  reason = null
+  await view.runCheck()
+  assert.ok(view.results.value.every((row) => !row.error && row.result?.ping.AvgDelay === 0))
 })
 
 test('tools configuration reload cancels queued work and ignores late responses', async (t) => {

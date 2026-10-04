@@ -284,9 +284,21 @@ const isToolsResult = (value: unknown): value is ToolsResult => {
   if (!['SendPk', 'RevcPk', 'LossPk', 'MinDelay', 'AvgDelay', 'MaxDelay'].every(
     (key) => typeof ping[key] === 'number' && Number.isFinite(ping[key]) && ping[key] >= 0
   )) return false
-  return Number.isSafeInteger(ping.SendPk) && Number.isSafeInteger(ping.RevcPk) &&
-    Number.isInteger(ping.LossPk) && (ping.LossPk as number) <= 100 &&
-    (ping.RevcPk as number) <= (ping.SendPk as number)
+  const sent = ping.SendPk as number
+  const received = ping.RevcPk as number
+  if (!Number.isSafeInteger(sent) || !Number.isSafeInteger(received) || sent === 0 ||
+    received > sent || !Number.isInteger(ping.LossPk) || (ping.LossPk as number) > 100) return false
+  // Match the node's integer percentage without losing precision when safe
+  // counters are multiplied by 100. A successful result must include probes.
+  const expectedLoss = Number((BigInt(sent) - BigInt(received)) * 100n / BigInt(sent))
+  if (ping.LossPk !== expectedLoss) return false
+  // No received replies use failure placeholders rather than measured RTTs.
+  if (received === 0) return true
+  const minimum = ping.MinDelay as number
+  const average = ping.AvgDelay as number
+  const maximum = ping.MaxDelay as number
+  return minimum <= average && average <= maximum &&
+    (received !== 1 || minimum === maximum)
 }
 
 const runCheck = async () => {

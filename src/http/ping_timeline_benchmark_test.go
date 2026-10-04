@@ -3,11 +3,13 @@ package http
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"smartping/src/g"
 	"testing"
 	"time"
@@ -68,15 +70,61 @@ func BenchmarkPingHistoryTimeline(b *testing.B) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	for _, minutes := range []int{360, maxPingRangeMinutes} {
-		b.Run(fmt.Sprintf("%dMinutes", minutes), func(b *testing.B) {
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				timeline, err := newPingHistoryTimelineContext(ctx, start, minutes+1)
-				if err != nil || len(timeline.lastcheck) != minutes+1 || timeline.lastcheck[0] != "2026-01-01 00:00" {
-					b.Fatalf("timeline length=%d, err=%v", len(timeline.lastcheck), err)
+	for _, size := range []int{0, 1, 361, 1441, maxPingRangeMinutes + 1} {
+		b.Run(fmt.Sprintf("%dSamples", size), func(b *testing.B) {
+			want := expectedPingHistoryTimeline(start, size)
+			check := func(timeline pingHistoryTimeline, err error) {
+				b.Helper()
+				if err != nil || !reflect.DeepEqual(timeline, want) {
+					b.Fatalf("timeline changed labels, gaps, markers or query bounds: %v", err)
 				}
 			}
+			check(newPingHistoryTimelineContext(ctx, start, size))
+			b.ReportAllocs()
+			b.ResetTimer()
+			var last pingHistoryTimeline
+			for i := 0; i < b.N; i++ {
+				var err error
+				last, err = newPingHistoryTimelineContext(ctx, start, size)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.StopTimer()
+			check(last, nil)
 		})
+	}
+}
+
+func BenchmarkPingHistoryTimelineCancellation(b *testing.B) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, size := range []int{1, 361, maxPingRangeMinutes + 1} {
+		for _, tc := range pingTimelineCancellationCases() {
+			b.Run(fmt.Sprintf("%dSamples/%s", size, tc.name), func(b *testing.B) {
+				ctx, cancel := tc.new()
+				initial, err := newPingHistoryTimelineContext(ctx, start, size)
+				cancel()
+				if !errors.Is(err, tc.want) || !reflect.DeepEqual(initial, pingHistoryTimeline{}) {
+					b.Fatalf("cancellation published partial state: %v", err)
+				}
+				b.ReportAllocs()
+				b.ResetTimer()
+				var last pingHistoryTimeline
+				for i := 0; i < b.N; i++ {
+					// Include context creation and cancellation equally for both
+					// implementations; each in-progress case needs a fresh context.
+					ctx, cancel := tc.new()
+					last, err = newPingHistoryTimelineContext(ctx, start, size)
+					cancel()
+					if !errors.Is(err, tc.want) {
+						b.Fatal(err)
+					}
+				}
+				b.StopTimer()
+				if !reflect.DeepEqual(last, pingHistoryTimeline{}) {
+					b.Fatal("cancellation published partial state")
+				}
+			})
+		}
 	}
 }

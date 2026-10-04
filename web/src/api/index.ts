@@ -1,9 +1,13 @@
-import axios from 'axios'
+import axios, { type AxiosRequestConfig } from 'axios'
 import { handleNetworkError } from '@/utils/error'
 import { isRequestCanceled, normalizeRejectedRequest } from '@/utils/requestCancellation'
 import { normalizeRequestTimeout, resolveProxyClientTimeout } from '@/utils/requestTimeouts'
 
 const apiRequestTimeoutMs = normalizeRequestTimeout(import.meta.env.VITE_API_TIMEOUT)
+
+export interface ApiRequestConfig extends AxiosRequestConfig {
+  validateBusinessStatus?: boolean
+}
 
 const instance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
@@ -33,7 +37,8 @@ instance.interceptors.response.use(
       typeof res === 'object' && res !== null && 'status' in res ? res.status : undefined
     // 统一处理业务状态：'true' 字符串、true 或 200 数字都视为成功。
     const isSuccess = responseStatus === 'true' || responseStatus === true || responseStatus === 200
-    if (responseStatus !== undefined && !isSuccess) {
+    if (responseStatus !== undefined && !isSuccess &&
+      (response.config as ApiRequestConfig).validateBusinessStatus !== false) {
       throw handleNetworkError({ response: { status: response.status, data: res } })
     }
     return res

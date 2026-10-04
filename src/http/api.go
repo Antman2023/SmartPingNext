@@ -91,7 +91,13 @@ func configApiRoutes(mux *http.ServeMux) {
 				}
 
 				if timeIndex.timestamps == nil {
-					timeIndex = newPingTimelineIndex(lastcheck)
+					timeIndex, err = newPingTimelineIndexContext(r.Context(), lastcheck)
+					if err != nil {
+						rows.Close()
+						logrus.Error("[/api/ping.json] Index ", err)
+						http.Error(w, "Read ping data failed", http.StatusInternalServerError)
+						return
+					}
 				}
 				if idx, exists := timeIndex.lookup(l.Logtime); exists {
 					maxdelay[idx] = l.Maxdelay

@@ -14,6 +14,67 @@ import (
 	"time"
 )
 
+func expectedPingHistoryTimeline(start time.Time, size int) pingHistoryTimeline {
+	timeline := pingHistoryTimeline{
+		lastcheck: make([]string, size), maxdelay: make([]string, size), mindelay: make([]string, size),
+		avgdelay: make([]string, size), losspk: make([]string, size), populated: make([]bool, size),
+	}
+	for i := 0; i < size; i++ {
+		stamp := start.Add(time.Duration(i) * time.Minute).Format("2006-01-02 15:04")
+		timeline.lastcheck[i] = stamp
+		if i == 0 || stamp < timeline.queryStartLabel {
+			timeline.queryStartLabel = stamp
+		}
+		if i == 0 || stamp > timeline.queryEndLabel {
+			timeline.queryEndLabel = stamp
+		}
+		timeline.maxdelay[i], timeline.mindelay[i] = "-", "-"
+		timeline.avgdelay[i], timeline.losspk[i] = "-", "-"
+	}
+	return timeline
+}
+
+func TestPingTimelinePreservesFormattedLabelsAndIndependentResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, zone string
+		start      time.Time
+		size       int
+	}{
+		{"empty", "UTC", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), 0},
+		{"single", "UTC", time.Date(2026, 1, 1, 0, 0, 37, 0, time.UTC), 1},
+		{"maximum range", "Asia/Shanghai", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), maxPingRangeMinutes + 1},
+		{"clock forward", "America/New_York", time.Date(2011, 3, 13, 6, 30, 0, 0, time.UTC), 181},
+		{"clock rollback", "America/New_York", time.Date(2011, 11, 6, 5, 30, 0, 0, time.UTC), 181},
+		{"half hour rollback", "Australia/Lord_Howe", time.Date(2011, 4, 2, 14, 30, 0, 0, time.UTC), 181},
+		{"skipped calendar day", "Pacific/Apia", time.Date(2011, 12, 30, 9, 30, 0, 0, time.UTC), 181},
+		{"negative year", "UTC", time.Date(-1, 12, 30, 23, 30, 0, 0, time.UTC), 4096},
+		{"five digit year", "UTC", time.Date(9999, 12, 30, 23, 30, 0, 0, time.UTC), 4096},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			location, err := time.LoadLocation(tc.zone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			start := tc.start.In(location)
+			want := expectedPingHistoryTimeline(start, tc.size)
+			first, err := newPingHistoryTimelineContext(context.Background(), start, tc.size)
+			if err != nil || !reflect.DeepEqual(first, want) {
+				t.Fatalf("first timeline changed formatted labels, gaps, markers or query bounds: %v", err)
+			}
+			second, err := newPingHistoryTimelineContext(context.Background(), start.Add(time.Minute), tc.size)
+			if err != nil || !reflect.DeepEqual(second, expectedPingHistoryTimeline(start.Add(time.Minute), tc.size)) {
+				t.Fatalf("second timeline is invalid: %v", err)
+			}
+			if tc.size > 0 {
+				second.lastcheck[0], second.maxdelay[0], second.populated[0] = "changed", "0", true
+			}
+			if !reflect.DeepEqual(first, want) {
+				t.Fatal("building or modifying another timeline changed an earlier result")
+			}
+		})
+	}
+}
+
 // Cancel after the first successful context check, when initialization is
 // already in progress. The test does not depend on a particular batch size.
 type cancelAfterTimelineStartContext struct {

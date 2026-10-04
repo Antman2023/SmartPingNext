@@ -1,6 +1,9 @@
 package http
 
-import "sort"
+import (
+	"context"
+	"sort"
+)
 
 // pingTimelineIndex reuses the timeline for ordered minute labels. Most SQL
 // rows arrive in minute order, so an adjacent match avoids even a binary search.
@@ -13,17 +16,52 @@ type pingTimelineIndex struct {
 }
 
 func newPingTimelineIndex(timestamps []string) pingTimelineIndex {
-	return pingTimelineIndex{timestamps: timestamps, ordered: sort.StringsAreSorted(timestamps)}
+	index, _ := newPingTimelineIndexContext(context.Background(), timestamps)
+	return index
+}
+
+func newPingTimelineIndexContext(ctx context.Context, timestamps []string) (pingTimelineIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return pingTimelineIndex{}, err
+	}
+	index := pingTimelineIndex{timestamps: timestamps, ordered: true}
+	// Match sorted-label detection without leaving a long scan uninterruptible.
+	for position := len(timestamps) - 1; position > 0; position-- {
+		if position&255 == 0 {
+			if err := ctx.Err(); err != nil {
+				return pingTimelineIndex{}, err
+			}
+		}
+		if timestamps[position] < timestamps[position-1] {
+			index.ordered = false
+			break
+		}
+	}
+	if !index.ordered {
+		if err := ctx.Err(); err != nil {
+			return pingTimelineIndex{}, err
+		}
+		// The HTTP handler constructs the index only after a sample is read.
+		// Prepare fallback positions here so lookups never build an unchecked map.
+		positions := make(map[string]int, len(timestamps))
+		for position, stamp := range timestamps {
+			if position&255 == 0 {
+				if err := ctx.Err(); err != nil {
+					return pingTimelineIndex{}, err
+				}
+			}
+			positions[stamp] = position
+		}
+		index.positions = positions
+	}
+	if err := ctx.Err(); err != nil {
+		return pingTimelineIndex{}, err
+	}
+	return index, nil
 }
 
 func (index *pingTimelineIndex) lookup(timestamp string) (int, bool) {
 	if !index.ordered {
-		if index.positions == nil {
-			index.positions = make(map[string]int, len(index.timestamps))
-			for position, stamp := range index.timestamps {
-				index.positions[stamp] = position
-			}
-		}
 		position, found := index.positions[timestamp]
 		return position, found
 	}

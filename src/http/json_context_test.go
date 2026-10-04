@@ -83,6 +83,7 @@ var responseCancellationDriverID atomic.Uint64
 type responseCancellationDriver struct {
 	base           driver.Driver
 	afterRowsClose func()
+	afterRowsNext  func()
 	afterCommit    func()
 }
 
@@ -91,12 +92,13 @@ func (d *responseCancellationDriver) Open(name string) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &responseCancellationConn{Conn: conn, afterRowsClose: d.afterRowsClose, afterCommit: d.afterCommit}, nil
+	return &responseCancellationConn{Conn: conn, afterRowsClose: d.afterRowsClose, afterRowsNext: d.afterRowsNext, afterCommit: d.afterCommit}, nil
 }
 
 type responseCancellationConn struct {
 	driver.Conn
 	afterRowsClose func()
+	afterRowsNext  func()
 	afterCommit    func()
 }
 
@@ -106,10 +108,10 @@ func (c *responseCancellationConn) ExecContext(ctx context.Context, query string
 
 func (c *responseCancellationConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	rows, err := c.Conn.(driver.QueryerContext).QueryContext(ctx, query, args)
-	if err != nil || c.afterRowsClose == nil {
+	if err != nil || (c.afterRowsClose == nil && c.afterRowsNext == nil) {
 		return rows, err
 	}
-	return &responseCancellationRows{Rows: rows, afterClose: c.afterRowsClose}, nil
+	return &responseCancellationRows{Rows: rows, afterClose: c.afterRowsClose, afterNext: c.afterRowsNext}, nil
 }
 
 func (c *responseCancellationConn) BeginTx(ctx context.Context, options driver.TxOptions) (driver.Tx, error) {
@@ -123,11 +125,22 @@ func (c *responseCancellationConn) BeginTx(ctx context.Context, options driver.T
 type responseCancellationRows struct {
 	driver.Rows
 	afterClose func()
+	afterNext  func()
+}
+
+func (r *responseCancellationRows) Next(values []driver.Value) error {
+	err := r.Rows.Next(values)
+	if err == nil && r.afterNext != nil {
+		r.afterNext()
+	}
+	return err
 }
 
 func (r *responseCancellationRows) Close() error {
 	err := r.Rows.Close()
-	r.afterClose()
+	if r.afterClose != nil {
+		r.afterClose()
+	}
 	return err
 }
 

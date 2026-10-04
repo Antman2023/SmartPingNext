@@ -118,6 +118,10 @@ Closed monitoring detail dialogs reject delayed queries. Leaving the page cancel
 
 Historical Ping queries reuse ordered minute timelines to locate samples, reducing index memory for long ranges. Missing samples remain `-`, and measured zero latency and 100% loss retain their values. Non-monotonic timelines, such as those spanning a clock rollback, retain the original map-based lookup behavior.
 
+Ping timeline labels share request-local string buffers in batches of up to 256 minutes, reducing per-minute string allocations for long queries. Previously generated labels remain unchanged, and cancellation checks, the node's timezone and clock rollback handling retain their existing behavior.
+
+After reading the first Ping sample, timeline index preparation also checks cancellation and deadlines, with further checks every 256 labels during ordering detection and rollback-map construction. Cancellation discards unfinished indexes and closes the database cursor; successful queries still locate duplicate labels at their last occurrence.
+
 Alert history retains each responding node's last successful records for the same date query. If a node cannot be refreshed, its records remain visible and are marked "Refresh failed". A successful response replaces those records, including an empty list. Changing the date or reloading node configuration clears previous records. When every node fails to refresh, the last successful update time is preserved.
 
 Alert history validates archive dates and record timestamps before publishing a response. Impossible calendar dates, out-of-range time fields and invalid suffixes fail that node's refresh while preserving its previous successful data. Validation does not depend on the browser's timezone or rewrite node time labels. Stored seconds, fractional seconds, timezone suffixes and SQLite's 24-hour forms remain supported; MTR error text remains valid record content.
@@ -132,7 +136,9 @@ Alert date lists seek between distinct dates using the existing date index, redu
 
 Hostname resolution for online tools, scheduled Ping, mapping probes, and alert MTR waits up to 5 seconds. Caller cancellation or an earlier deadline ends resolution sooner. IPv4 literals skip DNS.
 
-Online diagnostics pause new checks while configuration reloads, then use the updated probe addresses and ports. Leaving the page cancels active requests and prevents late callbacks from starting new checks. Explicit node rejection messages, such as rate limits or resolution failures, appear on the corresponding row. Missing rejection messages and malformed success data still report an invalid response.
+Online diagnostics pause new checks while configuration reloads, then use the updated probe addresses and ports. Leaving the page cancels active requests and prevents late callbacks from starting new checks. Explicit node rejection messages in successful HTTP responses, such as rate limits or resolution failures, appear on the corresponding row. Missing rejection messages and malformed success data report an invalid response. HTTP errors and request cancellation retain their shared categories.
+
+Successful diagnostic statistics must also report packet loss consistent with their counters. When replies exist, minimum delay must not exceed average delay, and average must not exceed maximum; a single reply must have identical delay values. Success responses with no sent probes are rejected. Valid zero delays and total-loss placeholders remain supported, and an invalid node does not prevent other nodes from finishing.
 
 If a refresh of the same latency map query fails, the previous result and update time remain visible with a persistent warning. A successful refresh clears the warning; switching nodes or times clears the previous query's result. Node selection pauses during configuration reloads, and late callbacks for removed nodes or an unmounted page cannot start new queries.
 
