@@ -22,8 +22,12 @@ func historyReadFixture(t testing.TB) (*sql.DB, http.Handler) {
 }
 
 func historyReadFixtureWithDriver(t testing.TB, driverName string) (*sql.DB, http.Handler) {
+	return historyReadFixtureWithDSN(t, driverName, ":memory:")
+}
+
+func historyReadFixtureWithDSN(t testing.TB, driverName, dsn string) (*sql.DB, http.Handler) {
 	t.Helper()
-	db, err := sql.Open(driverName, ":memory:")
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}

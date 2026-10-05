@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="configRoot"
     v-loading="loadingConfig || saving"
     :element-loading-text="saving ? $t('common.saving') : $t('common.loading')"
     class="page-shell config-view"
@@ -619,6 +620,7 @@ let configRequestId = 0
 let saveAbortController: AbortController | null = null
 let passwordVerificationAbortController: AbortController | null = null
 
+const configRoot = shallowRef<HTMLElement | null>(null)
 const formConfig = createConfigDraft({
   Ver: '',
   Port: 8899,
@@ -721,12 +723,21 @@ const networkValidationKeys = new Set([
   'config.validationTopologyRule'
 ])
 
+let validationFocusRequestId = 0
 const focusValidationIssue = async (validationIssue: ConfigValidationIssue) => {
+  const requestId = ++validationFocusRequestId
+  const sourceConfigRequestId = configRequestId
   await nextTick()
+  if (isUnmounted || !configReady.value || saving.value || importExportBusy.value ||
+    requestId !== validationFocusRequestId || sourceConfigRequestId !== configRequestId ||
+    currentValidationIssue.value !== validationIssue) return
+
+  const root = configRoot.value
+  if (!root?.isConnected) return
   const targetId = networkValidationKeys.has(validationIssue.key)
     ? 'config-network-settings'
     : (validationTargetIds[validationIssue.key] ?? 'config-validation-summary')
-  const target = document.getElementById(targetId)
+  const target = root.querySelector<HTMLElement>(`#${targetId}`)
   if (!target) {
     return
   }
@@ -979,7 +990,7 @@ const handleSave = async () => {
     return
   }
   validationAttempted.value = true
-  const validationIssue = validateConfigForEdit(formConfig)
+  const validationIssue = currentValidationIssue.value
   if (validationIssue) {
     void focusValidationIssue(validationIssue)
     return

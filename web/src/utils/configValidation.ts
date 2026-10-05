@@ -40,8 +40,8 @@ const isIntegerInRange = (value: number, min: number, max: number) =>
 
 const DECIMAL_FLOAT_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
 
-const isPositiveFloatInRange = (value: string, max: number) => {
-  if (value !== value.trim() || !DECIMAL_FLOAT_PATTERN.test(value)) {
+const isPositiveFloatInRange = (value: unknown, max: number) => {
+  if (typeof value !== 'string' || value !== value.trim() || !DECIMAL_FLOAT_PATTERN.test(value)) {
     return false
   }
   const parsed = Number(value)
@@ -53,16 +53,16 @@ const hasURLUserInfo = (value: string): boolean => {
   return authority.includes('@')
 }
 
-const parseInteger = (value: string): number | null => {
-  if (!/^[+-]?\d+$/.test(value)) {
+const parseInteger = (value: unknown): number | null => {
+  if (typeof value !== 'string' || !/^[+-]?\d+$/.test(value)) {
     return null
   }
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) ? parsed : null
 }
 
-export const isValidIPv4 = (value: string): boolean => {
-  if (value !== value.trim()) {
+export const isValidIPv4 = (value: unknown): value is string => {
+  if (typeof value !== 'string' || value !== value.trim()) {
     return false
   }
   const parts = value.split('.')
@@ -111,7 +111,7 @@ const validateTopologyRule = (
   rule: TopologyConfig,
   config: Config
 ): ConfigValidationIssue | null => {
-  if (!isValidIPv4(rule.Addr) || !config.Network[rule.Addr] || !rule.Name.trim()) {
+  if (!isValidIPv4(rule.Addr) || !config.Network[rule.Addr] || typeof rule.Name !== 'string' || !rule.Name.trim()) {
     return issue('config.validationTopologyTarget', { source, target: rule.Addr || '-' })
   }
 
@@ -162,6 +162,14 @@ export const validateConfigForEdit = (config: Config): ConfigValidationIssue | n
     const value = config.Base[key as keyof typeof OPTIONAL_BASE_LIMITS]
     if (value !== undefined && !isIntegerInRange(value, limits.min, limits.max)) {
       return issue('config.validationBaseParameter', { name: key, ...limits })
+    }
+  }
+
+  // Go decodes every Base entry as int, including extension fields. Reject
+  // fractions and numbers outside JavaScript's safe integer range before saving.
+  for (const [name, value] of Object.entries(config.Base)) {
+    if (!Number.isSafeInteger(value)) {
+      return issue('config.validationBaseInteger', { name })
     }
   }
 

@@ -297,6 +297,7 @@ export default {
     validationArchive: '存档天数必须是 {min} 到 {max} 之间的整数',
     validationRefresh: '刷新频率必须是 {min} 到 {max} 分钟之间的整数',
     validationBaseParameter: '{name} 必须是 {min} 到 {max} 之间的整数',
+    validationBaseInteger: '{name} 必须是可精确表示的整数',
     validationLineWidth: '拓扑连线粗细必须大于 0 且不超过 20',
     validationSymbolSize: '拓扑形状大小必须大于 0 且不超过 500',
     validationToolLimit: '检测工具限定频率必须是 0 到 86400 秒之间的整数',

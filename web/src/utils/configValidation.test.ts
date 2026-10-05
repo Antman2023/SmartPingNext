@@ -77,6 +77,56 @@ test('validateConfigForEdit rejects invalid optional base values', () => {
   assert.equal(validateConfigForEdit(config)?.key, 'config.validationBaseParameter')
 })
 
+test('missing topology fields return validation issues instead of throwing', () => {
+  for (const [field, key] of [['Tline', 'config.validationLineWidth'], ['Tsymbolsize', 'config.validationSymbolSize']] as const) {
+    const config = makeConfig()
+    delete (config.Topology as unknown as Record<string, unknown>)[field]
+    assert.equal(validateConfigForEdit(config)?.key, key)
+  }
+  for (const field of ['Name', 'Addr', 'Thdchecksec', 'Thdoccnum', 'Thdavgdelay', 'Thdloss']) {
+    const config = makeConfig()
+    delete (config.Network[config.Addr]!.Topology[0] as unknown as Record<string, unknown>)[field]
+    const key = field === 'Name' || field === 'Addr' ? 'config.validationTopologyTarget' : 'config.validationTopologyRule'
+    assert.equal(validateConfigForEdit(config)?.key, key, field)
+    const wrongType = makeConfig()
+    const rule = wrongType.Network[wrongType.Addr]!.Topology[0] as unknown as Record<string, unknown>
+    rule[field] = field === 'Name' || field === 'Addr' ? 123 : Number(rule[field])
+    assert.equal(validateConfigForEdit(wrongType)?.key, key, `${field} numeric value`)
+  }
+  for (const value of [undefined, null, 1, {}, []]) {
+    const config = makeConfig()
+    ;(config.Topology as unknown as Record<string, unknown>).Tline = value
+    assert.equal(validateConfigForEdit(config)?.key, 'config.validationLineWidth')
+    const ruleConfig = makeConfig()
+    ;(ruleConfig.Network[ruleConfig.Addr]!.Topology[0] as unknown as Record<string, unknown>).Name = value
+    assert.equal(validateConfigForEdit(ruleConfig)?.key, 'config.validationTopologyTarget')
+    assert.equal(isValidIPv4(value), false)
+  }
+})
+
+test('base extensions require exactly representable integers and keep known limit messages', () => {
+  for (const name of ['custom', '__proto__', '__v_isReactive']) {
+    for (const value of [0.5, -0.5, Number.MAX_SAFE_INTEGER + 1, -Number.MAX_SAFE_INTEGER - 1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const config = makeConfig()
+      Object.defineProperty(config.Base, name, { value, enumerable: true, configurable: true })
+      const issue = validateConfigForEdit(config)
+      assert.equal(issue?.key, 'config.validationBaseInteger', `${name}/${value}`)
+      assert.equal(issue?.params?.name, name)
+    }
+    for (const value of [0, 1, -1, Number.MAX_SAFE_INTEGER, -Number.MAX_SAFE_INTEGER]) {
+      const config = makeConfig()
+      Object.defineProperty(config.Base, name, { value, enumerable: true, configurable: true })
+      assert.equal(validateConfigForEdit(config), null, `${name}/${value}`)
+    }
+  }
+  const config = makeConfig()
+  config.Base.Timeout = 1.5
+  assert.equal(validateConfigForEdit(config)?.key, 'config.validationTimeout')
+  config.Base.Timeout = 5
+  config.Base.PingCount = 1.5
+  assert.equal(validateConfigForEdit(config)?.key, 'config.validationBaseParameter')
+})
+
 test('topology display controls do not offer values rejected by validation', () => {
   assert.equal(CONFIG_LIMITS.topologyLine.min > 0, true)
   assert.equal(CONFIG_LIMITS.topologySymbol.min > 0, true)

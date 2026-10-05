@@ -112,7 +112,11 @@ go vet ./src/...
 
 Configuration imports accept files up to 16 MiB. Imported changes must be saved before they apply to the node. Password verification failures or timeouts during import and export preserve current edits.
 
+Missing topology display or alert rule fields produce the corresponding validation message while preserving the current draft. Base parameter extensions must also be safe integers. Fractions and numbers outside the exact integer range are rejected before import or save; corrected values can be retried.
+
 Saving, importing and exporting wait for a successful configuration load and pause during reloads. An active save, import or export also prevents configuration reloads from overwriting the current draft. After the page unmounts, late callbacks cannot start configuration requests, password verification or saves. Edits made while a save is pending remain in the draft; success confirms only the submitted snapshot.
+
+Failed save validation focuses an existing error within the current configuration page. Leaving the page, reloading, correcting the error or starting another operation prevents an old request from moving focus. Repeated validation uses only the latest focus request and respects the system's reduced-motion preference.
 
 After a leave confirmation returns, the configuration page checks save, import and export status again so an earlier dialog cannot interrupt an operation started later. Refreshing or closing the page requests a browser leave prompt for either unsaved changes or an active operation.
 
@@ -167,6 +171,8 @@ Caller cancellation and deadlines also interrupt requests waiting for ICMP initi
 ICMP read failures are retried after 10, 20, 40, and 80 milliseconds. The fifth consecutive failure closes the connection and releases requests still waiting for a response; a later probe opens a replacement on demand. Every successful read resets the consecutive error count. An old reader cannot retire a replacement connection.
 
 Ping, alert and mapping storage, as well as archive cleanup, also honor context cancellation and deadlines while waiting for shared database write access. Canceling queued work does not insert or delete records, and subsequent work can still acquire the lock. Queued tasks can exit promptly during service shutdown.
+
+Mapping rounds, result publication and storage also honor cancellation and deadlines while waiting for the mapping result lock. Rounds that exit before acquiring this lock retain existing results. Storage snapshots check cancellation every 256 copied samples, before each carrier's sort, after all sorting, and before and after JSON encoding. Cancellation discards partial snapshots without writing to the database. A single carrier's standard sort and standard JSON encoding must finish before cancellation can be observed.
 
 Service shutdown uses a 15-second grace period, stops accepting new connections, and allows existing HTTP requests to finish. Once that period expires, remaining HTTP connections are closed, canceling their requests and queued queries. An incomplete shutdown still returns an error and keeps the database open to avoid closing resources that may remain in use.
 
@@ -274,6 +280,8 @@ Ping history queries use the range of all minute labels in the elapsed-time time
 Ping history preparation honors client cancellation and deadlines. Already canceled requests skip timeline allocation; cancellation during preparation stops construction before database access and does not return partial history arrays. Parameter validation and successful response formats retain their existing rules.
 
 Ping and alert history reuse database row scan destinations within each request, reducing temporary allocations when reading many records. Empty results do not create scan objects. Strings and alert records are still retained by value, preserving measurements, archive dates, source metadata and error handling; allocation benchmarks are recorded in the [optimization review](docs/optimization-review.md).
+
+Ping records, alert dates and alert records check request cancellation and deadlines before processing the first row and then every 256 rows. Finished requests stop consuming buffered rows, close their cursors and release query resources without returning partial success. Subsequent queries can still use the database pool.
 
 Archive cleanup subtracts `Base.Archive` calendar days from the node's current local date, then deletes older Ping, alert and mapping records. Records on the cutoff date and newer records are retained. Midnight clock gaps and skipped dates do not normalize the cutoff into a different calendar day.
 

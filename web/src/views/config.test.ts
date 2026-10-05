@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import * as vue from 'vue'
@@ -18,9 +19,11 @@ const compiled = ts.transpileModule(compileScript(descriptor, { id: 'config-test
 }).outputText
 
 interface ConfigSetup {
+  configRoot: vue.Ref<HTMLElement | null>
   formConfig: Config
   password: vue.Ref<string>
   savedSnapshot: vue.Ref<string>
+  currentValidationIssue: vue.ComputedRef<validation.ConfigValidationIssue | null>
   saving: vue.Ref<boolean>
   loadingConfig: vue.Ref<boolean>
   configLoaded: vue.Ref<boolean>
@@ -74,6 +77,14 @@ function createView(t: test.TestContext) {
   const revokeObjectURL = t.mock.fn((_url: string) => {})
   const link = { href: '', download: '', click: t.mock.fn(() => {}) }
   const createElement = t.mock.fn((_tag: string) => link)
+  const focus = t.mock.fn((_options?: Parameters<HTMLElement['focus']>[0]) => {})
+  const scrollIntoView = t.mock.fn((_options?: Exclude<Parameters<HTMLElement['scrollIntoView']>[0], boolean>) => {})
+  const target = { focus, scrollIntoView }
+  const getElementById = t.mock.fn((_id: string) => target)
+  const querySelector = t.mock.fn((_selector: string): typeof target | null => target)
+  const configRoot = { isConnected: true, querySelector }
+  const nextTick = t.mock.fn(() => vue.nextTick())
+  const matchMedia = t.mock.fn((_query: string) => ({ matches: false }))
   const saveConfig = t.mock.fn(async (_config: Config, _password?: string, _signal?: AbortSignal): Promise<void> => {})
   const loadConfig = t.mock.fn(async (): Promise<Config | null> => ({
     Ver: 'test', Port: 8899, Name: 'local', Addr: '127.0.0.1', Mode: {},
@@ -96,6 +107,7 @@ function createView(t: test.TestContext) {
   const dependencies: Record<string, unknown> = {
     vue: {
       ...vue,
+      nextTick,
       onMounted: () => {},
       onUnmounted: (fn: () => void) => unmountCallbacks.push(fn)
     },
@@ -125,9 +137,9 @@ function createView(t: test.TestContext) {
     AbortController,
     Blob,
     URL: { createObjectURL, revokeObjectURL },
-    document: { createElement },
+    document: { createElement, getElementById },
     URLSearchParams,
-    window: { removeEventListener: () => {} },
+    window: { removeEventListener: () => {}, matchMedia },
     console: { error: () => {} },
     require: (name: string) => {
       assert.ok(name in dependencies, `Unexpected dependency: ${name}`)
@@ -137,6 +149,7 @@ function createView(t: test.TestContext) {
   const scope = vue.effectScope()
   t.after(() => scope.stop())
   const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
+  view.configRoot.value = configRoot as unknown as HTMLElement
   return {
     view,
     saveConfig,
@@ -149,11 +162,143 @@ function createView(t: test.TestContext) {
     createObjectURL,
     revokeObjectURL,
     createElement,
+    getElementById,
+    configRoot,
+    querySelector,
+    focus,
+    scrollIntoView,
+    matchMedia,
+    nextTick,
     link,
     leaveRoute: () => leaveRoute(),
     unmount: () => unmountCallbacks.forEach((fn) => fn())
   }
 }
+
+// The compiled component runs in another realm; let its awaited tick and all
+// promise continuations finish before checking DOM side effects.
+const flushValidationFocus = () => setImmediate()
+
+test('obsolete validation focus ignores lifecycle, corrected drafts and newer operations', async (t) => {
+  for (const state of ['unmount', 'detached', 'corrected', 'changed-issue', 'reload', 'failed-reload', 'pending-reload', 'import', 'pending-export']) {
+    const { view, loadConfig, unmount, nextTick, configRoot, querySelector, getElementById, focus, scrollIntoView, verifyConfigPassword, saveConfig } = createView(t)
+    await view.loadConfig()
+    let finishTick!: () => void
+    const rendering = new Promise<void>((resolve) => { finishTick = resolve })
+    nextTick.mock.mockImplementationOnce(() => rendering)
+    view.formConfig.Base.Timeout = 0
+    await view.handleSave()
+    assert.equal(nextTick.mock.callCount(), 1)
+    let finishOperation: (() => void) | undefined
+    let operation: Promise<void> | undefined
+    if (state === 'unmount') unmount()
+    if (state === 'detached') configRoot.isConnected = false
+    if (state === 'corrected') view.formConfig.Base.Timeout = 3
+    if (state === 'changed-issue') {
+      view.formConfig.Base.Timeout = 3
+      view.formConfig.Base.Refresh = 0
+    }
+    if (state === 'reload') await view.loadConfig()
+    if (state === 'failed-reload') {
+      loadConfig.mock.mockImplementationOnce(async () => null)
+      await view.loadConfig()
+    }
+    if (state === 'pending-reload') {
+      const loaded = (await loadConfig())!
+      loadConfig.mock.mockImplementationOnce(() => new Promise<Config>((resolve) => { finishOperation = () => resolve(loaded) }))
+      operation = view.loadConfig()
+    }
+    if (state === 'import') {
+      const imported = (await loadConfig())!
+      view.importExportPassword.value = 'password'
+      await view.handleImportFile({ raw: { text: async () => JSON.stringify(imported) } })
+    }
+    if (state === 'pending-export') {
+      verifyConfigPassword.mock.mockImplementationOnce(() => new Promise<'valid'>((resolve) => { finishOperation = () => resolve('valid') }))
+      view.importExportPassword.value = 'password'
+      operation = view.handleExport()
+    }
+    finishTick()
+    await rendering
+    await flushValidationFocus()
+    assert.equal(getElementById.mock.callCount(), 0, `${state}: global lookup`)
+    assert.equal(querySelector.mock.callCount(), 0, `${state}: scoped lookup`)
+    assert.equal(focus.mock.callCount(), 0, state)
+    assert.equal(scrollIntoView.mock.callCount(), 0, state)
+    assert.equal(saveConfig.mock.callCount(), 0)
+    finishOperation?.()
+    await operation
+  }
+})
+
+test('only the newest pending validation request focuses its current error', async (t) => {
+  const { view, nextTick, querySelector, getElementById, focus, scrollIntoView } = createView(t)
+  await view.loadConfig()
+  let finishFirst!: () => void
+  let finishSecond!: () => void
+  const first = new Promise<void>((resolve) => { finishFirst = resolve })
+  const second = new Promise<void>((resolve) => { finishSecond = resolve })
+  nextTick.mock.mockImplementationOnce(() => first)
+  nextTick.mock.mockImplementationOnce(() => second, 1)
+  view.formConfig.Base.Timeout = 0
+  await view.handleSave()
+  await view.handleSave()
+  finishFirst()
+  await first
+  await flushValidationFocus()
+  assert.equal(focus.mock.callCount(), 0)
+  assert.equal(querySelector.mock.callCount(), 0)
+  finishSecond()
+  await second
+  await flushValidationFocus()
+  assert.equal(getElementById.mock.callCount(), 0)
+  assert.equal(querySelector.mock.calls[0]!.arguments[0], '#config-timeout')
+  assert.equal(focus.mock.callCount(), 1)
+  assert.equal(focus.mock.calls[0]!.arguments[0]?.preventScroll, true)
+  assert.equal(scrollIntoView.mock.callCount(), 1)
+})
+
+test('current validation errors focus within their own page and respect reduced motion', async (t) => {
+  for (const category of ['base', 'network', 'mapping', 'summary']) {
+    for (const reducedMotion of [false, true]) {
+      const { view, nextTick, querySelector, getElementById, matchMedia, focus, scrollIntoView, saveConfig } = createView(t)
+      await view.loadConfig()
+      if (category === 'base') view.formConfig.Base.Timeout = 0
+      if (category === 'network') view.formConfig.Network['127.0.0.1']!.Name = ''
+      if (category === 'mapping') view.formConfig.Chinamap.Beijing = { ctcc: ['invalid'], cucc: [], cmcc: [] }
+      if (category === 'summary') view.formConfig.Base.PingCount = 0
+      matchMedia.mock.mockImplementation(() => ({ matches: reducedMotion }))
+      await view.handleSave()
+      await nextTick()
+      await flushValidationFocus()
+      assert.equal(getElementById.mock.callCount(), 0)
+      const expected = category === 'base' ? '#config-timeout' : category === 'network' ? '#config-network-settings' : category === 'mapping' ? '#config-mapping-settings' : '#config-validation-summary'
+      assert.equal(querySelector.mock.calls[0]!.arguments[0], expected)
+      assert.equal(focus.mock.callCount(), 1)
+      assert.equal(focus.mock.calls[0]!.arguments[0]?.preventScroll, true)
+      assert.equal(scrollIntoView.mock.calls[0]!.arguments[0]?.behavior, reducedMotion ? 'auto' : 'smooth')
+      assert.equal(scrollIntoView.mock.calls[0]!.arguments[0]?.block, 'center')
+      assert.equal(matchMedia.mock.calls[0]!.arguments[0], '(prefers-reduced-motion: reduce)')
+      assert.equal(saveConfig.mock.callCount(), 0)
+    }
+  }
+})
+
+test('validation focus tolerates absent page roots and missing field elements', async (t) => {
+  for (const missing of ['root', 'target']) {
+    const { view, nextTick, querySelector, getElementById, focus, scrollIntoView } = createView(t)
+    await view.loadConfig()
+    if (missing === 'root') view.configRoot.value = null
+    if (missing === 'target') querySelector.mock.mockImplementation(() => null)
+    view.formConfig.Base.Timeout = 0
+    await view.handleSave()
+    await nextTick()
+    await flushValidationFocus()
+    assert.equal(getElementById.mock.callCount(), 0)
+    assert.equal(focus.mock.callCount(), 0)
+    assert.equal(scrollIntoView.mock.callCount(), 0)
+  }
+})
 
 test('configuration leave confirmations cannot interrupt operations started while confirming', async (t) => {
   for (const operation of ['save', 'import', 'export']) {
@@ -1241,6 +1386,119 @@ test('config import rejects oversized files before authentication and permits a 
   assert.equal(view.importExportPassword.value, '')
 })
 
+test('imports report missing topology fields without altering active drafts and can retry', async (t) => {
+  const cases = [
+    ['display', 'Tline', 'config.validationLineWidth'],
+    ['display', 'Tsymbolsize', 'config.validationSymbolSize'],
+    ['rule', 'Name', 'config.validationTopologyTarget'],
+    ['rule', 'Addr', 'config.validationTopologyTarget'],
+    ['rule', 'Thdchecksec', 'config.validationTopologyRule'],
+    ['rule', 'Thdoccnum', 'config.validationTopologyRule'],
+    ['rule', 'Thdavgdelay', 'config.validationTopologyRule'],
+    ['rule', 'Thdloss', 'config.validationTopologyRule']
+  ] as const
+  for (const [kind, field, expected] of cases) {
+    const { view, showError, showSuccess, saveConfig } = createView(t)
+    await view.loadConfig()
+    view.formConfig.Base.Refresh = 10
+    view.showEditNode(view.networkList.value.find((row) => row.isSelf)!)
+    view.editNodeName.value = 'pending edit'
+    const before = JSON.stringify(view.formConfig)
+    const saved = view.savedSnapshot.value
+    const candidate = JSON.parse(before) as Config
+    candidate.Network['192.0.2.1'] = { Name: 'remote', Addr: '192.0.2.1', Smartping: true, Ping: [], Topology: [] }
+    candidate.Network['127.0.0.1']!.Topology = [{ Name: 'remote', Addr: '192.0.2.1', Thdchecksec: '900', Thdoccnum: '3', Thdavgdelay: '200', Thdloss: '30' }]
+    const malformed = JSON.parse(JSON.stringify(candidate)) as Config
+    const dictionary = (kind === 'display' ? malformed.Topology : malformed.Network['127.0.0.1']!.Topology[0]) as unknown as Record<string, string>
+    delete dictionary[field]
+    view.importExportPassword.value = 'password'
+    await view.handleImportFile({ raw: { text: async () => JSON.stringify(malformed) } })
+    assert.equal(showError.mock.calls[0]!.arguments[0], expected, `${kind}/${field}`)
+    assert.equal(showSuccess.mock.callCount(), 0)
+    assert.equal(JSON.stringify(view.formConfig), before)
+    assert.equal(view.savedSnapshot.value, saved)
+    assert.equal(view.isDirty.value, true)
+    assert.equal(view.editNodeVisible.value, true)
+    assert.equal(view.editNodeName.value, 'pending edit')
+    assert.equal(view.importing.value, false)
+    assert.equal(view.importExportPassword.value, '')
+    assert.equal(saveConfig.mock.callCount(), 0)
+    view.importExportPassword.value = 'password'
+    await view.handleImportFile({ raw: { text: async () => JSON.stringify(candidate) } })
+    assert.equal(showError.mock.callCount(), 1)
+    assert.equal(showSuccess.mock.callCount(), 1)
+    assert.equal(view.editNodeVisible.value, false)
+    view.password.value = 'password'
+    await view.handleSave()
+    assert.equal(saveConfig.mock.callCount(), 1)
+    assert.equal(view.isDirty.value, false)
+  }
+})
+
+test('saving checks extension integers without submitting or discarding the draft', async (t) => {
+  for (const name of ['custom', '__proto__']) {
+    for (const value of [0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const { view, saveConfig, querySelector, focus, showSuccess } = createView(t)
+      await view.loadConfig()
+      const saved = view.savedSnapshot.value
+      const base = view.formConfig.Base as unknown as Record<string, number>
+      base[name] = value
+      view.password.value = 'password'
+      await view.handleSave()
+      await flushValidationFocus()
+      assert.equal(saveConfig.mock.callCount(), 0)
+      assert.equal(view.saving.value, false)
+      assert.equal(view.password.value, 'password')
+      assert.equal(view.currentValidationIssue.value?.key, 'config.validationBaseInteger')
+      assert.equal(view.currentValidationIssue.value?.params?.name, name)
+      assert.equal(view.savedSnapshot.value, saved)
+      assert.equal(view.isDirty.value, true)
+      assert.equal(base[name], value)
+      assert.equal(querySelector.mock.calls[0]!.arguments[0], '#config-validation-summary')
+      assert.equal(focus.mock.callCount(), 1)
+      base[name] = 2
+      assert.equal(view.currentValidationIssue.value, null)
+      await view.handleSave()
+      assert.equal(saveConfig.mock.callCount(), 1)
+      assert.equal((saveConfig.mock.calls[0]!.arguments[0].Base as unknown as Record<string, number>)[name], 2)
+      assert.equal(view.isDirty.value, false)
+      assert.equal(view.password.value, '')
+      assert.equal(showSuccess.mock.callCount(), 1)
+    }
+  }
+})
+
+test('base extension imports reject fractional and imprecise integers before replacing a draft', async (t) => {
+  for (const value of [0.5, -0.5, Number.MAX_SAFE_INTEGER + 1, -Number.MAX_SAFE_INTEGER - 1]) {
+    const { view, showError, showSuccess, saveConfig } = createView(t)
+    await view.loadConfig()
+    view.formConfig.Base.Refresh = 10
+    const before = JSON.stringify(view.formConfig)
+    const saved = view.savedSnapshot.value
+    const candidate = JSON.parse(before) as Config
+    ;(candidate.Base as unknown as Record<string, number>).__v_isReactive = value
+    view.importExportPassword.value = 'password'
+    await view.handleImportFile({ raw: { text: async () => JSON.stringify(candidate) } })
+    assert.equal(showError.mock.calls[0]!.arguments[0], 'config.validationBaseInteger')
+    assert.equal(showSuccess.mock.callCount(), 0)
+    assert.equal(JSON.stringify(view.formConfig), before)
+    assert.equal(view.savedSnapshot.value, saved)
+    assert.equal(view.isDirty.value, true)
+    assert.equal(view.importing.value, false)
+    ;(candidate.Base as unknown as Record<string, number>).__v_isReactive = -1
+    view.importExportPassword.value = 'password'
+    await view.handleImportFile({ raw: { text: async () => JSON.stringify(candidate) } })
+    assert.equal(showError.mock.callCount(), 1)
+    assert.equal(showSuccess.mock.callCount(), 1)
+    assert.equal((view.formConfig.Base as unknown as Record<string, number>).__v_isReactive, -1)
+    view.password.value = 'password'
+    await view.handleSave()
+    assert.equal(saveConfig.mock.callCount(), 1)
+    assert.equal((saveConfig.mock.calls[0]!.arguments[0].Base as unknown as Record<string, number>).__v_isReactive, -1)
+    assert.equal(view.isDirty.value, false)
+  }
+})
+
 test('config imports normalize Go nil collections and still reject malformed lists', async (t) => {
   const { view, showError, showSuccess } = createView(t)
   await view.loadConfig()
@@ -1634,6 +1892,63 @@ test('topology editing keeps rule extensions and existing order before newly sel
   assert.equal(firstRule['__proto__'], 'own-one')
   assert.equal(firstRule.Thdavgdelay, '300')
   assert.equal(view.isDirty.value, false)
+})
+
+test('rule aliases stay observable after collection replacement and removal', async (t) => {
+  const { view, saveConfig, showError } = createView(t)
+  await view.loadConfig()
+  for (const [index, name] of ['one', 'two'].entries()) {
+    const addr = `192.0.2.${index + 1}`
+    view.formConfig.Network[addr] = { Name: name, Addr: addr, Smartping: true, Ping: [], Topology: [] }
+  }
+  const local = view.formConfig.Network['127.0.0.1']!
+  const other = view.formConfig.Network['192.0.2.1']!
+  const makeRule = () => ({ Name: 'two', Addr: '192.0.2.2', Thdchecksec: '900', Thdoccnum: '3', Thdavgdelay: '200', Thdloss: '30', __v_isReactive: 'data' })
+  local.Topology.push(makeRule())
+  local.Topology[0]!.Thdavgdelay = '250'
+  const shared = local.Topology[0]!
+  other.Topology = [shared]
+  assert.equal(other.Topology[0], shared)
+  const save = async () => {
+    view.password.value = 'password'
+    await view.handleSave()
+    assert.equal(showError.mock.callCount(), 0)
+    assert.equal(view.isDirty.value, false)
+  }
+  await save()
+  shared.Thdavgdelay = '300'
+  assert.equal(other.Topology[0]!.Thdavgdelay, '300')
+  assert.equal(view.isDirty.value, true)
+  shared.Thdavgdelay = '250'
+  assert.equal(view.isDirty.value, false)
+  local.Topology = []
+  await save()
+  shared.Thdloss = '25'
+  assert.equal(view.isDirty.value, true)
+  assert.equal(other.Topology[0]!.Thdloss, '25')
+  shared.Thdloss = '30'
+  assert.equal(view.isDirty.value, false)
+  other.Topology.splice(0, 1)
+  await save()
+  shared.Thdloss = '20'
+  assert.equal(view.isDirty.value, false)
+  for (const insert of [
+    () => local.Topology.push(makeRule()),
+    () => local.Topology.unshift(makeRule()),
+    () => local.Topology.splice(0, 0, makeRule()),
+    () => { local.Topology[0] = makeRule() }
+  ]) {
+    insert()
+    await save()
+    const inserted = local.Topology[0] as unknown as Record<string, string>
+    assert.equal(inserted.__v_isReactive, 'data')
+    inserted.__v_isReactive = 'changed'
+    assert.equal(view.isDirty.value, true)
+    inserted.__v_isReactive = 'data'
+    assert.equal(view.isDirty.value, false)
+    local.Topology.length = 0
+  }
+  assert.equal(saveConfig.mock.callCount(), 7)
 })
 
 test('failed config save preserves the saved baseline and supports retry', async (t) => {

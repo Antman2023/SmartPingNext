@@ -299,6 +299,7 @@ export default {
     validationArchive: 'Archive duration must be an integer from {min} to {max} days',
     validationRefresh: 'Refresh interval must be an integer from {min} to {max} minutes',
     validationBaseParameter: '{name} must be an integer from {min} to {max}',
+    validationBaseInteger: '{name} must be an integer that can be represented exactly',
     validationLineWidth: 'Topology line width must be greater than 0 and no more than 20',
     validationSymbolSize: 'Topology symbol size must be greater than 0 and no more than 500',
     validationToolLimit: 'Tool rate limit must be an integer from 0 to 86400 seconds',

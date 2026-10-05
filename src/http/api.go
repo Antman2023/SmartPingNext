@@ -82,7 +82,16 @@ func configApiRoutes(mux *http.ServeMux) {
 			var timeIndex pingTimelineIndex
 			var l *g.PingLog
 
-			for rows.Next() {
+			// Observe cancellation while consuming rows already buffered by the driver.
+			for readCount := 0; rows.Next(); readCount++ {
+				if readCount&255 == 0 {
+					if err := r.Context().Err(); err != nil {
+						rows.Close()
+						logrus.Error("[/api/ping.json] Rows ", err)
+						http.Error(w, "Read ping data failed", http.StatusInternalServerError)
+						return
+					}
+				}
 				if l == nil {
 					l = new(g.PingLog)
 				}
@@ -220,7 +229,15 @@ func configApiRoutes(mux *http.ServeMux) {
 			return
 		} else {
 			var date *string
-			for rows.Next() {
+			for readCount := 0; rows.Next(); readCount++ {
+				if readCount&255 == 0 {
+					if err := r.Context().Err(); err != nil {
+						rows.Close()
+						logrus.Error("[/api/alert.json] Dates ", err)
+						http.Error(w, "Read alert dates failed", http.StatusInternalServerError)
+						return
+					}
+				}
 				if date == nil {
 					date = new(string)
 				}
@@ -250,7 +267,15 @@ func configApiRoutes(mux *http.ServeMux) {
 			return
 		} else {
 			var l *g.AlertLog
-			for rows.Next() {
+			for readCount := 0; rows.Next(); readCount++ {
+				if readCount&255 == 0 {
+					if err := r.Context().Err(); err != nil {
+						rows.Close()
+						logrus.Error("[/api/alert.json] Rows ", err)
+						http.Error(w, "Read alert data failed", http.StatusInternalServerError)
+						return
+					}
+				}
 				if l == nil {
 					l = &g.AlertLog{Fromname: config.Name, Fromip: config.Addr}
 				}

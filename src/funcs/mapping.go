@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"smartping/src/g"
+	"smartping/src/internal/contextlock"
 	"smartping/src/nettools"
 	"sort"
 	"strconv"
@@ -16,7 +17,7 @@ import (
 )
 
 var (
-	MapLock   = new(sync.Mutex)
+	MapLock   = new(contextlock.Mutex)
 	MapStatus map[string][]g.MapVal
 )
 
@@ -42,11 +43,16 @@ func MappingContext(ctx context.Context) {
 	defer atomic.StoreInt32(&mappingRunning, 0)
 
 	var wg sync.WaitGroup
-	config := g.ConfigSnapshot()
+	config, err := g.ConfigSnapshotContext(ctx)
+	if err != nil {
+		return
+	}
 	workerLimit := boundedBaseInt(config, "MappingConcurrency", defaultMappingConcurrency, 1, 64)
 	probeCount := boundedBaseInt(config, "MappingProbeCount", defaultMappingProbeCount, 1, 20)
 	sem := make(chan struct{}, workerLimit)
-	MapLock.Lock()
+	if err := MapLock.LockContext(ctx); err != nil {
+		return
+	}
 	MapStatus = map[string][]g.MapVal{}
 	MapLock.Unlock()
 	logrus.Debug("[func:Mapping]", config.Chinamap)
@@ -137,18 +143,27 @@ func MappingTaskContext(ctx context.Context, carrier string, province string, ip
 			statMap = append(statMap, stat)
 		}
 	}
-	storeMappingResult(carrier, province, aggregateMappingDelay(statMap))
+	if err := storeMappingResultContext(ctx, carrier, province, aggregateMappingDelay(statMap)); err != nil {
+		return
+	}
 	logrus.Info("Finish MappingTask " + carrier + " " + province + "..")
 }
 
 func storeMappingResult(carrier, province string, value float64) {
+	_ = storeMappingResultContext(context.Background(), carrier, province, value)
+}
+
+func storeMappingResultContext(ctx context.Context, carrier, province string, value float64) error {
+	if err := MapLock.LockContext(ctx); err != nil {
+		return err
+	}
+	defer MapLock.Unlock()
 	gMapVal := g.MapVal{Name: province, Value: value}
-	MapLock.Lock()
 	if MapStatus == nil {
 		MapStatus = make(map[string][]g.MapVal)
 	}
 	MapStatus[carrier] = append(MapStatus[carrier], gMapVal)
-	MapLock.Unlock()
+	return nil
 }
 
 func aggregateMappingDelay(stats []g.PingSt) float64 {
@@ -179,19 +194,64 @@ func aggregateMappingDelay(stats []g.PingSt) float64 {
 }
 
 func mappingStatusSnapshot() map[string][]g.MapVal {
-	MapLock.Lock()
-	snapshot := make(map[string][]g.MapVal, len(MapStatus))
-	for carrier, values := range MapStatus {
-		snapshot[carrier] = append([]g.MapVal(nil), values...)
-	}
-	MapLock.Unlock()
+	snapshot, _ := mappingStatusSnapshotContext(context.Background())
+	return snapshot
+}
 
+func mappingStatusSnapshotContext(ctx context.Context) (map[string][]g.MapVal, error) {
+	snapshot, err := copyMappingStatusContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := sortMappingStatusSnapshotContext(ctx, snapshot); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func copyMappingStatusContext(ctx context.Context) (map[string][]g.MapVal, error) {
+	if err := MapLock.LockContext(ctx); err != nil {
+		return nil, err
+	}
+	defer MapLock.Unlock()
+	snapshot := make(map[string][]g.MapVal, len(MapStatus))
+	cancellable := ctx.Done() != nil
+	for carrier, values := range MapStatus {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !cancellable || len(values) == 0 {
+			// Keep the legacy nil representation for empty carrier slices.
+			snapshot[carrier] = append([]g.MapVal(nil), values...)
+			continue
+		}
+		copied := make([]g.MapVal, len(values))
+		for start := 0; start < len(values); start += 256 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			copy(copied[start:min(start+256, len(values))], values[start:min(start+256, len(values))])
+		}
+		snapshot[carrier] = copied
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func sortMappingStatusSnapshotContext(ctx context.Context, snapshot map[string][]g.MapVal) error {
 	for carrier := range snapshot {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		sort.Slice(snapshot[carrier], func(i, j int) bool {
 			return snapshot[carrier][i].Name < snapshot[carrier][j].Name
 		})
 	}
-	return snapshot
+	// A standard sort cannot be interrupted; observe cancellation before the
+	// next carrier or before returning the completed snapshot.
+	return ctx.Err()
 }
 
 func MapPingStorage() {
@@ -205,11 +265,20 @@ func MapPingStorageContext(ctx context.Context) error {
 		return err
 	}
 	logrus.Info("Start MapPingStorage...")
-	snapshot := mappingStatusSnapshot()
+	snapshot, err := mappingStatusSnapshotContext(ctx)
+	if err != nil {
+		return err
+	}
 	logrus.Debug(snapshot)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	jdata, err := json.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("encode mapping result: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	sql := "REPLACE INTO [mappinglog] (logtime, mapjson) values(?, ?)"
 	if err := g.DLock.LockContext(ctx); err != nil {

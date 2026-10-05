@@ -6,14 +6,21 @@ const observedMembers = new WeakSet<object>()
 const observedRules = new WeakSet<object>()
 
 interface RecordState {
-  revision: Ref<number>
+  revision: Ref<number> | null
   version: number
   observe: (value: unknown) => unknown
 }
 const recordStates = new WeakMap<object, RecordState>()
 const identity = (value: unknown) => value
-const trackRecord = (target: object) => { void recordStates.get(target)!.revision.value }
-const updateRecord = (state: RecordState) => { state.revision.value = ++state.version }
+const createRecordState = (observe = identity): RecordState => ({ revision: null, version: 0, observe })
+const trackRecord = (target: object) => {
+  const state = recordStates.get(target)!
+  void (state.revision ??= ref(state.version)).value
+}
+const updateRecord = (state: RecordState) => {
+  state.version++
+  if (state.revision) state.revision.value = state.version
+}
 const recordHandler: ProxyHandler<object> = {
   get(target, key, receiver) {
     trackRecord(target)
@@ -56,7 +63,7 @@ const recordHandler: ProxyHandler<object> = {
 // Dictionary keys are data, including names reserved by Vue's object proxy.
 // Keep the revision outside the data object and share proxy handlers, so each
 // rule needs neither a Map nor a separate set of handler closures.
-function reactiveRecord<T extends object>(record: T, observeValue?: (value: T[keyof T]) => T[keyof T]): T {
+function reactiveRecord<T extends object>(record: T, observeValue?: (value: T[keyof T]) => T[keyof T], sharedState?: RecordState): T {
   if (observedRecords.has(record)) return record
   const target = Object.create(null) as T
   for (const key of Object.keys(record)) {
@@ -66,10 +73,9 @@ function reactiveRecord<T extends object>(record: T, observeValue?: (value: T[ke
     const value = ('value' in descriptor ? descriptor.value : Reflect.get(record, key)) as T[keyof T]
     Reflect.set(target, key, observeValue ? observeValue(value) : value)
   }
-  recordStates.set(target, {
-    revision: ref(0), version: 0,
-    observe: observeValue ? (value) => observeValue(value as T[keyof T]) : identity
-  })
+  recordStates.set(target, sharedState ?? createRecordState(
+    observeValue ? (value) => observeValue(value as T[keyof T]) : identity
+  ))
   const observed = new Proxy(target, recordHandler as ProxyHandler<T>)
   observedRecords.add(observed)
   return observed
@@ -85,15 +91,23 @@ function observeField<T extends object, K extends keyof T>(target: T, key: K, ob
   })
 }
 
+const ruleArrayHandler: ProxyHandler<TopologyConfig[]> = {
+  set(target, key, value, receiver) {
+    const index = typeof key === 'string' ? Number(key) : NaN
+    const isIndex = Number.isInteger(index) && index >= 0 && index < 0xffffffff && String(index) === key
+    const observed = isIndex ? reactiveRecord(value, undefined, recordStates.get(target)!) : value
+    return Reflect.set(target, key, observed, receiver)
+  }
+}
+
 function reactiveRules(rules: TopologyConfig[]): TopologyConfig[] {
   if (observedRules.has(rules)) return rules
-  const observed = new Proxy(shallowReactive(Array.from(rules, (rule) => reactiveRecord(rule))), {
-    set(target, key, value, receiver) {
-      const index = typeof key === 'string' ? Number(key) : NaN
-      const isIndex = Number.isInteger(index) && index >= 0 && index < 0xffffffff && String(index) === key
-      return Reflect.set(target, key, isIndex ? reactiveRecord(value) : value, receiver)
-    }
-  })
+  // Rules are validated and serialized as a collection. Share its revision
+  // instead of retaining a separate Vue ref and dependency for every rule.
+  const state = createRecordState()
+  const target = shallowReactive(Array.from(rules, (rule) => reactiveRecord(rule, undefined, state)))
+  recordStates.set(target, state)
+  const observed = new Proxy(target, ruleArrayHandler)
   observedRules.add(observed)
   return observed
 }
