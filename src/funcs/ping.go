@@ -172,26 +172,27 @@ func runPingRound(roundTime time.Time) {
 }
 
 func runPingRoundContext(ctx context.Context, roundTime time.Time) {
-	config := g.ConfigSnapshot()
-	pingCount, pingInterval, pingTimeout, pingStagger := resolvePingRoundConfig(config)
+	config, err := g.PingRoundSnapshotContext(ctx)
+	if err != nil {
+		return
+	}
+	pingCount, pingInterval, pingTimeout, pingStagger := resolvePingRoundConfig(g.Config{Base: config.Base})
 	logtime := roundTime.Format("2006-01-02 15:04")
-	selfConfig := config.Network[config.Addr]
 
 	var wg sync.WaitGroup
 	validIndex := 0
-	for _, target := range selfConfig.Ping {
+	for _, target := range config.Targets {
 		if ctx.Err() != nil {
 			break
 		}
-		t, ok := config.Network[target]
-		if !ok || strings.TrimSpace(t.Addr) == "" {
-			logrus.Warnf("[func:Ping] Skip invalid ping target: %q", target)
+		if strings.TrimSpace(target.Addr) == "" {
+			logrus.Warnf("[func:Ping] Skip invalid ping target: %q", target.Key)
 			continue
 		}
 		targetOffset := pingTargetOffset(validIndex, pingStagger, pingInterval)
 		validIndex++
 		wg.Add(1)
-		go PingTaskContext(ctx, t, pingCount, pingInterval, pingTimeout, targetOffset, roundTime, logtime, &wg)
+		go PingTaskContext(ctx, g.NetworkMember{Addr: target.Addr}, pingCount, pingInterval, pingTimeout, targetOffset, roundTime, logtime, &wg)
 	}
 	wg.Wait()
 }

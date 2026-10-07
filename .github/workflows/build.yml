@@ -34,7 +34,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
@@ -72,9 +72,44 @@ jobs:
       - name: Vet backend
         run: go vet ./src/...
 
+  frontend-compatibility:
+    name: Frontend Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.19.0", "22.13.0"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup minimum supported Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies with engine checks
+        working-directory: web
+        run: npm ci --engine-strict
+
+      - name: Lint frontend
+        working-directory: web
+        run: npm run lint
+
+      - name: Test frontend
+        working-directory: web
+        run: npm test
+
+      - name: Build frontend
+        working-directory: web
+        run: npm run build
+
   build:
     name: Build ${{ matrix.os }}-${{ matrix.arch }}
-    needs: quality
+    needs: [quality, frontend-compatibility]
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -192,7 +227,7 @@ jobs:
 
   docker:
     name: Build Docker Image
-    needs: quality
+    needs: [quality, frontend-compatibility]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:

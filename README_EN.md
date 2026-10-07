@@ -68,7 +68,7 @@ File logs are routed to `info.log`, `debug.log`, and `error.log`. Each file rota
 
 ### Build from Source
 
-Requires Go 1.24+ and Node.js 20.19+ or 22.12+.
+Requires Go 1.24+ and Node.js 20.x (20.19 or later), 22.x (22.13 or later), or version 24 and above.
 
 ```bash
 # Frontend

@@ -158,7 +158,11 @@ func configApiRoutes(mux *http.ServeMux) {
 			return
 		}
 		preout := make(map[string]string)
-		_, selfConfig := g.LocalNetworkSnapshot()
+		_, selfConfig, err := g.LocalNetworkSnapshotContext(r.Context())
+		if err != nil {
+			http.Error(w, "Check topology status failed", http.StatusInternalServerError)
+			return
+		}
 		for _, v := range selfConfig.Topology {
 			healthy, err := funcs.CheckAlertStatusContext(r.Context(), v)
 			if errors.Is(err, funcs.ErrNoAlertSamples) {

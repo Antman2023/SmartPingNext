@@ -1041,8 +1041,10 @@ func TestSaveCloudConfigDoesNotOverwriteNewerLocalConfig(t *testing.T) {
 
 type observedConfigContext struct {
 	context.Context
-	checked chan struct{}
-	once    sync.Once
+	checked  chan struct{}
+	once     sync.Once
+	waiting  chan struct{}
+	waitOnce sync.Once
 }
 
 func (ctx *observedConfigContext) Err() error {
@@ -1051,9 +1053,14 @@ func (ctx *observedConfigContext) Err() error {
 	return err
 }
 
+func (ctx *observedConfigContext) Done() <-chan struct{} {
+	ctx.waitOnce.Do(func() { close(ctx.waiting) })
+	return ctx.Context.Done()
+}
+
 func TestApplyCloudConfigCanceledWhileWaitingForSave(t *testing.T) {
-	for _, changed := range []bool{false, true} {
-		t.Run(fmt.Sprint("changed=", changed), func(t *testing.T) {
+	for _, scenario := range []struct{ changed, deadline bool }{{}, {changed: true}, {deadline: true}, {changed: true, deadline: true}} {
+		t.Run(fmt.Sprintf("changed=%v/deadline=%v", scenario.changed, scenario.deadline), func(t *testing.T) {
 			withGlobalConfigState(t, func() {
 				const endpoint = "http://127.0.0.1/config.json"
 				Root = t.TempDir()
@@ -1077,25 +1084,59 @@ func TestApplyCloudConfigCanceledWhileWaitingForSave(t *testing.T) {
 					t.Fatal(err)
 				}
 				downloaded := cloneConfig(original)
-				if changed {
+				if scenario.changed {
 					downloaded.Base["Archive"] = 60
 				}
 				base, cancel := context.WithCancel(context.Background())
+				wantErr := context.Canceled
+				if scenario.deadline {
+					cancel()
+					base, cancel = context.WithTimeout(context.Background(), 150*time.Millisecond)
+					wantErr = context.DeadlineExceeded
+				}
 				defer cancel()
-				ctx := &observedConfigContext{Context: base, checked: make(chan struct{})}
+				ctx := &observedConfigContext{Context: base, checked: make(chan struct{}), waiting: make(chan struct{})}
 				done := make(chan error, 1)
 				configSaveLock.Lock()
+				held, finished := true, false
+				defer func() {
+					cancel()
+					if held {
+						configSaveLock.Unlock()
+					}
+					if !finished {
+						select {
+						case <-done:
+						case <-time.After(time.Second):
+							t.Error("cloud apply did not exit after cleanup")
+						}
+					}
+				}()
 				go func() { done <- applyCloudConfigContext(ctx, downloaded, endpoint) }()
 				select {
 				case <-ctx.checked:
+					if err := base.Err(); err != nil {
+						t.Fatalf("cloud apply started with a finished context: %v", err)
+					}
 				case <-time.After(time.Second):
-					configSaveLock.Unlock()
 					t.Fatal("cloud apply did not start")
 				}
-				cancel()
-				configSaveLock.Unlock()
-				if err := <-done; !errors.Is(err, context.Canceled) {
-					t.Fatalf("apply error = %v, want cancellation", err)
+				select {
+				case <-ctx.waiting:
+				case <-time.After(time.Second):
+					t.Fatal("cloud apply did not enter a cancellable lock wait")
+				}
+				if !scenario.deadline {
+					cancel()
+				}
+				select {
+				case err := <-done:
+					finished = true
+					if !errors.Is(err, wantErr) {
+						t.Fatalf("apply error = %v, want %v", err, wantErr)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("canceled cloud apply waited for the save lock to be released")
 				}
 				if !reflect.DeepEqual(ConfigSnapshot(), before) {
 					t.Fatal("canceled apply changed config or synchronization status")
@@ -1107,6 +1148,8 @@ func TestApplyCloudConfigCanceledWhileWaitingForSave(t *testing.T) {
 				if !bytes.Equal(diskBefore, diskAfter) {
 					t.Fatal("canceled apply changed saved configuration")
 				}
+				configSaveLock.Unlock()
+				held = false
 				if err := applyCloudConfigContext(context.Background(), downloaded, endpoint); err != nil {
 					t.Fatalf("subsequent sync failed: %v", err)
 				}

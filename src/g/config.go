@@ -1,6 +1,7 @@
 package g
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -43,7 +45,7 @@ var (
 	Cfg             Config
 	SelfCfg         NetworkMember
 	CfgLock         sync.RWMutex
-	configSaveLock  sync.Mutex
+	configSaveLock  contextlock.Mutex
 	AlertStatus     map[string]bool
 	AlertStatusLock sync.RWMutex
 	alertEpisodes   map[string]*AlertEpisode
@@ -279,7 +281,7 @@ func SaveCloudConfigContext(ctx context.Context, url string) (Config, error) {
 	if resp.StatusCode != http.StatusOK {
 		return config, errors.New("cloud config returned non-200 status")
 	}
-	body, err := readCloudConfigHTTPResponseBody(resp)
+	body, err := readCloudConfigHTTPResponseBodyContext(ctx, resp)
 	if err != nil {
 		return config, err
 	}
@@ -301,9 +303,40 @@ func SaveCloudConfigContext(ctx context.Context, url string) (Config, error) {
 }
 
 func readCloudConfigBody(reader io.Reader) ([]byte, error) {
-	limited := io.LimitReader(reader, maxCloudConfigBytes+1)
-	body, err := io.ReadAll(limited)
+	return readCloudConfigBodyContext(context.Background(), reader)
+}
+
+func readCloudConfigBodyContext(ctx context.Context, reader io.Reader) ([]byte, error) {
+	return readCloudConfigBodyWithLengthContext(ctx, reader, -1)
+}
+
+func readCloudConfigBodyWithLengthContext(ctx context.Context, reader io.Reader, contentLength int64) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if contentLength > maxCloudConfigBytes {
+		return nil, errors.New("cloud config response too large")
+	}
+	var limited io.Reader
+	if ctx.Done() != nil {
+		limited = &cloudConfigContextReader{ctx: ctx, limited: io.LimitedReader{R: reader, N: maxCloudConfigBytes + 1}}
+	} else {
+		limited = io.LimitReader(reader, maxCloudConfigBytes+1)
+	}
+	var body []byte
+	var err error
+	if contentLength >= bytes.MinRead {
+		// Reserve room for both the EOF check and the size-limit sentinel.
+		buffer := bytes.NewBuffer(make([]byte, 0, int(contentLength)+bytes.MinRead+1))
+		_, err = buffer.ReadFrom(limited)
+		body = buffer.Bytes()
+	} else {
+		body, err = io.ReadAll(limited)
+	}
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if len(body) > maxCloudConfigBytes {
@@ -313,13 +346,17 @@ func readCloudConfigBody(reader io.Reader) ([]byte, error) {
 }
 
 func readCloudConfigHTTPResponseBody(response *http.Response) ([]byte, error) {
+	return readCloudConfigHTTPResponseBodyContext(context.Background(), response)
+}
+
+func readCloudConfigHTTPResponseBodyContext(ctx context.Context, response *http.Response) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if response == nil || response.Body == nil {
 		return nil, errors.New("cloud config response body is missing")
 	}
-	if response.ContentLength > maxCloudConfigBytes {
-		return nil, errors.New("cloud config response too large")
-	}
-	return readCloudConfigBody(response.Body)
+	return readCloudConfigBodyWithLengthContext(ctx, response.Body, response.ContentLength)
 }
 
 func ConfigSnapshot() Config {
@@ -329,7 +366,12 @@ func ConfigSnapshot() Config {
 }
 
 func SetConfig(config Config) {
-	config = normalizeConfig(cloneConfig(config))
+	setPreparedConfig(normalizeConfig(cloneConfig(config)))
+}
+
+// setPreparedConfig takes ownership of an already normalized, private copy.
+// Callers must not mutate or retain mutable aliases into it after publication.
+func setPreparedConfig(config Config) {
 	userIPs := make(map[string]bool)
 	agentIPs := make(map[string]bool)
 	for _, member := range config.Network {
@@ -341,6 +383,7 @@ func SetConfig(config Config) {
 		}
 	}
 
+	selfConfig := cloneNetworkMember(config.Network[config.Addr])
 	CfgLock.Lock()
 	AuthIpLock.Lock()
 	AlertStatusLock.Lock()
@@ -351,7 +394,7 @@ func SetConfig(config Config) {
 		}
 	}
 	Cfg = config
-	SelfCfg = cloneNetworkMember(config.Network[config.Addr])
+	SelfCfg = selfConfig
 	AuthUserIpMap = userIPs
 	AuthAgentIpMap = agentIPs
 	AlertStatus = nextAlertStatus
@@ -635,15 +678,19 @@ func applyCloudConfigContext(ctx context.Context, downloaded Config, endpoint st
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	configSaveLock.Lock()
+	if err := configSaveLock.LockContext(ctx); err != nil {
+		return err
+	}
 	defer configSaveLock.Unlock()
-	// A local save may hold the lock after the download has finished. Do not
-	// publish a canceled cloud task when that save finally releases the lock.
+	// Recheck before preparing an update when cancellation races with the lock.
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	current := ConfigSnapshot()
+	current, err := ConfigSnapshotContext(ctx)
+	if err != nil {
+		return err
+	}
 	if current.Mode["Type"] != "cloud" || current.Mode["Endpoint"] != endpoint {
 		return errors.New("cloud configuration changed while request was in flight")
 	}
@@ -670,15 +717,35 @@ func applyCloudConfigContext(ctx context.Context, downloaded Config, endpoint st
 		return err
 	}
 	if unchanged {
-		SetConfig(published)
-		return nil
+		return markCloudSyncSuccessContext(ctx, endpoint, published.Mode["LastSuccTime"])
 	}
-	return applyConfigLocked(published)
+	return applyConfigLockedContext(ctx, published)
+}
+
+// The save lock protects the preceding comparison from other persisted saves.
+// Refresh only runtime metadata; probe, authorization and alert state is intact.
+func markCloudSyncSuccessContext(ctx context.Context, endpoint, lastSuccess string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	CfgLock.Lock()
+	defer CfgLock.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if Cfg.Mode["Type"] != "cloud" || Cfg.Mode["Endpoint"] != endpoint {
+		return errors.New("cloud configuration changed while request was in flight")
+	}
+	mode := cloneStringMap(Cfg.Mode)
+	mode["Status"] = "true"
+	mode["LastSuccTime"] = lastSuccess
+	Cfg.Mode = mode
+	return nil
 }
 
 func cloudConfigEqual(left, right Config) bool {
-	left = normalizeConfig(cloneConfig(left))
-	right = normalizeConfig(cloneConfig(right))
+	left = cloudComparisonConfig(left)
+	right = cloudComparisonConfig(right)
 	for _, config := range []*Config{&left, &right} {
 		delete(config.Mode, "LastSuccTime")
 		delete(config.Mode, "Status")
@@ -686,19 +753,56 @@ func cloudConfigEqual(left, right Config) bool {
 	return reflect.DeepEqual(left, right)
 }
 
+// Only copy containers changed by normalization or removal of runtime fields.
+// The remaining nested data is read-only during comparison; this is not an
+// independent snapshot and must not be published or mutated by the caller.
+func cloudComparisonConfig(config Config) Config {
+	config.Mode = maps.Clone(config.Mode)
+	config.Network = maps.Clone(config.Network)
+	config.Chinamap = maps.Clone(config.Chinamap)
+	for province, providers := range config.Chinamap {
+		// Preserve cloneConfig's normalization of nil provider maps. Address
+		// slices still distinguish nil from empty, as in the original comparison.
+		if providers == nil {
+			config.Chinamap[province] = map[string][]string{}
+		}
+	}
+	return normalizeConfig(config)
+}
+
 func applyConfigLocked(config Config) error {
-	config = normalizeConfig(cloneConfig(config))
-	if err := saveConfigFile(config); err != nil {
+	return applyConfigLockedContext(context.Background(), config)
+}
+
+func applyConfigLockedContext(ctx context.Context, config Config) error {
+	config, err := cloneConfigContext(ctx, config)
+	if err != nil {
 		return err
 	}
-	SetConfig(config)
+	config = normalizeConfig(config)
+	if err := saveConfigFileContext(ctx, config); err != nil {
+		return err
+	}
+	// Once persisted, finish publication even if cancellation arrives. Returning
+	// early here would leave the runtime configuration behind the saved file.
+	setPreparedConfig(config)
 	return nil
 }
 
 func saveConfigFile(config Config) error {
+	return saveConfigFileContext(context.Background(), config)
+}
+
+func saveConfigFileContext(ctx context.Context, config Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(config, "", "\t")
 	if err != nil {
 		logrus.Error("[func:SaveConfig] Json Parse ", err)
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if len(data) > maxLocalConfigBytes {

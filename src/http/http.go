@@ -476,7 +476,7 @@ func StartHttp() {
 }
 
 func NewServer() *http.Server {
-	config := g.ConfigSnapshot()
+	config := g.ConfigMetadataSnapshot()
 	logrus.Info("[func:StartHttp] starting to listen on ", config.Port)
 	return newHTTPServer(fmt.Sprintf(":%d", config.Port), newAppHandler())
 }

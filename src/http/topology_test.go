@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -9,6 +10,32 @@ import (
 	"testing"
 	"time"
 )
+
+func TestCanceledTopologyRequestSkipsConfigurationLock(t *testing.T) {
+	withProxyConfig(g.Config{}, func() {
+		withAuthMaps(map[string]bool{"127.0.0.1": true}, nil, func() {
+			mux := http.NewServeMux()
+			configApiRoutes(mux)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			request := httptest.NewRequest(http.MethodGet, "/api/topology.json", nil).WithContext(ctx)
+			request.RemoteAddr = "127.0.0.1:1234"
+			response := httptest.NewRecorder()
+			g.CfgLock.Lock()
+			done := make(chan struct{})
+			go func() { defer close(done); mux.ServeHTTP(response, request) }()
+			defer func() { g.CfgLock.Unlock(); <-done }()
+			select {
+			case <-done:
+				if response.Code != http.StatusInternalServerError {
+					t.Fatalf("canceled status=%d", response.Code)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("canceled topology request waited for configuration lock")
+			}
+		})
+	})
+}
 
 func TestTopologyAPIDistinguishesUnknownHealthyAndAlert(t *testing.T) {
 	for _, seconds := range []string{"600", "36000", "86400"} {

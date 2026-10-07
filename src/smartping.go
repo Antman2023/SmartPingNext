@@ -108,7 +108,7 @@ func runService() error {
 	c.AddFunc("*/60 * * * * *", func() {
 		jobs.Start(funcs.PingContext)
 		jobs.Start(funcs.MappingContext)
-		if g.ConfigSnapshot().Mode["Type"] == "cloud" {
+		if modeType, _ := g.CloudModeSnapshot(); modeType == "cloud" {
 			jobs.Start(funcs.StartCloudMonitorContext)
 		}
 	}, "ping")

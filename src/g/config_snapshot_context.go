@@ -32,21 +32,7 @@ func cloneConfigContext(ctx context.Context, config Config) (Config, error) {
 		return Config{}, err
 	}
 	cloned.Network, err = cloneSnapshotMapContext(ctx, config.Network, func(member NetworkMember) (NetworkMember, error) {
-		copy := member
-		var err error
-		if copy.Ping, err = cloneSnapshotStringsContext(ctx, member.Ping); err != nil {
-			return NetworkMember{}, err
-		}
-		if member.Topology != nil {
-			copy.Topology = make([]map[string]string, len(member.Topology))
-			for i, rule := range member.Topology {
-				copy.Topology[i], err = cloneSnapshotMapContext(ctx, rule, nil)
-				if err != nil {
-					return NetworkMember{}, err
-				}
-			}
-		}
-		return copy, ctx.Err()
+		return cloneNetworkMemberContext(ctx, member)
 	})
 	if err != nil {
 		return Config{}, err
@@ -65,6 +51,27 @@ func cloneConfigContext(ctx context.Context, config Config) (Config, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return Config{}, err
+	}
+	return cloned, nil
+}
+
+func cloneNetworkMemberContext(ctx context.Context, member NetworkMember) (NetworkMember, error) {
+	cloned := member
+	var err error
+	if cloned.Ping, err = cloneSnapshotStringsContext(ctx, member.Ping); err != nil {
+		return NetworkMember{}, err
+	}
+	if member.Topology != nil {
+		cloned.Topology = make([]map[string]string, len(member.Topology))
+		for i, rule := range member.Topology {
+			cloned.Topology[i], err = cloneSnapshotMapContext(ctx, rule, nil)
+			if err != nil {
+				return NetworkMember{}, err
+			}
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return NetworkMember{}, err
 	}
 	return cloned, nil
 }

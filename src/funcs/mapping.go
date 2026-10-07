@@ -43,12 +43,13 @@ func MappingContext(ctx context.Context) {
 	defer atomic.StoreInt32(&mappingRunning, 0)
 
 	var wg sync.WaitGroup
-	config, err := g.ConfigSnapshotContext(ctx)
+	config, err := g.MappingRoundSnapshotContext(ctx)
 	if err != nil {
 		return
 	}
-	workerLimit := boundedBaseInt(config, "MappingConcurrency", defaultMappingConcurrency, 1, 64)
-	probeCount := boundedBaseInt(config, "MappingProbeCount", defaultMappingProbeCount, 1, 20)
+	settings := g.Config{Base: config.Base}
+	workerLimit := boundedBaseInt(settings, "MappingConcurrency", defaultMappingConcurrency, 1, 64)
+	probeCount := boundedBaseInt(settings, "MappingProbeCount", defaultMappingProbeCount, 1, 20)
 	sem := make(chan struct{}, workerLimit)
 	if err := MapLock.LockContext(ctx); err != nil {
 		return

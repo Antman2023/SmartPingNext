@@ -25,8 +25,7 @@ func StartCloudMonitorContext(ctx context.Context) {
 	defer atomic.StoreInt32(&cloudMonitorRunning, 0)
 
 	logrus.Info("[func:StartCloudMonitor] ", "starting run StartCloudMonitor ")
-	config := g.ConfigSnapshot()
-	endpoint := config.Mode["Endpoint"]
+	_, endpoint := g.CloudModeSnapshot()
 	if _, err := g.SaveCloudConfigContext(ctx, endpoint); err != nil {
 		if ctx.Err() != nil {
 			logrus.Info("[func:StartCloudMonitor] canceled")

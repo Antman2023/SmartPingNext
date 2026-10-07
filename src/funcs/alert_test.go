@@ -22,6 +22,36 @@ func TestStartAlertContextDoesNotStartWhenCanceled(t *testing.T) {
 	}
 }
 
+func TestAlertSnapshotCancellationReleasesRunningGuard(t *testing.T) {
+	oldConfig := g.ConfigSnapshot()
+	defer g.SetConfig(oldConfig)
+	oldRunning := atomic.LoadInt32(&alertRunning)
+	atomic.StoreInt32(&alertRunning, 0)
+	defer atomic.StoreInt32(&alertRunning, oldRunning)
+	g.SetConfig(g.Config{Addr: "192.0.2.1", Network: map[string]g.NetworkMember{
+		"192.0.2.1": {Addr: "192.0.2.1", Ping: make([]string, 1024)},
+	}})
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &mappingCancelOnCheckContext{Context: base, cancel: cancel, cancelAt: 6}
+	StartAlertContext(ctx)
+	if base.Err() != context.Canceled {
+		t.Fatal("alert snapshot did not observe cancellation during copying")
+	}
+	if atomic.LoadInt32(&alertRunning) != 0 {
+		t.Fatal("canceled snapshot retained alert guard")
+	}
+	if !g.CfgLock.TryLock() {
+		t.Fatal("canceled snapshot retained configuration lock")
+	}
+	g.CfgLock.Unlock()
+	// No topology rules: the following check completes without SQL or tracing.
+	StartAlertContext(context.Background())
+	if atomic.LoadInt32(&alertRunning) != 0 {
+		t.Fatal("subsequent alert check retained guard")
+	}
+}
+
 func TestMeasuredLossAtThresholdTriggersAlert(t *testing.T) {
 	withFuncTestDB(t, []string{`CREATE TABLE pinglog (
 		logtime TEXT, target TEXT, maxdelay TEXT, mindelay TEXT, avgdelay TEXT,
