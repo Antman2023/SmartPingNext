@@ -131,9 +131,20 @@ const handleResize = debounce(() => {
   chart?.resize()
 }, 200)
 
-watch(() => [props.nodes, props.links], updateChart, { deep: true })
-watch(() => [props.symbolSize, props.lineWidth], updateChart)
-watch(() => themeStore.theme, updateChart)
+// Keep in-place node/link updates reactive while batching simultaneous data,
+// style and theme changes into one draw after the container has rendered.
+watch([
+  () => props.nodes,
+  () => props.links,
+  () => props.symbolSize,
+  () => props.lineWidth,
+  () => themeStore.theme
+], updateChart, { deep: true, flush: 'post' })
+
+watch(() => props.height, () => {
+  if (!isUnmounted) chart?.resize()
+}, { flush: 'post' })
+
 watch(() => sidebarStore.isCollapsed, () => {
   safeSetTimeout(() => handleResize(), 500)
 })

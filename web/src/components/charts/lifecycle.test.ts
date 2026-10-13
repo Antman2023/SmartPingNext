@@ -6,6 +6,7 @@ import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import * as vue from 'vue'
 import { compileScript, parse } from 'vue/compiler-sfc'
+import type { PingLogData } from '../../types/index.js'
 
 interface ChartSetup {
   chartRef: vue.Ref<object | undefined>
@@ -40,13 +41,15 @@ for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
     let unmounted!: () => void
     const chart = { getOption: () => ({}), setOption: t.mock.fn(), resize: t.mock.fn(), dispose: t.mock.fn() }
     const init = t.mock.fn(() => chart)
+    const locale = vue.ref('zh-CN')
+    const theme = vue.reactive({ theme: 'light' })
     const dependencies: Record<string, unknown> = {
       vue: { ...vue, onMounted: (fn: typeof mounted) => { mounted = fn }, onUnmounted: (fn: typeof unmounted) => { unmounted = fn } },
-      'vue-i18n': { useI18n: () => ({ t: (key: string) => key, locale: vue.ref('zh-CN') }) },
-      '@/stores/theme': { useThemeStore: () => ({ theme: 'light' }) },
+      'vue-i18n': { useI18n: () => ({ t: (key: string) => key, locale }) },
+      '@/stores/theme': { useThemeStore: () => theme },
       '@/stores/sidebar': { useSidebarStore: () => ({ isCollapsed: false }) },
       '@/utils/chartInteraction': { preserveLegendSelection },
-    '@/utils/charts': { getPingChartOption: () => ({}), getPingMiniChartOption: () => ({}) },
+      '@/utils/charts': { getPingChartOption: () => ({}), getPingMiniChartOption: () => ({}) },
       '@/utils/debounce': debounceExports,
       '@/utils/echartsLine': { echarts: { init } },
       '@/utils/echartsGraph': { echarts: { init } }
@@ -61,23 +64,69 @@ for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
     })
     const scope = vue.effectScope()
     t.after(() => scope.stop())
-    const props = vue.reactive({ data: null, nodes: [], links: [], symbolSize: 50, lineWidth: 2 })
+    const props = vue.reactive({ data: null as PingLogData | null, height: 200,
+      nodes: [{ id: 'a', name: 'Alpha', color: 'green' }, { id: 'b', name: 'Beta', color: 'green' }],
+      links: [{ source: 'a', target: 'b', color: 'green', curveness: 0 }], symbolSize: 50, lineWidth: 2 })
     const view = scope.run(() => exports.default!.setup(props, { expose: () => {} }))!
     view.chartRef.value = {}
     await mounted()
+    if (component !== 'TopologyGraph') {
+      props.data = { lastcheck: ['2026-10-13 12:00'], maxdelay: ['3'],
+        mindelay: ['1'], avgdelay: ['2'], losspk: ['0'] }
+      await vue.nextTick()
+      const axis = props.data.lastcheck
+      for (const metric of ['maxdelay', 'mindelay', 'avgdelay', 'losspk'] as const) {
+        const calls = chart.setOption.mock.callCount()
+        props.data[metric] = ['5']
+        await vue.nextTick()
+        assert.equal(chart.setOption.mock.callCount(), calls + 1, `${metric} must refresh with an unchanged axis`)
+        assert.equal(props.data.lastcheck, axis)
+      }
+      const calls = chart.setOption.mock.callCount()
+      props.data.avgdelay = ['4']
+      props.data.losspk = ['100']
+      theme.theme = 'dark'
+      locale.value = 'en-US'
+      await vue.nextTick()
+      assert.equal(chart.setOption.mock.callCount(), calls + 1, 'simultaneous changes should draw once')
+      const resizes = chart.resize.mock.callCount()
+      props.height = 400
+      await vue.nextTick()
+      assert.equal(chart.resize.mock.callCount(), resizes + 1, 'height changes must resize the canvas')
+      assert.equal(init.mock.callCount(), 1)
+    }
     if (component === 'TopologyGraph') {
       const calls = chart.setOption.mock.callCount()
       props.symbolSize = 80
       props.lineWidth = 4
+      props.nodes[0]!.color = 'red'
+      props.links[0]!.color = 'red'
+      theme.theme = 'dark'
       await vue.nextTick()
-      assert.equal(chart.setOption.mock.callCount(), calls + 1)
+      assert.equal(chart.setOption.mock.callCount(), calls + 1, 'data, style and theme changes should draw once')
       const option = chart.setOption.mock.calls.at(-1)!.arguments[0] as {
-        series: { symbolSize: number; lineStyle: { width: number }; left: number }[]
+        series: { symbolSize: number; lineStyle: { width: number }; left: number;
+          label: { color: string }; data: { itemStyle: { color: string } }[];
+          links: { lineStyle: { color: string } }[] }[]
       }
       assert.equal(option.series[0]!.symbolSize, 80)
       assert.equal(option.series[0]!.lineStyle.width, 4)
       assert.equal(option.series[0]!.left, 52)
+      assert.equal(option.series[0]!.data[0]!.itemStyle.color, 'red')
+      assert.equal(option.series[0]!.links[0]!.lineStyle.color, 'red')
+      assert.equal(option.series[0]!.label.color, '#e5eaf3')
       assert.equal(init.mock.callCount(), 1, 'style updates should reuse the chart instance')
+      const resizes = chart.resize.mock.callCount()
+      const draws = chart.setOption.mock.callCount()
+      props.height = 600
+      await vue.nextTick()
+      assert.equal(chart.resize.mock.callCount(), resizes + 1, 'height changes must resize the topology canvas')
+      assert.equal(chart.setOption.mock.callCount(), draws, 'resizing should not rebuild graph data')
+      props.links[0]!.color = 'orange'
+      await vue.nextTick()
+      assert.equal(chart.setOption.mock.callCount(), draws + 1, 'in-place link changes must remain observable')
+      const latest = chart.setOption.mock.calls.at(-1)!.arguments[0] as typeof option
+      assert.equal(latest.series[0]!.links[0]!.lineStyle.color, 'orange')
     }
     const flushTimers = () => {
       for (const [id, callback] of Array.from(timers)) {

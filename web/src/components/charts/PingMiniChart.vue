@@ -70,9 +70,21 @@ const handleResize = debounce(() => {
   chart?.resize()
 }, 200)
 
-watch(() => props.data?.lastcheck, updateChart)
-watch(() => themeStore.theme, updateChart)
-watch(locale, updateChart)
+// Observe metric replacements even when the query reuses its time axis, and
+// batch simultaneous display changes without deep-watching large histories.
+watch([
+  () => props.data?.lastcheck,
+  () => props.data?.maxdelay,
+  () => props.data?.mindelay,
+  () => props.data?.avgdelay,
+  () => props.data?.losspk,
+  () => themeStore.theme,
+  locale
+], updateChart, { flush: 'post' })
+
+watch(() => props.height, () => {
+  if (!isUnmounted) chart?.resize()
+}, { flush: 'post' })
 watch(() => sidebarStore.isCollapsed, () => {
   safeSetTimeout(() => handleResize(), 500)
 })

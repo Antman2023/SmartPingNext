@@ -108,20 +108,21 @@ const handleResize = debounce(() => {
   updateChart()
 }, 200)
 
-watch(() => props.data?.lastcheck, async () => {
-  await nextTick()
-  updateChart()
-})
+// Track array replacements without traversing every historical sample. A
+// single post-render watcher also batches data, theme and locale changes.
+watch([
+  () => props.data?.lastcheck,
+  () => props.data?.maxdelay,
+  () => props.data?.mindelay,
+  () => props.data?.avgdelay,
+  () => props.data?.losspk,
+  () => themeStore.theme,
+  locale
+], updateChart, { flush: 'post' })
 
-watch(() => themeStore.theme, async () => {
-  await nextTick()
-  updateChart()
-})
-
-watch(locale, async () => {
-  await nextTick()
-  updateChart()
-})
+watch(() => props.height, () => {
+  if (!isUnmounted) chart?.resize()
+}, { flush: 'post' })
 
 watch(() => sidebarStore.isCollapsed, () => {
   safeSetTimeout(() => handleResize(), 500)
