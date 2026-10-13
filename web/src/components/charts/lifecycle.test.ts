@@ -13,6 +13,7 @@ interface ChartSetup {
   resizeTimers: Set<number>
   safeSetTimeout: (callback: () => void, delay: number) => number
   handleResize: (() => void) & { cancel: () => void }
+  saveAsImage: () => void
 }
 
 for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
@@ -39,16 +40,26 @@ for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
     const { descriptor } = parse(source)
     let mounted!: () => void | Promise<void>
     let unmounted!: () => void
-    const chart = { getOption: () => ({}), setOption: t.mock.fn(), resize: t.mock.fn(), dispose: t.mock.fn() }
+    const getDataURL = t.mock.fn((_options: unknown) => 'data:image/png;base64,test')
+    const link = { download: '', href: '', click: t.mock.fn() }
+    const document = { createElement: () => link }
+    const chartExport = {}
+    runInNewContext(transpile(readFileSync(new URL('../../../src/utils/chartExport.ts', import.meta.url), 'utf8')), {
+      exports: chartExport, document
+    })
+    const messageError = t.mock.fn((_message: string) => {})
+    const chart = { getOption: () => ({}), setOption: t.mock.fn(), resize: t.mock.fn(), dispose: t.mock.fn(), getDataURL }
     const init = t.mock.fn(() => chart)
     const locale = vue.ref('zh-CN')
     const theme = vue.reactive({ theme: 'light' })
     const dependencies: Record<string, unknown> = {
       vue: { ...vue, onMounted: (fn: typeof mounted) => { mounted = fn }, onUnmounted: (fn: typeof unmounted) => { unmounted = fn } },
       'vue-i18n': { useI18n: () => ({ t: (key: string) => key, locale }) },
+      'element-plus': { ElMessage: { error: messageError } },
       '@/stores/theme': { useThemeStore: () => theme },
       '@/stores/sidebar': { useSidebarStore: () => ({ isCollapsed: false }) },
       '@/utils/chartInteraction': { preserveLegendSelection },
+      '@/utils/chartExport': chartExport,
       '@/utils/charts': { getPingChartOption: () => ({}), getPingMiniChartOption: () => ({}) },
       '@/utils/debounce': debounceExports,
       '@/utils/echartsLine': { echarts: { init } },
@@ -56,7 +67,7 @@ for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
     }
     const exports: { default?: { setup: (props: object, context: object) => ChartSetup } } = {}
     runInNewContext(transpile(compileScript(descriptor, { id: component }).content), {
-      exports, window,
+      exports, window, document, console: { error: () => {} },
       require: (name: string) => {
         assert.ok(name in dependencies, `Unexpected dependency: ${name}`)
         return dependencies[name]
@@ -134,6 +145,37 @@ for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
         callback()
       }
     }
+    if (component === 'PingChart') {
+      await t.test('image export reports failures and retries without replacing or redrawing the chart', () => {
+        const draws = chart.setOption.mock.callCount()
+        for (const failure of ['encode', '', 'data:,', 'data:image/png;base64,', 'download']) {
+          const messages = messageError.mock.callCount()
+          const clicks = link.click.mock.callCount()
+          if (failure === 'encode') {
+            getDataURL.mock.mockImplementationOnce(() => { throw new Error('encode failed') })
+          } else if (failure === 'download') {
+            link.click.mock.mockImplementationOnce(() => { throw new Error('download failed') })
+          } else {
+            getDataURL.mock.mockImplementationOnce(() => failure)
+          }
+          assert.doesNotThrow(view.saveAsImage)
+          assert.equal(messageError.mock.callCount(), messages + 1)
+          assert.equal(messageError.mock.calls.at(-1)!.arguments[0], 'common.saveImageFailed')
+          assert.equal(link.click.mock.callCount(), clicks + (failure === 'download' ? 1 : 0))
+          view.saveAsImage()
+          assert.equal(messageError.mock.callCount(), messages + 1)
+          assert.equal(link.click.mock.callCount(), clicks + (failure === 'download' ? 2 : 1))
+          assert.equal(link.href, 'data:image/png;base64,test')
+          assert.match(link.download, /^smartping-chart-\d+\.png$/)
+        }
+        const options = getDataURL.mock.calls.at(-1)!.arguments[0] as { type: string; pixelRatio: number; backgroundColor: string }
+        assert.equal(options.type, 'png')
+        assert.equal(options.pixelRatio, 2)
+        assert.equal(options.backgroundColor, '#1a1a1a')
+        assert.equal(chart.setOption.mock.callCount(), draws)
+        assert.equal(chart.dispose.mock.callCount(), 0)
+      })
+    }
     flushTimers()
     for (let i = 0; i < 100; i++) {
       view.safeSetTimeout(() => {}, 0)
@@ -152,6 +194,9 @@ for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
     assert.equal(chart.dispose.mock.callCount(), 1)
 
     if (component === 'PingChart') {
+      const exportCalls = getDataURL.mock.callCount()
+      view.saveAsImage()
+      assert.equal(getDataURL.mock.callCount(), exportCalls, 'late export must not use a disposed chart')
       // Its async mount must not attach a listener after the component was destroyed.
       const calls = window.addEventListener.mock.callCount()
       const nextView = scope.run(() => exports.default!.setup({ data: null }, { expose: () => {} }))!

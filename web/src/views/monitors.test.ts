@@ -2,6 +2,7 @@ import { preloadAsync } from '../utils/preloadAsync.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { setImmediate } from 'node:timers/promises'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import * as vue from 'vue'
@@ -23,6 +24,9 @@ interface Target {
   fromPort: number
 }
 interface MonitorSetup {
+  agents: vue.Ref<Array<{ name: string; addr: string; loading: boolean }>>
+  switchAgent: (agent: { name: string; addr: string; loading: boolean }) => Promise<void>
+  refreshMonitor: () => Promise<void> | undefined
   config: vue.Ref<{ Base: { Refresh: unknown } } | null>
   autoRefresh: vue.Ref<boolean>
   detailAutoRefresh: vue.Ref<boolean>
@@ -81,7 +85,7 @@ for (const name of ['DashboardView', 'ReverseView']) {
     class ClockDate extends Date {
       constructor(value?: number) { super(value ?? now) }
     }
-    const getPing = t.mock.fn(async (): Promise<PingLogData> => sample)
+    const getPing = t.mock.fn(async (..._args: unknown[]): Promise<PingLogData> => sample)
     const pingApi: Record<string, unknown> = validateResponses ? {} : { getPingData: getPing, getProxyPingData: getPing }
     if (validateResponses) {
       runInNewContext(compiledPingApi, {
@@ -141,6 +145,8 @@ for (const name of ['DashboardView', 'ReverseView']) {
     const scope = vue.effectScope()
     t.after(() => scope.stop())
     const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
+    // Most cases exercise a populated monitor after initial loading.
+    view.configLoading.value = false
     view.startTime.value = '2026-09-06 06:00'
     view.endTime.value = '2026-09-06 12:00'
     const targets = (view.pingTargets || view.reverseTargets)!
@@ -156,6 +162,151 @@ for (const name of ['DashboardView', 'ReverseView']) {
     }))
     return { view, targets, getPing, fetchConfig, document, locale, showWarning, warning: showWarning, setInterval, clearInterval, unmount,
       advanceTime: (ms: number) => { now += ms } }
+  }
+
+  test(`${name}: manual refresh waits through configuration loading and its first chart query`, async (t) => {
+    const { view, fetchConfig, getPing } = createView(t)
+    view.configLoading.value = true
+    await view.refreshMonitor()
+    assert.equal(fetchConfig.mock.callCount(), 0, 'initial loading must not be restarted')
+    await view.loadConfig()
+    let releaseConfig!: () => void
+    let releasePing!: () => void
+    const configGate = new Promise<void>((resolve) => { releaseConfig = resolve })
+    const pingGate = new Promise<void>((resolve) => { releasePing = resolve })
+    t.after(() => { releaseConfig(); releasePing() })
+    fetchConfig.mock.mockImplementation(async () => {
+      await configGate
+      return { Addr: '127.0.0.2', Port: 9000, Base: { Refresh: 1 }, Network: {
+        '127.0.0.2': { Name: 'local', Addr: '127.0.0.2', Smartping: true, Ping: ['192.0.2.2'] },
+        '192.0.2.2': { Name: 'remote', Addr: '192.0.2.2', Smartping: true, Ping: ['127.0.0.2'] }
+      } }
+    })
+    getPing.mock.mockImplementation(async () => { await pingGate; return sample })
+    const pending = view.loadConfig()
+    try {
+      await view.refreshMonitor()
+      assert.equal(getPing.mock.callCount(), 0)
+      releaseConfig()
+      await setImmediate()
+      assert.equal(getPing.mock.callCount(), 1)
+      assert.equal(view.configLoading.value, true)
+      const args = getPing.mock.calls[0]!.arguments
+      const signal = args.at(-1) as AbortSignal
+      await view.refreshMonitor()
+      assert.equal(getPing.mock.callCount(), 1)
+      assert.equal(signal.aborted, false)
+      if (name === 'ReverseView') assert.equal(args[0], 'http://192.0.2.2:9000')
+      else assert.equal(args[0], '192.0.2.2')
+    } finally {
+      releaseConfig()
+      releasePing()
+      await pending
+    }
+    await view.refreshMonitor()
+    assert.equal(getPing.mock.callCount(), 2)
+    assert.equal(view.configLoading.value, false)
+  })
+
+  test(`${name}: source callbacks reject loading, replaced and unmounted targets without closing detail`, async (t) => {
+    const { view, fetchConfig, unmount } = createView(t)
+    await view.loadConfig()
+    view.agents.value = [{ name: 'remote', addr: '192.0.2.1', loading: false }]
+    const oldAgent = view.agents.value[0]!
+    view.detailVisible.value = true
+    view.configLoading.value = true
+    const calls = fetchConfig.mock.callCount()
+    await view.switchAgent(oldAgent)
+    assert.equal(fetchConfig.mock.callCount(), calls)
+    assert.equal(view.detailVisible.value, true)
+    assert.equal(oldAgent.loading, false)
+    view.configLoading.value = false
+    view.agents.value = [{ ...oldAgent }]
+    await view.switchAgent(oldAgent)
+    assert.equal(fetchConfig.mock.callCount(), calls)
+    assert.equal(view.detailVisible.value, true)
+    const currentAgent = view.agents.value[0]!
+    await view.switchAgent(currentAgent)
+    assert.equal(fetchConfig.mock.callCount(), calls + 1)
+    assert.equal(view.detailVisible.value, false)
+    view.agents.value = [currentAgent]
+    view.detailVisible.value = true
+    unmount()
+    await view.switchAgent(view.agents.value[0]!)
+    await view.refreshMonitor()
+    assert.equal(fetchConfig.mock.callCount(), calls + 1)
+    assert.equal(view.detailVisible.value, true)
+    assert.equal(currentAgent.loading, false)
+  })
+
+  test(`${name}: manual refresh retries an initial configuration failure`, async (t) => {
+    const { view, fetchConfig } = createView(t)
+    fetchConfig.mock.mockImplementationOnce(async () => { throw new Error('offline') })
+    await view.loadConfig()
+    assert.equal(view.config.value, null)
+    assert.equal(view.configLoading.value, false)
+    await view.refreshMonitor()
+    assert.equal(fetchConfig.mock.callCount(), 2)
+    assert.ok(view.config.value)
+  })
+
+  for (const fail of [false, true]) {
+    test(`${name}: configuration reload cancels detail and rejects stale cards and late ${fail ? 'failure' : 'success'}`, async (t) => {
+      const { view, targets, fetchConfig, getPing } = createView(t)
+      const oldTarget = targets.value[0]!
+      await view.showDetail(oldTarget)
+      view.detailAutoRefresh.value = true
+      let releaseDetail!: () => void
+      let releaseConfig!: () => void
+      const detailGate = new Promise<void>((resolve) => { releaseDetail = resolve })
+      const configGate = new Promise<void>((resolve) => { releaseConfig = resolve })
+      t.after(() => { releaseDetail(); releaseConfig() })
+      getPing.mock.mockImplementationOnce(async () => {
+        await detailGate
+        if (fail) throw new Error('old detail failed')
+        return { ...sample, avgdelay: ['99'] }
+      })
+      const oldRequest = view.loadDetailData()
+      const oldSignal = getPing.mock.calls.at(-1)!.arguments.at(-1) as AbortSignal
+      fetchConfig.mock.mockImplementation(async () => {
+        await configGate
+        return { Addr: '127.0.0.2', Port: 9000, Base: { Refresh: 1 }, Network: {
+          '127.0.0.2': { Name: 'new local', Addr: '127.0.0.2', Smartping: true, Ping: ['192.0.2.2'] },
+          '192.0.2.2': { Name: 'new remote', Addr: '192.0.2.2', Smartping: true, Ping: ['127.0.0.2'] }
+        } }
+      })
+      const reload = view.loadConfig()
+      try {
+        assert.equal(oldSignal.aborted, true, 'cancel detail synchronously before accepting a new configuration')
+        assert.equal(view.detailVisible.value, false)
+        assert.equal(view.detailData.value, null)
+        assert.equal(view.detailLoading.value, false)
+        assert.equal(view.detailAutoRefresh.value, false)
+        const calls = getPing.mock.callCount()
+        await view.showDetail(oldTarget)
+        await view.loadDetailData()
+        await view.refreshDetailIfVisible()
+        assert.equal(getPing.mock.callCount(), calls)
+        assert.equal(view.detailVisible.value, false)
+      } finally {
+        releaseConfig()
+        await reload
+        releaseDetail()
+        await oldRequest
+      }
+      assert.equal(view.detailData.value, null)
+      assert.equal(view.detailError.value, false)
+      const calls = getPing.mock.callCount()
+      await view.showDetail(oldTarget)
+      assert.equal(getPing.mock.callCount(), calls)
+      assert.equal(view.detailVisible.value, false)
+      await view.showDetail(targets.value[0]!)
+      assert.equal(view.detailVisible.value, true)
+      assert.deepEqual(view.detailData.value, sample)
+      assert.equal(getPing.mock.callCount(), calls + 1)
+      const args = getPing.mock.calls.at(-1)!.arguments
+      assert.equal(args[0], name === 'ReverseView' ? 'http://192.0.2.2:9000' : '192.0.2.2')
+    })
   }
 
   test(`${name}: list and detail refresh timers stay within the configured safe range`, async (t) => {

@@ -22,6 +22,12 @@ const compiled = ts.transpileModule(compileScript(descriptor, { id: 'mapping-tes
 const compiledMappingApi = ts.transpileModule(readFileSync(new URL('../../src/api/mapping.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText
+const compiledDebounce = ts.transpileModule(readFileSync(new URL('../../src/utils/debounce.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+}).outputText
+const compiledChartExport = ts.transpileModule(readFileSync(new URL('../../src/utils/chartExport.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
+}).outputText
 
 interface MappingSetup {
   agents: vue.Ref<Array<{ name: string; addr: string; loading: boolean }>>
@@ -38,10 +44,17 @@ interface MappingSetup {
   hasRetainedMapping: vue.ComputedRef<boolean>
   chart: { clear: () => void; dispose: () => void; getOption: () => Record<string, unknown>; setOption: (option: unknown) => void }
   isMapReady: vue.Ref<boolean>
+  chartRef: vue.Ref<object | undefined>
+  chartLoading: vue.Ref<boolean>
+  chartError: vue.Ref<boolean>
+  initChart: () => Promise<void>
   updateChart: (data: ChinaMapData) => void
   loadMappingData: () => Promise<void>
   loadConfig: () => Promise<void>
   refreshMapping: () => Promise<void> | undefined
+  canSaveMapImage: vue.ComputedRef<boolean>
+  saveMapImage: () => void
+  handleResize: () => void
 }
 
 const sample = (name: string): ChinaMapData => ({
@@ -52,6 +65,18 @@ const sample = (name: string): ChinaMapData => ({
 
 function createView(t: test.TestContext, validateResponses = false) {
   const locale = vue.ref('zh-CN')
+  const theme = vue.reactive({ theme: 'light' })
+  const sidebar = vue.reactive({ isCollapsed: false })
+  const timers = new Map<number, () => void>()
+  let timerId = 0
+  const window = {
+    getComputedStyle: () => ({ getPropertyValue: () => '' }),
+    removeEventListener: t.mock.fn(),
+    setTimeout: (callback: () => void) => { timers.set(++timerId, callback); return timerId },
+    clearTimeout: (id: number) => { timers.delete(id) }
+  }
+  const debounceExports = {}
+  runInNewContext(compiledDebounce, { exports: debounceExports, window })
   const getMapping = t.mock.fn(async (_date?: string, _signal?: AbortSignal): Promise<ChinaMapData> => sample('local'))
   const getProxyMapping = t.mock.fn(async (_base: string, _date?: string, _signal?: AbortSignal): Promise<ChinaMapData> => sample('remote'))
   const mappingApi: Record<string, unknown> = validateResponses ? {} : { getMapping, getProxyMapping }
@@ -72,11 +97,24 @@ function createView(t: test.TestContext, validateResponses = false) {
   const clear = t.mock.fn()
   const dispose = t.mock.fn()
   const setOption = t.mock.fn((_option: unknown) => {})
+  const getDataURL = t.mock.fn(() => 'data:image/png;base64,test')
+  const resize = t.mock.fn()
+  const click = t.mock.fn()
+  const link = { download: '', href: '', click }
+  const createElement = t.mock.fn(() => link)
+  const document = { documentElement: {}, createElement }
+  const chartExport = {}
+  runInNewContext(compiledChartExport, { exports: chartExport, document })
+  const messageError = t.mock.fn((_message: string) => {})
+  const chart = { clear, dispose, setOption, getOption: () => ({}), getDataURL, resize }
+  const init = t.mock.fn(() => chart)
+  const registerMap = t.mock.fn()
+  const loadMap = t.mock.fn(() => ({ default: {} }))
   let unmount!: () => void
   const dependencies: Record<string, unknown> = {
     vue: { ...vue, onMounted: () => {}, onUnmounted: (callback: () => void) => { unmount = callback } },
     'vue-i18n': { useI18n: () => ({ t: (key: string) => `${locale.value}:${key}`, locale }) },
-    'element-plus': { ElMessage: { error: () => {} } },
+    'element-plus': { ElMessage: { error: messageError } },
     '@element-plus/icons-vue': {},
     '@/plugins/elementPlusMappingStyles': {},
     '@/components/common/RefreshStatus.vue': {},
@@ -87,19 +125,23 @@ function createView(t: test.TestContext, validateResponses = false) {
     '@/api/config': { fetchConfig },
     '@/api/mapping': mappingApi,
     '@/utils/chartInteraction': { preserveLegendSelection },
+    '@/utils/chartExport': chartExport,
     '@/utils/chartTooltip': { formatMappingTooltip },
-    '@/stores/sidebar': { useSidebarStore: () => ({ isCollapsed: false }) },
-    '@/stores/theme': { useThemeStore: () => ({ theme: 'light' }) },
+    '@/stores/sidebar': { useSidebarStore: () => sidebar },
+    '@/utils/debounce': debounceExports,
+    '@/stores/theme': { useThemeStore: () => theme },
+    '@/utils/echartsMap': { echarts: { init, registerMap } },
     '@/utils/format': { displayName: (name: string) => name, formatTime: () => '12:00' }
   }
   const exports: { default?: { setup: (props: object, context: object) => MappingSetup } } = {}
   runInNewContext(compiled, {
     exports,
     AbortController,
-    document: { documentElement: {} },
-    window: { getComputedStyle: () => ({ getPropertyValue: () => '' }), removeEventListener: () => {} },
+    document,
+    window,
     console: { error: () => {} },
     require: (name: string) => {
+      if (name === 'china-map-geojson/lib/china') return loadMap()
       assert.ok(name in dependencies, `Unexpected dependency: ${name}`)
       return dependencies[name]
     }
@@ -107,9 +149,330 @@ function createView(t: test.TestContext, validateResponses = false) {
   const scope = vue.effectScope()
   t.after(() => { unmount(); scope.stop() })
   const view = scope.run(() => exports.default!.setup({}, { expose: () => {} }))!
-  view.chart = { clear, dispose, setOption, getOption: () => ({}) }
-  return { view, getMapping, getProxyMapping, fetchConfig, clear, dispose, setOption, locale, unmount: () => unmount() }
+  view.chart = chart
+  return { view, getMapping, getProxyMapping, fetchConfig, clear, dispose, setOption,
+    locale, theme, init, registerMap, loadMap, getDataURL, link, createElement, messageError, resize, sidebar, timers,
+    removeEventListener: window.removeEventListener,
+    flushTimers: () => {
+      for (const [id, callback] of Array.from(timers)) {
+        timers.delete(id)
+        callback()
+      }
+    }, unmount: () => unmount() }
 }
+
+test('map unmount releases listeners and chart references even when renderer disposal fails', async (t) => {
+  const { view, dispose, resize, sidebar, timers, flushTimers, removeEventListener, unmount } = createView(t)
+  view.chartRef.value = {}
+  await view.loadConfig()
+  await view.initChart()
+  const disposals = dispose.mock.callCount()
+  sidebar.isCollapsed = true
+  await vue.nextTick()
+  view.handleResize()
+  dispose.mock.mockImplementationOnce(() => { throw new Error('dispose failed') })
+  assert.doesNotThrow(unmount)
+  assert.equal(view.chart, null)
+  assert.equal(view.isMapReady.value, false)
+  assert.equal(view.latestData.value, null)
+  assert.equal(timers.size, 0)
+  assert.equal(removeEventListener.mock.callCount(), 1)
+  assert.equal(removeEventListener.mock.calls[0]!.arguments[0], 'resize')
+  assert.equal(removeEventListener.mock.calls[0]!.arguments[1], view.handleResize)
+  unmount()
+  assert.equal(dispose.mock.callCount(), disposals + 1, 'failed disposal must not leave a retained instance')
+  view.handleResize()
+  flushTimers()
+  assert.equal(resize.mock.callCount(), 0)
+})
+
+for (const failure of ['encode', 'empty', 'canvas-limit', 'empty-png', 'create-link', 'download'] as const) {
+  test(`map image export handles ${failure} failure without losing data and allows retry`, async (t) => {
+    const { view, getDataURL, createElement, link, messageError, locale, getMapping } = createView(t)
+    view.chartRef.value = {}
+    await view.loadConfig()
+    await view.initChart()
+    const data = view.latestData.value
+    const updated = view.lastUpdatedAt.value
+    const requests = getMapping.mock.callCount()
+    if (failure === 'encode') getDataURL.mock.mockImplementationOnce(() => { throw new Error('canvas unavailable') })
+    if (failure === 'empty') getDataURL.mock.mockImplementationOnce(() => '')
+    if (failure === 'canvas-limit') getDataURL.mock.mockImplementationOnce(() => 'data:,')
+    if (failure === 'empty-png') getDataURL.mock.mockImplementationOnce(() => 'data:image/png;base64,')
+    if (failure === 'create-link') createElement.mock.mockImplementationOnce(() => { throw new Error('link unavailable') })
+    if (failure === 'download') link.click.mock.mockImplementationOnce(() => { throw new Error('download unavailable') })
+    locale.value = 'en-US'
+    await vue.nextTick()
+    assert.doesNotThrow(() => view.saveMapImage())
+    assert.equal(messageError.mock.callCount(), 1)
+    assert.equal(messageError.mock.calls[0]!.arguments[0], 'en-US:common.saveImageFailed')
+    if (failure !== 'download') assert.equal(link.click.mock.callCount(), 0)
+    assert.equal(view.latestData.value, data)
+    assert.equal(view.lastUpdatedAt.value, updated)
+    assert.equal(view.chartError.value, false)
+    assert.equal(view.mappingError.value, false)
+    assert.equal(view.canSaveMapImage.value, true)
+    const clicks = link.click.mock.callCount()
+    view.saveMapImage()
+    assert.equal(link.click.mock.callCount(), clicks + 1)
+    assert.equal(link.href, 'data:image/png;base64,test')
+    assert.equal(messageError.mock.callCount(), 1)
+    assert.equal(getMapping.mock.callCount(), requests)
+  })
+}
+
+test('map coalesces rapid resize events without redrawing data or querying the network', async (t) => {
+  const { view, resize, timers, flushTimers, setOption, getMapping } = createView(t)
+  view.chartRef.value = {}
+  await view.loadConfig()
+  await view.initChart()
+  const draws = setOption.mock.callCount()
+  const requests = getMapping.mock.callCount()
+  for (let i = 0; i < 100; i++) view.handleResize()
+  assert.equal(resize.mock.callCount(), 0)
+  assert.equal(timers.size, 1)
+  flushTimers()
+  assert.equal(resize.mock.callCount(), 1)
+  assert.equal(timers.size, 0)
+  assert.equal(setOption.mock.callCount(), draws)
+  assert.equal(getMapping.mock.callCount(), requests)
+})
+
+test('map unmount cancels window and sidebar resize work and blocks late callbacks', async (t) => {
+  const { view, resize, sidebar, timers, flushTimers, unmount } = createView(t)
+  view.chartRef.value = {}
+  await view.initChart()
+  sidebar.isCollapsed = true
+  await vue.nextTick()
+  view.handleResize()
+  assert.equal(timers.size, 2)
+  unmount()
+  assert.equal(timers.size, 0)
+  view.handleResize()
+  sidebar.isCollapsed = false
+  await vue.nextTick()
+  flushTimers()
+  assert.equal(timers.size, 0)
+  assert.equal(resize.mock.callCount(), 0)
+})
+
+test('map resize failure exposes chart retry and stops subsequent resizing until recovery', async (t) => {
+  const { view, resize, flushTimers } = createView(t)
+  view.chartRef.value = {}
+  await view.loadConfig()
+  await view.initChart()
+  const data = view.latestData.value
+  resize.mock.mockImplementationOnce(() => { throw new Error('resize failed') })
+  view.handleResize()
+  assert.doesNotThrow(flushTimers)
+  assert.equal(view.chartError.value, true)
+  assert.equal(view.isMapReady.value, false)
+  assert.equal(view.latestData.value, data)
+  view.handleResize()
+  flushTimers()
+  assert.equal(resize.mock.callCount(), 1)
+  await view.initChart()
+  view.handleResize()
+  flushTimers()
+  assert.equal(resize.mock.callCount(), 2)
+  assert.equal(view.chartError.value, false)
+})
+
+test('map rendering failure preserves accepted data and exposes chart retry instead of a request error', async (t) => {
+  const { view, setOption, getMapping } = createView(t)
+  view.chartRef.value = {}
+  await view.initChart()
+  setOption.mock.mockImplementationOnce(() => { throw new Error('render failure') })
+  await view.loadConfig()
+  assert.equal(view.latestData.value?.text, 'local')
+  assert.ok(view.lastUpdatedAt.value)
+  assert.equal(view.mappingError.value, false)
+  assert.equal(view.configError.value, false)
+  assert.equal(view.chartError.value, true)
+  assert.equal(view.isMapReady.value, false)
+  assert.equal(view.canSaveMapImage.value, false)
+  const requests = getMapping.mock.callCount()
+  await view.initChart()
+  assert.equal(view.chartError.value, false)
+  assert.equal(view.isMapReady.value, true)
+  assert.equal(view.canSaveMapImage.value, true)
+  assert.equal(getMapping.mock.callCount(), requests, 'chart retry should reuse accepted data')
+})
+
+for (const change of ['date', 'source', 'config'] as const) {
+  test(`map ${change} query continues when clearing the old chart fails`, async (t) => {
+    const { view, clear, getMapping, getProxyMapping, fetchConfig, setOption } = createView(t)
+    view.chartRef.value = {}
+    await view.loadConfig()
+    await view.initChart()
+    const previous = view.latestData.value
+    const draws = setOption.mock.callCount()
+    clear.mock.mockImplementationOnce(() => { throw new Error('clear failed') })
+    getMapping.mock.mockImplementation(async () => sample('new query'))
+    getProxyMapping.mock.mockImplementation(async () => sample('new query'))
+    if (change === 'date') {
+      view.selectedDate.value = '2026-10-13 12:00'
+      await view.loadMappingData()
+    } else if (change === 'source') {
+      view.agents.value = [{ name: 'remote', addr: '192.0.2.1', loading: false }]
+      await view.switchAgent(view.agents.value[0]!)
+    } else {
+      fetchConfig.mock.mockImplementation(async () => ({ Addr: '127.0.0.2', Port: 9000, Network: {} }))
+      await view.loadConfig()
+    }
+    assert.notEqual(view.latestData.value, previous)
+    assert.equal(view.latestData.value?.text, 'new query')
+    assert.ok(view.lastUpdatedAt.value)
+    assert.equal(view.chartError.value, true)
+    assert.equal(view.isMapReady.value, false)
+    assert.equal(view.mappingError.value, false)
+    assert.equal(view.configError.value, false)
+    assert.equal(view.mappingLoading.value, false)
+    assert.equal(view.configLoading.value, false)
+    assert.ok(view.agents.value.every((agent) => !agent.loading))
+    assert.equal(setOption.mock.callCount(), draws, 'failed chart must wait for explicit retry')
+    const requests = getMapping.mock.callCount() + getProxyMapping.mock.callCount()
+    await view.initChart()
+    assert.equal(view.chartError.value, false)
+    assert.equal(view.isMapReady.value, true)
+    const option = setOption.mock.calls.at(-1)!.arguments[0] as { title: { text: string } }
+    assert.equal(option.title.text, 'new query')
+    assert.equal(getMapping.mock.callCount() + getProxyMapping.mock.callCount(), requests)
+  })
+}
+
+test('map clear and request failures remain separate and do not restore another query', async (t) => {
+  const { view, clear, getMapping } = createView(t)
+  view.chartRef.value = {}
+  await view.loadConfig()
+  await view.initChart()
+  clear.mock.mockImplementationOnce(() => { throw new Error('clear failed') })
+  getMapping.mock.mockImplementationOnce(async () => { throw new Error('offline') })
+  view.selectedDate.value = '2026-10-13 12:00'
+  await view.loadMappingData()
+  assert.equal(view.latestData.value, null)
+  assert.equal(view.lastUpdatedAt.value, null)
+  assert.equal(view.chartError.value, true)
+  assert.equal(view.mappingError.value, true)
+  assert.equal(view.mappingLoading.value, false)
+  await view.initChart()
+  assert.equal(view.chartError.value, false)
+  assert.equal(view.mappingError.value, true)
+  assert.equal(view.canSaveMapImage.value, false)
+  await view.loadMappingData()
+  assert.equal(view.mappingError.value, false)
+  assert.equal(view.canSaveMapImage.value, true)
+})
+
+test('map display-change rendering failures are handled and recover on retry', async (t) => {
+  const { view, setOption, locale } = createView(t)
+  view.chartRef.value = {}
+  await view.loadConfig()
+  await view.initChart()
+  const data = view.latestData.value
+  const updated = view.lastUpdatedAt.value
+  setOption.mock.mockImplementationOnce(() => { throw new Error('render failure') })
+  locale.value = 'en-US'
+  await vue.nextTick()
+  assert.equal(view.chartError.value, true)
+  assert.equal(view.isMapReady.value, false)
+  assert.equal(view.latestData.value, data)
+  assert.equal(view.lastUpdatedAt.value, updated)
+  await view.initChart()
+  assert.equal(view.chartError.value, false)
+  assert.equal(view.isMapReady.value, true)
+})
+
+test('map export blocks incomplete states and late callbacks but permits retained data', async (t) => {
+  const { view, getDataURL, link, getMapping, unmount } = createView(t)
+  view.chartRef.value = {}
+  view.saveMapImage()
+  assert.equal(getDataURL.mock.callCount(), 0)
+  await view.loadConfig()
+  await view.initChart()
+  for (const state of [view.configLoading, view.mappingLoading, view.chartLoading, view.chartError]) {
+    state.value = true
+    assert.equal(view.canSaveMapImage.value, false)
+    view.saveMapImage()
+    assert.equal(getDataURL.mock.callCount(), 0)
+    state.value = false
+  }
+  view.isMapReady.value = false
+  view.saveMapImage()
+  assert.equal(getDataURL.mock.callCount(), 0)
+  view.isMapReady.value = true
+  getMapping.mock.mockImplementationOnce(async () => { throw new Error('offline') })
+  await view.loadMappingData()
+  assert.equal(view.hasRetainedMapping.value, true)
+  assert.equal(view.canSaveMapImage.value, true)
+  view.saveMapImage()
+  assert.equal(getDataURL.mock.callCount(), 1)
+  assert.equal(link.click.mock.callCount(), 1)
+  assert.equal(link.href, 'data:image/png;base64,test')
+  assert.match(link.download, /^smartping-map-\d+\.png$/)
+  unmount()
+  view.saveMapImage()
+  assert.equal(getDataURL.mock.callCount(), 1)
+})
+
+test('map initialization after unmount does not load modules or change loading state', async (t) => {
+  const { view, loadMap, init, unmount } = createView(t)
+  view.chartRef.value = {}
+  unmount()
+  await view.initChart()
+  assert.equal(loadMap.mock.callCount(), 0)
+  assert.equal(init.mock.callCount(), 0)
+  assert.equal(view.chartLoading.value, false)
+  assert.equal(view.chartError.value, false)
+  assert.equal(view.isMapReady.value, false)
+})
+
+test('map initialization is shared and its pending completion cannot revive an unmounted chart', async (t) => {
+  const { view, loadMap, init, registerMap, unmount } = createView(t)
+  view.chartRef.value = {}
+  const pending = view.initChart()
+  assert.equal(view.initChart(), pending)
+  unmount()
+  await pending
+  assert.equal(loadMap.mock.callCount(), 1)
+  assert.equal(init.mock.callCount(), 0)
+  assert.equal(registerMap.mock.callCount(), 0)
+  assert.equal(view.isMapReady.value, false)
+  assert.equal(view.chartLoading.value, false)
+})
+
+test('failed map reinitialization clears readiness and can retry with the latest data', async (t) => {
+  const { view, init, setOption } = createView(t)
+  view.chartRef.value = {}
+  await view.loadConfig()
+  await view.initChart()
+  assert.equal(view.isMapReady.value, true)
+  init.mock.mockImplementationOnce(() => { throw new Error('renderer unavailable') })
+  await view.initChart()
+  assert.equal(view.isMapReady.value, false)
+  assert.equal(view.chartError.value, true)
+  assert.equal(view.chartLoading.value, false)
+  const draws = setOption.mock.callCount()
+  await view.loadMappingData()
+  assert.equal(setOption.mock.callCount(), draws, 'failed renderer must not receive refreshed data')
+  await view.initChart()
+  assert.equal(view.isMapReady.value, true)
+  assert.equal(view.chartError.value, false)
+  assert.equal(setOption.mock.callCount(), draws + 1)
+})
+
+test('map batches simultaneous theme and language changes without requesting new data', async (t) => {
+  const { view, theme, locale, setOption, getMapping } = createView(t)
+  view.isMapReady.value = true
+  await view.loadConfig()
+  const draws = setOption.mock.callCount()
+  const requests = getMapping.mock.callCount()
+  theme.theme = 'dark'
+  locale.value = 'en-US'
+  await vue.nextTick()
+  assert.equal(setOption.mock.callCount(), draws + 1)
+  assert.equal(getMapping.mock.callCount(), requests)
+})
 
 test('invalid local map minute labels retain chart output and successful time until recovery', async (t) => {
   const { view, getMapping, clear, setOption } = createView(t, true)

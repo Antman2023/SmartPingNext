@@ -20,6 +20,7 @@ export default {
     query: 'Query',
     retry: 'Retry',
     saveImage: 'Save Image',
+    saveImageFailed: 'Could not export the image. Please try again.',
     delete: 'Delete',
     add: 'Add',
     edit: 'Edit',

@@ -1,4 +1,5 @@
 import { preserveLegendSelection } from '../../utils/chartInteraction.js'
+import { downloadChartImage } from '../../utils/chartExport.js'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
@@ -85,11 +86,13 @@ test('detail chart preserves zoom and legend choices through updates, resizing a
   }).outputText
   const locale = vue.ref('en')
   const dependencies: Record<string, unknown> = {
+    'element-plus': { ElMessage: { error: () => {} } },
     vue: { ...vue, onMounted: () => {}, onUnmounted: () => {} },
     'vue-i18n': { useI18n: () => ({ t: (key: string) => locale.value === 'en' ? key : `zh:${key}`, locale }) },
     '@/stores/theme': { useThemeStore: () => ({ theme: 'light' }) },
     '@/stores/sidebar': { useSidebarStore: () => ({ isCollapsed: false }) },
     '@/utils/chartInteraction': { preserveLegendSelection },
+    '@/utils/chartExport': { downloadChartImage },
     '@/utils/charts': { getPingChartOption },
     '@/utils/debounce': { debounce: (callback: () => void) => callback },
     '@/utils/echartsLine': { echarts: { init: () => chart } }

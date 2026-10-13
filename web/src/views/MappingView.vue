@@ -34,7 +34,7 @@
             />
             <el-button
               :icon="Download"
-              :disabled="!latestData || mappingLoading || !isMapReady"
+              :disabled="!canSaveMapImage"
               @click="saveMapImage"
             >
               {{ $t('common.saveImage') }}
@@ -160,6 +160,8 @@ import { useThemeStore } from '@/stores/theme'
 import { displayName, formatTime } from '@/utils/format'
 import { formatMappingTooltip } from '@/utils/chartTooltip'
 import { preserveLegendSelection } from '@/utils/chartInteraction'
+import { downloadChartImage } from '@/utils/chartExport'
+import { debounce } from '@/utils/debounce'
 import type { ChinaMapData, Config } from '@/types'
 
 const { t, locale } = useI18n()
@@ -208,6 +210,8 @@ const lastUpdatedLabel = computed(() =>
   lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
 )
 const hasRetainedMapping = computed(() => mappingError.value && latestData.value !== null)
+const canSaveMapImage = computed(() => latestData.value !== null && isMapReady.value &&
+  !configLoading.value && !mappingLoading.value && !chartLoading.value && !chartError.value)
 
 const loadConfig = async () => {
   if (isUnmounted) {
@@ -275,7 +279,15 @@ const requestMappingData = async () => {
     mappingQueryKey = queryKey
     latestData.value = null
     lastUpdatedAt.value = null
-    chart?.clear()
+    try {
+      chart?.clear()
+    } catch (error) {
+      // A broken renderer must not prevent the new query or strand source
+      // loading state. The chart retry will render only the new query's data.
+      isMapReady.value = false
+      chartError.value = true
+      console.error('清空地图失败', error)
+    }
   }
   mappingLoading.value = true
   mappingError.value = false
@@ -427,11 +439,22 @@ const updateChart = (data: ChinaMapData) => {
     ]
   }
 
-  preserveLegendSelection(option, chart.getOption())
-  chart.setOption(option)
+  try {
+    preserveLegendSelection(option, chart.getOption())
+    chart.setOption(option)
+  } catch (error) {
+    // Rendering can fail independently of a successful response. Keep the
+    // accepted data so the chart retry can draw it without another request.
+    isMapReady.value = false
+    chartError.value = true
+    console.error('绘制地图失败', error)
+  }
 }
 
 const initChart = (): Promise<void> => {
+  if (isUnmounted) {
+    return Promise.resolve()
+  }
   if (chartLoadPromise) {
     return chartLoadPromise
   }
@@ -449,7 +472,11 @@ const initChart = (): Promise<void> => {
       }
 
       echarts.registerMap('china', chinaMap)
+      // Retire the previous renderer before replacing it. A failed init must
+      // not leave a disposed chart marked ready for data updates or export.
+      isMapReady.value = false
       chart?.dispose()
+      chart = null
       chart = echarts.init(chartRef.value)
       isMapReady.value = true
       if (latestData.value) {
@@ -457,6 +484,7 @@ const initChart = (): Promise<void> => {
       }
     } catch (error) {
       if (!isUnmounted) {
+        isMapReady.value = false
         chartError.value = true
         console.error('加载地图组件失败', error)
       }
@@ -476,13 +504,25 @@ const initChart = (): Promise<void> => {
   return promise
 }
 
+const resizeChart = debounce(() => {
+  if (isUnmounted || !chart || !isMapReady.value || chartLoading.value) return
+  try {
+    chart.resize()
+  } catch (error) {
+    isMapReady.value = false
+    chartError.value = true
+    console.error('调整地图尺寸失败', error)
+  }
+}, 200)
+
 const handleResize = () => {
-  chart?.resize()
+  if (!isUnmounted) resizeChart()
 }
 
 watch(
   () => sidebarStore.isCollapsed,
   () => {
+    if (isUnmounted) return
     if (resizeTimer !== null) {
       window.clearTimeout(resizeTimer)
     }
@@ -496,34 +536,27 @@ watch(
 )
 
 watch(
-  () => themeStore.theme,
+  [() => themeStore.theme, locale],
   () => {
     if (latestData.value) {
       updateChart(latestData.value)
     }
-  }
+  },
+  { flush: 'post' }
 )
 
-watch(locale, () => {
-  if (latestData.value) {
-    updateChart(latestData.value)
-  }
-})
-
 const saveMapImage = () => {
-  if (!chart) {
+  if (isUnmounted || !chart || !canSaveMapImage.value) {
     return
   }
 
-  const url = chart.getDataURL({
-    type: 'png',
-    pixelRatio: 2,
-    backgroundColor: themeStore.theme === 'dark' ? '#1a1a1a' : '#fff'
-  })
-  const link = document.createElement('a')
-  link.download = `smartping-map-${Date.now()}.png`
-  link.href = url
-  link.click()
+  try {
+    downloadChartImage(chart, `smartping-map-${Date.now()}.png`, themeStore.theme === 'dark')
+  } catch (error) {
+    // Export failures do not invalidate the displayed chart or its data.
+    console.error('导出地图图片失败', error)
+    ElMessage.error(t('common.saveImageFailed'))
+  }
 }
 
 onMounted(async () => {
@@ -534,6 +567,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   isUnmounted = true
+  resizeChart.cancel()
   configAbortController?.abort()
   mappingAbortController?.abort()
   configRequestId++
@@ -546,9 +580,15 @@ onUnmounted(() => {
   chartLoading.value = false
   latestData.value = null
   chartLoadPromise = null
-  chart?.dispose()
+  const previousChart = chart
   chart = null
   window.removeEventListener('resize', handleResize)
+  try {
+    previousChart?.dispose()
+  } catch (error) {
+    // A renderer failure must not retain our reference or window listener.
+    console.error('销毁地图失败', error)
+  }
 })
 </script>
 

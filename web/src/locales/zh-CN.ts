@@ -18,6 +18,7 @@ export default {
     query: '查询',
     retry: '重试',
     saveImage: '保存图片',
+    saveImageFailed: '图片导出失败，请重试。',
     delete: '删除',
     add: '添加',
     edit: '编辑',

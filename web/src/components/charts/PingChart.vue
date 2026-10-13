@@ -5,6 +5,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ElMessage } from 'element-plus'
 import type { EChartsOption } from 'echarts'
 import type { EChartsType } from 'echarts/core'
 import type { PingLogData } from '@/types'
@@ -12,6 +13,7 @@ import { useThemeStore } from '@/stores/theme'
 import { useSidebarStore } from '@/stores/sidebar'
 import { getPingChartOption } from '@/utils/charts'
 import { preserveLegendSelection } from '@/utils/chartInteraction'
+import { downloadChartImage } from '@/utils/chartExport'
 import { debounce } from '@/utils/debounce'
 import { echarts } from '@/utils/echartsLine'
 
@@ -29,16 +31,12 @@ let isUnmounted = false
 const resizeTimers = new Set<number>()
 
 const saveAsImage = () => {
-  if (chart) {
-    const url = chart.getDataURL({
-      type: 'png',
-      pixelRatio: 2,
-      backgroundColor: themeStore.theme === 'dark' ? '#1a1a1a' : '#fff'
-    })
-    const link = document.createElement('a')
-    link.download = `smartping-chart-${Date.now()}.png`
-    link.href = url
-    link.click()
+  if (isUnmounted || !chart) return
+  try {
+    downloadChartImage(chart, `smartping-chart-${Date.now()}.png`, themeStore.theme === 'dark')
+  } catch (error) {
+    console.error('导出监控图片失败', error)
+    ElMessage.error(t('common.saveImageFailed'))
   }
 }
 

@@ -78,7 +78,8 @@
               :key="target.addr"
               class="monitor-tile dashboard-view__tile"
               role="button"
-              tabindex="0"
+              :tabindex="configLoading ? -1 : 0"
+              :aria-disabled="configLoading"
               @click="showDetail(target)"
               @keydown.enter.prevent="showDetail(target)"
               @keydown.space.prevent="showDetail(target)"
@@ -131,6 +132,7 @@
               type="button"
               class="list-row dashboard-view__agent"
               :class="{ 'is-active': currentAgent === agent.addr }"
+              :disabled="configLoading"
               @click="switchAgent(agent)"
             >
               <div class="list-row__meta">
@@ -299,6 +301,15 @@ const failedTargets = computed(
 
 const loadConfig = async (proxyUrl?: string) => {
   if (isUnmounted) return
+  // Invalidate detail synchronously; the dialog watcher runs on a later tick.
+  detailAbortController?.abort()
+  detailAbortController = null
+  detailRequestId++
+  detailVisible.value = false
+  detailAutoRefresh.value = false
+  detailLoading.value = false
+  detailError.value = false
+  detailData.value = null
   configAbortController?.abort()
   chartAbortController?.abort()
   chartAbortController = null
@@ -417,6 +428,7 @@ const loadChartData = async (target: PingTarget, requestId: number, signal: Abor
 }
 
 const switchAgent = async (agent: { name: string; addr: string; loading: boolean }) => {
+  if (isUnmounted || configLoading.value || !config.value || !agents.value.includes(agent)) return
   agent.loading = true
   detailVisible.value = false
   const proxyUrl = `http://${agent.addr}:${config.value?.Port}`
@@ -427,7 +439,7 @@ const switchAgent = async (agent: { name: string; addr: string; loading: boolean
 const DEFAULT_TIME_RANGE_HOURS = normalizeTimeRangeHours(import.meta.env.VITE_DEFAULT_TIME_RANGE)
 
 const showDetail = async (target: PingTarget) => {
-  if (isUnmounted) return
+  if (isUnmounted || configLoading.value || !pingTargets.value.includes(target)) return
   detailRequestId++
   detailQueryKey = null
   detailData.value = null
@@ -441,7 +453,7 @@ const showDetail = async (target: PingTarget) => {
 }
 
 const loadDetailData = async () => {
-  if (isUnmounted || !detailVisible.value || !currentTargetIp.value) {
+  if (isUnmounted || configLoading.value || !detailVisible.value || !currentTargetIp.value) {
     return
   }
 
@@ -549,6 +561,7 @@ const refreshChartsIfVisible = () => {
 }
 
 const refreshMonitor = () => {
+  if (isUnmounted || configLoading.value) return
   if (config.value) {
     return loadAllCharts()
   }
@@ -664,6 +677,11 @@ onUnmounted(() => {
   border: none;
   cursor: pointer;
   font: inherit;
+
+  &:disabled {
+    cursor: wait;
+    opacity: 0.6;
+  }
 }
 
 .dashboard-view__agent-dot {
