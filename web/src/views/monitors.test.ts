@@ -44,12 +44,16 @@ interface MonitorSetup {
   detailLoading: vue.Ref<boolean>
   detailError: vue.Ref<boolean>
   detailData: vue.Ref<PingLogData | null>
+  pingChartRef: vue.Ref<{ saveAsImage: () => void } | null>
+  canSaveChartImage: vue.ComputedRef<boolean>
+  saveChartImage: () => void
   currentTargetIp?: vue.Ref<string>
   currentTarget?: vue.Ref<Target | null>
   loadDetailData: () => Promise<void>
   showDetail: (target: Target) => Promise<void>
   startTime: vue.Ref<string>
   endTime: vue.Ref<string>
+  relativeTimeRangeHours: vue.Ref<number | null>
   setTimeRange: (hours: number, shouldLoad?: boolean) => void
   useCustomTimeRange: () => void
   refreshChartsIfVisible: () => void
@@ -306,6 +310,87 @@ for (const name of ['DashboardView', 'ReverseView']) {
       assert.equal(getPing.mock.callCount(), calls + 1)
       const args = getPing.mock.calls.at(-1)!.arguments
       assert.equal(args[0], name === 'ReverseView' ? 'http://192.0.2.2:9000' : '192.0.2.2')
+    })
+  }
+
+  test(`${name}: detail export waits for its chart and refresh, retains failed-query data and rejects late callbacks`, async (t) => {
+    const { view, targets, getPing, unmount } = createView(t)
+    const saveAsImage = t.mock.fn()
+    await view.showDetail(targets.value[0]!)
+    assert.equal(view.canSaveChartImage.value, false, 'async chart component must be ready')
+    view.saveChartImage()
+    view.pingChartRef.value = { saveAsImage }
+    assert.equal(view.canSaveChartImage.value, true)
+    view.saveChartImage()
+    assert.equal(saveAsImage.mock.callCount(), 1)
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    t.after(() => release())
+    getPing.mock.mockImplementationOnce(async () => { await gate; throw new Error('offline') })
+    const pending = view.loadDetailData()
+    try {
+      assert.equal(view.canSaveChartImage.value, false)
+      view.saveChartImage()
+      assert.equal(saveAsImage.mock.callCount(), 1, 'do not export a curve while its refresh is pending')
+    } finally {
+      release()
+      await pending
+    }
+    assert.equal(view.detailError.value, true)
+    assert.equal(view.canSaveChartImage.value, true, 'a retained curve remains exportable after failure')
+    view.saveChartImage()
+    assert.equal(saveAsImage.mock.callCount(), 2)
+    view.configLoading.value = true
+    assert.equal(view.canSaveChartImage.value, false)
+    view.saveChartImage()
+    view.configLoading.value = false
+    view.detailVisible.value = false
+    assert.equal(view.canSaveChartImage.value, false)
+    view.saveChartImage()
+    assert.equal(saveAsImage.mock.callCount(), 2, 'closed dialog must not export through an old component ref')
+    await vue.nextTick()
+    await view.showDetail(targets.value[0]!)
+    view.pingChartRef.value = { saveAsImage }
+    unmount()
+    view.saveChartImage()
+    assert.equal(saveAsImage.mock.callCount(), 2)
+  })
+
+  for (const state of ['closed', 'reloading', 'unmounted']) {
+    test(`${name}: ${state} detail ignores late time-range callbacks without changing its draft`, async (t) => {
+      const { view, targets, getPing, advanceTime, unmount } = createView(t)
+      await view.showDetail(targets.value[0]!)
+      const start = view.startTime.value
+      const end = view.endTime.value
+      const hours = view.relativeTimeRangeHours.value
+      const data = view.detailData.value
+      const calls = getPing.mock.callCount()
+      if (state === 'closed') view.detailVisible.value = false
+      if (state === 'reloading') view.configLoading.value = true
+      if (state === 'unmounted') unmount()
+      advanceTime(60_000)
+      view.useCustomTimeRange()
+      assert.equal(view.relativeTimeRangeHours.value, hours)
+      view.setTimeRange(3)
+      view.setTimeRange(12, false)
+      await vue.nextTick()
+      assert.equal(view.relativeTimeRangeHours.value, hours)
+      assert.equal(view.startTime.value, start)
+      assert.equal(view.endTime.value, end)
+      assert.equal(view.detailData.value, data)
+      assert.equal(getPing.mock.callCount(), calls)
+      if (state !== 'unmounted') {
+        view.configLoading.value = false
+        await view.showDetail(targets.value[1]!)
+        assert.equal(view.relativeTimeRangeHours.value, 6)
+        assert.notEqual(view.endTime.value, end)
+        view.setTimeRange(3, false)
+        await view.loadDetailData()
+        assert.equal(view.relativeTimeRangeHours.value, 3)
+        assert.equal(Date.parse(view.endTime.value) - Date.parse(view.startTime.value), 3 * 3_600_000)
+        view.useCustomTimeRange()
+        assert.equal(view.relativeTimeRangeHours.value, null)
+      }
     })
   }
 

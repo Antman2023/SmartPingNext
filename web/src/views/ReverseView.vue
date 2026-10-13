@@ -171,7 +171,7 @@
           <el-button type="primary" :loading="detailLoading" @click="loadDetailData">
             {{ $t('common.query') }}
           </el-button>
-          <el-button :disabled="!detailData" @click="saveChartImage">
+          <el-button :disabled="!canSaveChartImage" @click="saveChartImage">
             {{ $t('common.saveImage') }}
           </el-button>
           <el-button-group>
@@ -281,6 +281,8 @@ const refreshInterval = computed(() => resolveRefreshInterval(config.value?.Base
 const lastUpdatedLabel = computed(() =>
   lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
 )
+const canSaveChartImage = computed(() => detailVisible.value && detailData.value !== null &&
+  pingChartRef.value !== null && !configLoading.value && !detailLoading.value)
 
 const timeRanges = computed(() => [
   { label: t('dashboard.timeRanges.hour1'), hours: 1 },
@@ -446,8 +448,8 @@ const showDetail = async (target: ReverseTarget) => {
   detailError.value = false
   detailSourceName.value = target.fromName
   currentTarget.value = target
-  setTimeRange(DEFAULT_TIME_RANGE_HOURS, false)
   detailVisible.value = true
+  setTimeRange(DEFAULT_TIME_RANGE_HOURS, false)
   await loadDetailData()
 }
 
@@ -508,10 +510,12 @@ const loadDetailData = async () => {
 }
 
 const useCustomTimeRange = () => {
+  if (isUnmounted || configLoading.value || !detailVisible.value) return
   relativeTimeRangeHours.value = null
 }
 
 const setTimeRange = (hours: number, shouldLoad = true) => {
+  if (isUnmounted || configLoading.value || !detailVisible.value) return
   relativeTimeRangeHours.value = hours
   const end = new Date()
   const start = new Date(end.getTime() - hours * 60 * 60 * 1000)
@@ -524,6 +528,7 @@ const setTimeRange = (hours: number, shouldLoad = true) => {
 }
 
 const saveChartImage = () => {
+  if (isUnmounted || !canSaveChartImage.value) return
   pingChartRef.value?.saveAsImage()
 }
 
