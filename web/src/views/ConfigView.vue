@@ -395,6 +395,22 @@
       <p class="config-view__dialog-tip">
         {{ $t('config.selectPingTargets', { name: currentPingNode?.node.Name }) }}
       </p>
+      <div class="config-view__target-actions">
+        <el-button
+          size="small"
+          :disabled="!configReady || !pingTargetList.length"
+          @click="updateTargetSelection(pingTargetList, 'all')"
+        >
+          {{ $t('config.selectAllTargets') }}
+        </el-button>
+        <el-button
+          size="small"
+          :disabled="!configReady || !pingTargetList.length"
+          @click="updateTargetSelection(pingTargetList, 'invert')"
+        >
+          {{ $t('config.invertTargetSelection') }}
+        </el-button>
+      </div>
       <div class="table-scroll">
         <el-table :data="pingTargetList" stripe max-height="420">
           <el-table-column prop="Name" :label="$t('config.nodeName')" min-width="150" />
@@ -420,6 +436,22 @@
       <p class="config-view__dialog-tip">
         {{ $t('config.selectTopoTargets', { name: currentTopoNode?.node.Name }) }}
       </p>
+      <div class="config-view__target-actions">
+        <el-button
+          size="small"
+          :disabled="!configReady || !topoTargetList.length"
+          @click="updateTargetSelection(topoTargetList, 'all')"
+        >
+          {{ $t('config.selectAllTargets') }}
+        </el-button>
+        <el-button
+          size="small"
+          :disabled="!configReady || !topoTargetList.length"
+          @click="updateTargetSelection(topoTargetList, 'invert')"
+        >
+          {{ $t('config.invertTargetSelection') }}
+        </el-button>
+      </div>
       <div class="table-scroll">
         <el-table :data="topoTargetList" stripe max-height="460">
           <el-table-column prop="Name" :label="$t('config.nodeName')" min-width="130" />
@@ -1352,18 +1384,24 @@ const saveEditNode = () => {
   ElMessage.success(t('config.nodeUpdated'))
 }
 
+const updateTargetSelection = (targets: { enabled: boolean }[], mode: 'all' | 'invert') => {
+  for (const target of targets) {
+    target.enabled = mode === 'all' || !target.enabled
+  }
+}
+
 const editPingConfig = (row: NetworkListItem) => {
   const session = captureNodeEdit(row)
   if (!session) return
   currentPingNode.value = session
-  const currentPingList = formConfig.Network[row.Addr]?.Ping || []
+  const currentPingTargets = new Set(session.node.Ping)
 
   pingTargetList.value = Object.entries(formConfig.Network)
     .map(([addr, network]) => ({
       _original: network,
       Name: network.Name,
       Addr: addr,
-      enabled: currentPingList.includes(addr)
+      enabled: currentPingTargets.has(addr)
     }))
 
   pingConfigVisible.value = true
@@ -1754,6 +1792,10 @@ onUnmounted(() => {
   margin: 0 0 16px;
   color: var(--color-text-secondary);
   line-height: 1.7;
+}
+
+.config-view__target-actions {
+  margin-bottom: 12px;
 }
 
 .config-view__ip-editor :deep(.el-textarea__inner) {

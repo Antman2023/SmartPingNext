@@ -51,6 +51,7 @@ interface ConfigSetup {
   saveEditNode: () => void
   pingTargetList: vue.Ref<{ Addr: string; enabled: boolean }[]>
   editPingConfig: (row: NetworkMember & { _original: NetworkMember; isSelf: boolean }) => void
+  updateTargetSelection: (targets: { enabled: boolean }[], mode: 'all' | 'invert') => void
   pingConfigVisible: vue.Ref<boolean>
   savePingConfig: () => void
   topoConfigVisible: vue.Ref<boolean>
@@ -1858,7 +1859,7 @@ test('imported empty dictionary extensions survive replacement and rule insertio
   assert.equal((submitted.Network['127.0.0.1']!.Topology[0] as unknown as Record<string, string>).__v_isRef, '')
 })
 
-test('topology editing keeps rule extensions and existing order before newly selected targets', async (t) => {
+test('bulk topology selection keeps rule extensions and existing order before newly selected targets', async (t) => {
   const { view, loadConfig, saveConfig } = createView(t)
   const loaded = (await loadConfig())!
   for (const [index, name] of ['one', 'two', 'three'].entries()) {
@@ -1878,7 +1879,11 @@ test('topology editing keeps rule extensions and existing order before newly sel
   view.editTopoConfig(local)
   const first = view.topoTargetList.value.find((row) => row.Addr === '192.0.2.1')!
   first.avgDelay = 300
-  view.topoTargetList.value.find((row) => row.Addr === '192.0.2.3')!.enabled = true
+  view.updateTargetSelection(view.topoTargetList.value, 'invert')
+  assert.equal(view.topoTargetList.value.filter((row) => row.enabled).map((row) => row.Addr).join(','), '192.0.2.3')
+  view.updateTargetSelection(view.topoTargetList.value, 'all')
+  assert.equal(view.topoTargetList.value.every((row) => row.enabled), true)
+  assert.equal(view.isDirty.value, false)
   view.saveTopoConfig()
   assert.equal(view.formConfig.Network['127.0.0.1']!.Topology.map((rule) => rule.Addr).join(','), '192.0.2.2,192.0.2.1,192.0.2.3')
   view.password.value = 'password'
@@ -1986,6 +1991,32 @@ test('editing ping targets preserves self checks and allows explicitly disabling
   view.pingTargetList.value.find((item) => item.Addr === node.Addr)!.enabled = false
   view.savePingConfig()
   assert.equal(node.Ping.length, 0)
+})
+
+test('bulk ping selection applies to the open dialog and requires confirmation', async (t) => {
+  const { view, loadConfig } = createView(t)
+  const loaded = (await loadConfig())!
+  const remote = '192.0.2.1'
+  loaded.Network[remote] = { Name: 'remote', Addr: remote, Smartping: false, Ping: [], Topology: [] }
+  loaded.Network[loaded.Addr]!.Ping = [loaded.Addr]
+  loadConfig.mock.mockImplementation(async () => loaded)
+  await view.loadConfig()
+  const local = view.networkList.value.find((row) => row.isSelf)!
+  const selected = () => view.pingTargetList.value.filter((row) => row.enabled).map((row) => row.Addr).join(',')
+
+  view.editPingConfig(local)
+  view.updateTargetSelection(view.pingTargetList.value, 'all')
+  assert.equal(selected(), `${local.Addr},${remote}`)
+  assert.equal(view.isDirty.value, false)
+  view.pingConfigVisible.value = false
+  view.editPingConfig(local)
+  assert.equal(selected(), local.Addr)
+
+  view.updateTargetSelection(view.pingTargetList.value, 'invert')
+  assert.equal(selected(), remote)
+  view.savePingConfig()
+  assert.equal(local._original.Ping.join(','), remote)
+  assert.equal(view.isDirty.value, true)
 })
 
 test('node dialogs reject whitespace-only names without changing configuration', async (t) => {

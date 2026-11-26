@@ -24,8 +24,9 @@
 - Forward PING and reverse PING charting
 - Mutual PING topology between nodes, customizable latency/loss alert thresholds (with sound), plus MTR checks on alert
 - Nationwide latency map (Telecom / Unicom / Mobile lines per province)
-- Built-in diagnostic tools using SmartPingNext nodes
+- Built-in multi-node diagnostics, sorted by average latency by default, with sortable average latency and packet loss columns
 - Node editing (modify name and IP address with automatic reference syncing)
+- Select all or invert the current target selection in Ping and topology settings
 - Configuration import/export
 - Light/Dark theme switching
 - Unified settings panel for theme and language
@@ -158,7 +159,7 @@ Hostname resolution for online tools, scheduled Ping, mapping probes, and alert 
 
 Online diagnostics pause new checks while configuration reloads, then use the updated probe addresses and ports. Leaving the page cancels active requests and prevents late callbacks from starting new checks. Explicit node rejection messages in successful HTTP responses, such as rate limits or resolution failures, appear on the corresponding row. Missing rejection messages and malformed success data report an invalid response. HTTP errors and request cancellation retain their shared categories.
 
-Successful diagnostic statistics must also report packet loss consistent with their counters. When replies exist, minimum delay must not exceed average delay, and average must not exceed maximum; a single reply must have identical delay values. Success responses with no sent probes are rejected. Valid zero delays and total-loss placeholders remain supported, and an invalid node does not prevent other nodes from finishing.
+Successful diagnostic statistics must also report packet loss consistent with their counters. When replies exist, minimum delay must not exceed average delay, and average must not exceed maximum. A single reply must have identical delay values. Success responses with no sent probes are rejected, and an invalid node does not prevent other nodes from finishing. Measured zero latency appears as `0.0`. Total loss displays `100%` packet loss and `-` for latency.
 
 If a refresh of the same latency map query fails, the previous result and update time remain visible with a persistent warning. A successful refresh clears the warning; switching nodes or times clears the previous query's result. Node selection pauses during configuration reloads, and late callbacks for removed nodes or an unmounted page cannot start new queries.
 
