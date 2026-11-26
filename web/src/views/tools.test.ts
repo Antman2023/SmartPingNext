@@ -15,15 +15,18 @@ const compiled = ts.transpileModule(compileScript(descriptor, { id: 'tools-test'
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }
 }).outputText
 
+interface TestResultRow {
+  name: string
+  checked: boolean
+  loading: boolean
+  result: ToolsResult | null
+  error: string | null
+}
+
 interface ToolsSetup {
-  results: vue.Ref<
-    {
-      checked: boolean
-      loading: boolean
-      result: ToolsResult | null
-      error: string | null
-    }[]
-  >
+  results: vue.Ref<TestResultRow[]>
+  sortedResults: vue.ComputedRef<TestResultRow[]>
+  updateSort: (sort: { prop: string | null; order: 'ascending' | 'descending' | null }) => void
   checking: vue.Ref<boolean>
   configLoading: vue.Ref<boolean>
   target: vue.Ref<string>
@@ -124,6 +127,37 @@ test('tools configuration reload resets the previous run timestamp', async (t) =
     view.results.value.some((row) => row.result),
     false
   )
+})
+
+test('tools sorts measured metrics numerically and keeps unavailable values last in both directions', async (t) => {
+  const { view, runTools } = createView(t)
+  await view.loadConfig()
+  const sample = await runTools('node', 'target')
+  const measurements = new Map([
+    ['192.0.2.1:8899', { RevcPk: 4, LossPk: 0, MinDelay: 12, AvgDelay: 12, MaxDelay: 12 }],
+    ['192.0.2.2:8899', { RevcPk: 0, LossPk: 100, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 }],
+    ['192.0.2.4:8899', { RevcPk: 3, LossPk: 25, MinDelay: 0, AvgDelay: 0, MaxDelay: 0 }],
+    ['192.0.2.5:8899', { RevcPk: 2, LossPk: 50, MinDelay: 2, AvgDelay: 2, MaxDelay: 2 }]
+  ])
+  runTools.mock.mockImplementation(async (base) => {
+    const measurement = measurements.get(base)
+    if (!measurement) throw new Error('probe failed')
+    return { ...sample, ping: { SendPk: 4, ...measurement } }
+  })
+  view.results.value[5]!.checked = false
+  await view.runCheck()
+
+  const names = () => view.sortedResults.value.map((row) => row.name).join(',')
+  assert.equal(names(), 'probe-3,probe-4,probe-0,probe-1,probe-2,probe-5')
+  view.updateSort({ prop: 'AvgDelay', order: 'descending' })
+  assert.equal(names(), 'probe-0,probe-4,probe-3,probe-1,probe-2,probe-5')
+  view.updateSort({ prop: 'LossPk', order: 'ascending' })
+  assert.equal(names(), 'probe-0,probe-3,probe-4,probe-1,probe-2,probe-5')
+  view.updateSort({ prop: 'LossPk', order: 'descending' })
+  assert.equal(names(), 'probe-1,probe-4,probe-3,probe-0,probe-2,probe-5')
+  assert.equal(view.sortedResults.value[0], view.results.value[1])
+  view.updateSort({ prop: 'LossPk', order: null })
+  assert.equal(names(), 'probe-0,probe-1,probe-2,probe-3,probe-4,probe-5')
 })
 
 test('tools isolates malformed success payloads and accepts valid zero measurements', async (t) => {

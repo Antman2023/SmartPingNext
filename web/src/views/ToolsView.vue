@@ -77,7 +77,14 @@
         </div>
 
         <div class="table-scroll">
-          <el-table :data="results" stripe style="width: 100%">
+          <el-table
+            :data="sortedResults"
+            :default-sort="defaultSort"
+            row-key="addr"
+            stripe
+            style="width: 100%"
+            @sort-change="updateSort"
+          >
             <el-table-column width="54" align="center">
               <template #default="{ row }">
                 <el-checkbox
@@ -102,16 +109,27 @@
                 {{ row.result?.ping?.RevcPk ?? '-' }}
               </template>
             </el-table-column>
-            <el-table-column :label="$t('tools.packetLoss')" width="90" align="center">
+            <el-table-column
+              prop="LossPk"
+              :label="$t('tools.packetLoss')"
+              width="110"
+              align="center"
+              sortable="custom"
+            >
               <template #default="{ row }">
                 <span :class="{ 'text-danger': row.result?.ping?.LossPk > 0 }">
                   {{ row.result?.ping?.LossPk !== undefined ? row.result.ping.LossPk + '%' : '-' }}
                 </span>
               </template>
             </el-table-column>
-            <el-table-column :label="$t('tools.latency')" min-width="180">
+            <el-table-column
+              prop="AvgDelay"
+              :label="$t('tools.latencyByAverage')"
+              min-width="200"
+              sortable="custom"
+            >
               <template #default="{ row }">
-                <template v-if="row.result?.ping">
+                <template v-if="row.result?.ping?.RevcPk > 0">
                   <span class="tools-view__delay mono">
                     {{ row.result.ping.MinDelay?.toFixed(1) || '-' }} /
                     {{ row.result.ping.AvgDelay?.toFixed(1) || '-' }} /
@@ -190,12 +208,17 @@ interface ResultRow {
   error: string | null
 }
 
+type SortMetric = 'AvgDelay' | 'LossPk'
+type SortOrder = 'ascending' | 'descending'
+
+const defaultSort = { prop: 'AvgDelay', order: 'ascending' } as const
 const { t } = useI18n()
 const config = ref<Config | null>(null)
 const toolType = ref('ping')
 const target = ref('')
 const checking = ref(false)
 const results = ref<ResultRow[]>([])
+const sort = ref<{ prop: SortMetric; order: SortOrder } | null>(defaultSort)
 const configLoading = ref(true)
 const configError = ref(false)
 const lastRunAt = ref<Date | null>(null)
@@ -205,6 +228,30 @@ let checkRequestId = 0
 let configAbortController: AbortController | null = null
 let checkAbortController: AbortController | null = null
 const CHECK_CONCURRENCY = 4
+
+const updateSort = ({ prop, order }: { prop: string | null; order: SortOrder | null }) => {
+  sort.value = order && (prop === 'AvgDelay' || prop === 'LossPk') ? { prop, order } : null
+}
+
+const sortValue = (row: ResultRow, metric: SortMetric): number | undefined => {
+  const ping = row.result?.ping
+  if (!ping || (metric === 'AvgDelay' && ping.RevcPk === 0)) return undefined
+  return ping[metric]
+}
+
+const sortedResults = computed(() => {
+  const active = sort.value
+  if (!active) return results.value
+
+  const direction = active.order === 'ascending' ? 1 : -1
+  return [...results.value].sort((left, right) => {
+    const leftValue = sortValue(left, active.prop)
+    const rightValue = sortValue(right, active.prop)
+    if (leftValue === undefined) return rightValue === undefined ? 0 : 1
+    if (rightValue === undefined) return -1
+    return (leftValue - rightValue) * direction
+  })
+})
 
 const checkedCount = computed(() => results.value.filter((row) => row.checked).length)
 const successCount = computed(

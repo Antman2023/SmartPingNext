@@ -391,17 +391,33 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="pingConfigVisible" :title="$t('config.pingConfig')" width="560px">
+    <el-dialog v-model="pingConfigVisible" :title="$t('config.pingConfig')" width="min(560px, 94vw)">
       <p class="config-view__dialog-tip">
         {{ $t('config.selectPingTargets', { name: currentPingNode?.node.Name }) }}
       </p>
+      <target-selection-toolbar
+        v-model="pingTargetQuery"
+        :disabled="!configReady"
+        :has-matches="visiblePingTargets.length > 0"
+        :selected-count="selectedPingTargetCount"
+        @select="updateTargetSelection(visiblePingTargets, $event)"
+      />
       <div class="table-scroll">
-        <el-table :data="pingTargetList" stripe max-height="420">
+        <el-table
+          :data="visiblePingTargets"
+          :empty-text="pingTargetQuery.trim() ? $t('config.noMatchingTargets') : undefined"
+          row-key="Addr"
+          stripe
+          max-height="420"
+        >
           <el-table-column prop="Name" :label="$t('config.nodeName')" min-width="150" />
           <el-table-column prop="Addr" :label="$t('config.nodeIP')" min-width="150" />
           <el-table-column :label="$t('common.enable')" width="90" align="center">
             <template #default="{ row }">
-              <el-checkbox v-model="row.enabled" />
+              <el-checkbox
+                v-model="row.enabled"
+                :aria-label="$t('config.toggleTargetSelection', { name: row.Name, address: row.Addr })"
+              />
             </template>
           </el-table-column>
         </el-table>
@@ -420,13 +436,29 @@
       <p class="config-view__dialog-tip">
         {{ $t('config.selectTopoTargets', { name: currentTopoNode?.node.Name }) }}
       </p>
+      <target-selection-toolbar
+        v-model="topoTargetQuery"
+        :disabled="!configReady"
+        :has-matches="visibleTopoTargets.length > 0"
+        :selected-count="selectedTopoTargetCount"
+        @select="updateTargetSelection(visibleTopoTargets, $event)"
+      />
       <div class="table-scroll">
-        <el-table :data="topoTargetList" stripe max-height="460">
+        <el-table
+          :data="visibleTopoTargets"
+          :empty-text="topoTargetQuery.trim() ? $t('config.noMatchingTargets') : undefined"
+          row-key="Addr"
+          stripe
+          max-height="460"
+        >
           <el-table-column prop="Name" :label="$t('config.nodeName')" min-width="130" />
           <el-table-column prop="Addr" :label="$t('config.nodeIP')" width="140" />
           <el-table-column :label="$t('common.enable')" width="75" align="center">
             <template #default="{ row }">
-              <el-checkbox v-model="row.enabled" />
+              <el-checkbox
+                v-model="row.enabled"
+                :aria-label="$t('config.toggleTargetSelection', { name: row.Name, address: row.Addr })"
+              />
             </template>
           </el-table-column>
           <el-table-column :label="$t('config.checkWindow')" width="145">
@@ -588,6 +620,7 @@ import {
   ElUpload,
   type UploadFile
 } from 'element-plus'
+import TargetSelectionToolbar from '@/components/common/TargetSelectionToolbar.vue'
 import { useConfigStore } from '@/stores/config'
 import { createConfigDraft } from '@/utils/configDraft'
 import { isRequestCanceled } from '@/api'
@@ -773,24 +806,42 @@ const isCurrentNodeEdit = (session: NodeEditSession | null): session is NodeEdit
   !isUnmounted && configReady.value && session !== null &&
   formConfig.Network === session.network && session.network[session.addr] === session.node
 
-const pingConfigVisible = ref(false)
-const currentPingNode = shallowRef<NodeEditSession | null>(null)
-const pingTargetList = ref<Array<{ Name: string; Addr: string; enabled: boolean; _original: NetworkMember }>>([])
-
-interface TopologyTargetItem {
+interface TargetItem {
   _original: NetworkMember
   Name: string
   Addr: string
   enabled: boolean
+}
+
+interface TopologyTargetItem extends TargetItem {
   checkSeconds: number
   occurrenceCount: number
   avgDelay: number
   lossPercent: number
 }
 
+const filterTargets = <T extends TargetItem>(targets: T[], query: string): T[] => {
+  const search = query.trim().toLowerCase()
+  return search
+    ? targets.filter((row) => row.Name.toLowerCase().includes(search) || row.Addr.includes(search))
+    : targets
+}
+
+const pingConfigVisible = ref(false)
+const currentPingNode = shallowRef<NodeEditSession | null>(null)
+const pingTargetList = ref<TargetItem[]>([])
+const pingTargetQuery = ref('')
+const visiblePingTargets = computed(() => filterTargets(pingTargetList.value, pingTargetQuery.value))
+const selectedPingTargets = computed(() => pingTargetList.value.filter((row) => row.enabled))
+const selectedPingTargetCount = computed(() => selectedPingTargets.value.length)
+
 const topoConfigVisible = ref(false)
 const currentTopoNode = shallowRef<NodeEditSession | null>(null)
 const topoTargetList = ref<TopologyTargetItem[]>([])
+const topoTargetQuery = ref('')
+const visibleTopoTargets = computed(() => filterTargets(topoTargetList.value, topoTargetQuery.value))
+const selectedTopoTargets = computed(() => topoTargetList.value.filter((row) => row.enabled))
+const selectedTopoTargetCount = computed(() => selectedTopoTargets.value.length)
 
 const maxOccurrenceCount = (checkSeconds: number) => {
   return Math.max(Math.floor(checkSeconds / 60), 1)
@@ -1352,18 +1403,25 @@ const saveEditNode = () => {
   ElMessage.success(t('config.nodeUpdated'))
 }
 
+const updateTargetSelection = (targets: { enabled: boolean }[], mode: 'all' | 'invert') => {
+  for (const target of targets) {
+    target.enabled = mode === 'all' || !target.enabled
+  }
+}
+
 const editPingConfig = (row: NetworkListItem) => {
   const session = captureNodeEdit(row)
   if (!session) return
   currentPingNode.value = session
-  const currentPingList = formConfig.Network[row.Addr]?.Ping || []
+  pingTargetQuery.value = ''
+  const currentPingTargets = new Set(session.node.Ping)
 
   pingTargetList.value = Object.entries(formConfig.Network)
     .map(([addr, network]) => ({
       _original: network,
       Name: network.Name,
       Addr: addr,
-      enabled: currentPingList.includes(addr)
+      enabled: currentPingTargets.has(addr)
     }))
 
   pingConfigVisible.value = true
@@ -1375,12 +1433,17 @@ const savePingConfig = () => {
     return
   }
 
-  const selected = pingTargetList.value.filter((item) => item.enabled)
+  const selected = selectedPingTargets.value
   if (selected.some((item) => session.network[item.Addr] !== item._original)) {
     pingConfigVisible.value = false
     return
   }
-  session.node.Ping = selected.map((item) => item.Addr)
+  const remaining = new Set(selected.map((item) => item.Addr))
+  const kept: string[] = []
+  for (const addr of session.node.Ping) {
+    if (remaining.delete(addr)) kept.push(addr)
+  }
+  session.node.Ping = [...kept, ...remaining]
 
   pingConfigVisible.value = false
   ElMessage.success(t('config.pingConfigUpdated'))
@@ -1390,6 +1453,7 @@ const editTopoConfig = (row: NetworkListItem) => {
   const session = captureNodeEdit(row)
   if (!session) return
   currentTopoNode.value = session
+  topoTargetQuery.value = ''
   const currentTopologies = new Map(
     (formConfig.Network[row.Addr]?.Topology || []).map((topology) => [topology.Addr, topology])
   )
@@ -1428,14 +1492,14 @@ const saveTopoConfig = () => {
     return
   }
 
-  const selected = topoTargetList.value.filter((item) => item.enabled)
+  const selected = selectedTopoTargets.value
   if (selected.some((item) => session.network[item.Addr] !== item._original)) {
     topoConfigVisible.value = false
     return
   }
   const currentRules = new Map(session.node.Topology.map((rule) => [rule.Addr, rule]))
   const currentOrder = new Map(session.node.Topology.map((rule, index) => [rule.Addr, index]))
-  const selectedTopologies = selected
+  const selectedTopologies = [...selected]
     .sort((left, right) =>
       (currentOrder.get(left.Addr) ?? Number.MAX_SAFE_INTEGER) -
       (currentOrder.get(right.Addr) ?? Number.MAX_SAFE_INTEGER)
