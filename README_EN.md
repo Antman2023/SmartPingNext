@@ -26,7 +26,7 @@
 - Nationwide latency map (Telecom / Unicom / Mobile lines per province)
 - Built-in multi-node diagnostics, sorted by average latency by default, with sortable average latency and packet loss columns
 - Node editing (modify name and IP address with automatic reference syncing)
-- Select all or invert the current target selection in Ping and topology settings
+- Search for targets by name or IP and select all or invert the current results in Ping and topology settings
 - Configuration import/export
 - Light/Dark theme switching
 - Unified settings panel for theme and language
