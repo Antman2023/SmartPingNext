@@ -356,6 +356,39 @@ for (const name of ['DashboardView', 'ReverseView']) {
     assert.equal(saveAsImage.mock.callCount(), 2)
   })
 
+  test(`${name}: detail export requires data for the dates shown in the picker`, async (t) => {
+    const { view, targets, getPing, advanceTime } = createView(t)
+    const saveAsImage = t.mock.fn()
+    await view.showDetail(targets.value[0]!)
+    view.pingChartRef.value = { saveAsImage }
+    const loaded = view.detailData.value
+    const end = view.endTime.value
+
+    advanceTime(60_000)
+    getPing.mock.mockImplementationOnce(async () => { throw new Error('offline') })
+    await view.refreshDetailIfVisible()
+    assert.notEqual(view.endTime.value, end)
+    assert.equal(view.detailData.value, loaded)
+    assert.equal(view.canSaveChartImage.value, false)
+
+    await view.refreshDetailIfVisible()
+    assert.equal(view.canSaveChartImage.value, true)
+
+    view.useCustomTimeRange()
+    view.endTime.value = ''
+    await view.loadDetailData()
+    assert.equal(view.detailData.value, loaded)
+    assert.equal(view.canSaveChartImage.value, false)
+    view.endTime.value = '2026-09-20 11:00'
+    view.saveChartImage()
+    assert.equal(saveAsImage.mock.callCount(), 0)
+
+    await view.loadDetailData()
+    assert.equal(view.canSaveChartImage.value, true)
+    view.saveChartImage()
+    assert.equal(saveAsImage.mock.callCount(), 1)
+  })
+
   for (const state of ['closed', 'reloading', 'unmounted']) {
     test(`${name}: ${state} detail ignores late time-range callbacks without changing its draft`, async (t) => {
       const { view, targets, getPing, advanceTime, unmount } = createView(t)

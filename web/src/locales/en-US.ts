@@ -73,6 +73,7 @@ export default {
     refreshNow: 'Refresh now',
     refreshFailed: 'Refresh failed',
     showingPreviousData: 'Refresh failed. Showing the last successfully loaded data.',
+    detailRangeChanged: 'The chart shows the previous query. Run a query for the selected dates to save its image.',
     dataFreshness: 'Data Status',
     lastUpdatedAt: 'Updated at {time}',
     notUpdated: 'Not updated yet',

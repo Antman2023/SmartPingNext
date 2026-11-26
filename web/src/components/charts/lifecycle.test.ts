@@ -9,7 +9,7 @@ import { compileScript, parse } from 'vue/compiler-sfc'
 import type { PingLogData } from '../../types/index.js'
 
 interface ChartSetup {
-  chartRef: vue.Ref<object | undefined>
+  chartRef: vue.Ref<{ clientWidth?: number } | undefined>
   resizeTimers: Set<number>
   safeSetTimeout: (callback: () => void, delay: number) => number
   handleResize: (() => void) & { cancel: () => void }
@@ -146,6 +146,16 @@ for (const component of ['PingChart', 'PingMiniChart', 'TopologyGraph']) {
       }
     }
     if (component === 'PingChart') {
+      flushTimers()
+      const draws = chart.setOption.mock.callCount()
+      const resizes = chart.resize.mock.callCount()
+      for (const [width, redraws] of [[600, 0], [480, 0], [479, 1], [360, 1], [640, 2]] as const) {
+        view.chartRef.value = { clientWidth: width }
+        view.handleResize()
+        flushTimers()
+        assert.equal(chart.setOption.mock.callCount(), draws + redraws, `width ${width}`)
+      }
+      assert.ok(chart.resize.mock.callCount() >= resizes + 5)
       await t.test('image export reports failures and retries without replacing or redrawing the chart', () => {
         const draws = chart.setOption.mock.callCount()
         for (const failure of ['encode', '', 'data:,', 'data:image/png;base64,', 'download']) {

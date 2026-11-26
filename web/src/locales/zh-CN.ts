@@ -71,6 +71,7 @@ export default {
     refreshNow: '立即刷新',
     refreshFailed: '刷新失败',
     showingPreviousData: '刷新失败，当前显示上次成功加载的数据。',
+    detailRangeChanged: '当前图表仍显示上次查询的数据。请查询所选时间范围后再保存图片。',
     dataFreshness: '数据状态',
     lastUpdatedAt: '更新于 {time}',
     notUpdated: '尚未更新',

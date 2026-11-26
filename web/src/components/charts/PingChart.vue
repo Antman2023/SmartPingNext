@@ -27,6 +27,7 @@ const { t, locale } = useI18n()
 const themeStore = useThemeStore()
 const sidebarStore = useSidebarStore()
 let chart: EChartsType | null = null
+let chartCompact = false
 let isUnmounted = false
 const resizeTimers = new Set<number>()
 
@@ -44,9 +45,10 @@ defineExpose({
   saveAsImage
 })
 
-const getChartOption = (): EChartsOption => {
+const isCompact = () => (chartRef.value?.clientWidth || Number.POSITIVE_INFINITY) < 480
+
+const getChartOption = (compact: boolean): EChartsOption => {
   const isDark = themeStore.theme === 'dark'
-  const compact = (chartRef.value?.clientWidth || Number.POSITIVE_INFINITY) < 480
   return getPingChartOption(
     props.data,
     isDark,
@@ -85,7 +87,8 @@ const initChart = () => {
     chart.dispose()
   }
   chart = echarts.init(chartRef.value)
-  chart.setOption(getChartOption())
+  chartCompact = isCompact()
+  chart.setOption(getChartOption(chartCompact))
   safeSetTimeout(() => chart?.resize(), 0)
 }
 
@@ -95,15 +98,18 @@ const updateChart = () => {
     initChart()
     return
   }
-  const option = getChartOption()
+  const compact = isCompact()
+  const option = getChartOption(compact)
   preserveLegendSelection(option, chart.getOption())
   chart.setOption(option)
+  chartCompact = compact
   safeSetTimeout(() => chart?.resize(), 0)
 }
 
 const handleResize = debounce(() => {
-  chart?.resize()
-  updateChart()
+  if (!chart) return
+  chart.resize()
+  if (chartCompact !== isCompact()) updateChart()
 }, 200)
 
 // Track array replacements without traversing every historical sample. A

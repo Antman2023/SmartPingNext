@@ -192,9 +192,14 @@
         </div>
 
         <section v-loading="detailLoading" class="surface-panel dashboard-view__detail-panel">
-          <div v-if="detailError && detailData" class="detail-refresh-error" role="status">
+          <div
+            v-if="detailData && !detailLoading && (detailError || !detailRangeMatches)"
+            class="detail-refresh-error"
+            role="status"
+          >
             <el-icon><Warning /></el-icon>
-            <span>{{ $t('common.showingPreviousData') }}</span>
+            <span v-if="detailError">{{ $t('common.showingPreviousData') }}</span>
+            <span v-else>{{ $t('common.detailRangeChanged') }}</span>
           </div>
           <PingChart v-if="detailData" ref="pingChartRef" :data="detailData" :height="400" />
           <div v-else-if="detailError" class="empty-state dashboard-view__detail-error">
@@ -253,6 +258,7 @@ const detailTitle = computed(() =>
   `${displayName(config.value?.Name || '')} -> ${displayName(detailTargetName.value)}`
 )
 const detailData = ref<PingLogData | null>(null)
+const detailDataRange = ref<{ start: string; end: string } | null>(null)
 const detailLoading = ref(false)
 const detailError = ref(false)
 const startTime = ref('')
@@ -281,7 +287,11 @@ const refreshInterval = computed(() => resolveRefreshInterval(config.value?.Base
 const lastUpdatedLabel = computed(() =>
   lastUpdatedAt.value ? formatTime(lastUpdatedAt.value) : ''
 )
+const detailRangeMatches = computed(() =>
+  detailDataRange.value?.start === startTime.value && detailDataRange.value.end === endTime.value
+)
 const canSaveChartImage = computed(() => detailVisible.value && detailData.value !== null &&
+  detailRangeMatches.value &&
   pingChartRef.value !== null && !configLoading.value && !detailLoading.value)
 
 const timeRanges = computed(() => [
@@ -491,6 +501,7 @@ const loadDetailData = async () => {
       return
     }
     detailData.value = data
+    detailDataRange.value = { start, end }
   } catch (error) {
     if (
       isRequestCanceled(error) ||
